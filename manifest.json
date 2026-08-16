@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Rerun",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "minimum_chrome_version": "116",
-  "description": "Connect each ChatGPT tab explicitly to its actual GitHub project, keep GitHub-backed workflows watched, and reliably auto-submit resume prompts.",
+  "description": "Connect each ChatGPT tab to its GitHub project, reliably auto-submit resume prompts, and transfer watchers to fresh chats across any GitHub work state.",
   "permissions": ["storage", "activeTab", "sidePanel", "scripting"],
   "host_permissions": [
     "https://api.github.com/*",

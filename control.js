@@ -15,7 +15,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   pollIntervalSeconds: 90,
   retryDelaySeconds: 120,
   maxRetriesPerSequence: 2,
-  maxRuns: 20
+  maxRuns: Number.MAX_SAFE_INTEGER
 });
 
 export const DEFAULT_RUNTIME = Object.freeze({
@@ -215,10 +215,11 @@ export function continuationDisposition(control, settings, nowMs = Date.now()) {
   return { action: "send", isRetry: true };
 }
 
-export function normalizeMaxRuns(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return 20;
-  return Math.min(100, Math.max(1, Math.floor(parsed)));
+// Legacy compatibility: old saved configs may still contain maxRuns=20/100.
+// Treat every legacy value as effectively unbounded so long-running workflows
+// are governed only by per-generation retry safety, not a lifetime send cap.
+export function normalizeMaxRuns(_value) {
+  return Number.MAX_SAFE_INTEGER;
 }
 
 export function streamKey(settings) {

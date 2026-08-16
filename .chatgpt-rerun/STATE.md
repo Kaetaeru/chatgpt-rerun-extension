@@ -6,65 +6,66 @@
 - Sequence: `9`
 - Desired control status: `needs_user`
 - Current task: `V02-009`
-- Control reason: `v0.2.11 fixes same-sequence fresh control generations being blocked by retry_limit; reload and retest the live SimpleVTT watcher.`
-- Phase: `awaiting_v0211_simplevtt_same_sequence_probe`
-- Last checkpoint (UTC): `2026-08-16T19:05:00Z`
+- Control reason: `v0.2.12 removes the lifetime Max sends gate that blocked the long-running SimpleVTT watcher; reload and retest the live SimpleVTT tab.`
+- Phase: `awaiting_v0212_simplevtt_unlimited_send_probe`
+- Last checkpoint (UTC): `2026-08-16T23:25:00Z`
 
 ## Current Objective
 
-Verify v0.2.11 against the actual failing project, `Kaetaeru/SimpleVTT` on `main`.
+Verify v0.2.12 against the actual failing project, `Kaetaeru/SimpleVTT` on `main`.
 
-The prior diagnosis that the Rerun extension dogfood control being `needs_user` explained the user's no-dispatch observation was incorrect because the user was testing a different project. Direct inspection of SimpleVTT shows its Rerun stream is valid and currently authorized with sequence 1 / `continue`.
+SimpleVTT itself is correctly authorized: sequence 1 / `continue`, with STATE/PLAN requiring further Phase 14 work. The latest no-dispatch behavior was not caused by `Public · rate-safe` and not by a missing GitHub work signal.
 
-The real extension regression is that v0.2.10 treated all same-sequence continuations as retries solely because `control.sequence === lastHandledSequence`. Long tasks intentionally keep one sequence across multiple ChatGPT executions and republish a newer `control.updated_at` after each durable checkpoint. After two unchanged-sequence sends, the watcher could reach `retry_limit` and then ignore later fresh same-sequence authorizations forever.
+## Root cause confirmed
 
-## SimpleVTT evidence
+v0.2.11 correctly recognized a newer same-sequence `updated_at` as a fresh authorization, but a separate lifetime counter still ran first:
 
-- Repository: `Kaetaeru/SimpleVTT`
-- Canonical watcher branch: `main`
-- run_id: `b7f27a61-29d8-4ba2-9f93-8e66722d5f41`
-- sequence: `1`
-- status: `continue`
-- task_id: `phase14-production-play-session-ux`
-- current control updated_at: `2026-08-17T03:51:00+09:00`
-- STATE/PLAN both require continuation of the same sequence from the Phase 14 checkpoint.
-- Recent repository history contains repeated checkpoint/continue publications while preserving sequence 1, which is an intentional long-task workflow rather than a retry loop.
+1. every successful Rerun prompt/handoff increments `runtime.runCount`;
+2. default `maxRuns` was 20;
+3. normal dispatch returned `wait: max_runs` when `runCount >= maxRuns`;
+4. `CLAIM_SEQUENCE` separately rejected with `max_runs`;
+5. fresh-chat handoff separately threw `Max sends 한도에 도달했습니다...`;
+6. Side Panel could still show `Watching` / `Public · rate-safe`, hiding that dispatch had been suppressed.
 
-## v0.2.11 fix completed
+SimpleVTT Phase 14 has already used at least twenty deliberate continuation authorizations in the same run, so this lifetime cap matches the observed stop point.
 
-- `control.js` now parses existing `lastSentAt` and `control.updatedAt` when the sequence is unchanged.
-- If `control.updatedAt > lastSentAt`, the control is treated as a fresh authorization: `send / isRetry=false`.
-- Retry count and retry delay apply only when that control generation has not changed since the last send.
-- Existing retry protection therefore still prevents an unchanged stuck control from sending indefinitely.
-- No new runtime schema field was required; ACK already resets `sameSequenceRetryCount` to zero for a non-retry send.
-- `tests/control.test.mjs` now covers rewritten same-sequence authorization after retry count 2 and preserves the unchanged-generation retry-limit assertion.
-- Manifest/package bumped to `0.2.11`.
+## v0.2.12 implementation
+
+- `background.js`: removed all lifetime send-count gates from normal dispatch, sequence claim, and fresh-chat handoff.
+- `control.js`: legacy `maxRuns` normalization now returns `Number.MAX_SAFE_INTEGER` only for compatibility with older stored config/UI code; background execution no longer consults it.
+- `popup.html`: removed the visible `Max sends` setting and explains that total sends are unlimited while `Retries / sequence` remains the stuck-control safety guard.
+- `runtime.runCount` / Side Panel `Sent`: retained as diagnostic telemetry only.
+- `tests/watcher-flow.test.mjs`: now fails if `background.js` regains `max_runs`, `normalizeMaxRuns`, or the old `Max sends` rejection while preserving retry-limit and sequence-regression guards.
+- `tests/control.test.mjs`: legacy 0/20/100/999 maxRuns inputs all normalize to the compatibility unbounded sentinel.
+- `tests/popup-ui.test.mjs`: asserts the visible Max sends control is gone and the unlimited-send explanation is present.
+- manifest/package version bumped to `0.2.12`.
+- README contract now explicitly states there is no lifetime send limit.
 
 ## Verification
 
 | Check | Result | Evidence / note |
 |---|---|---|
 | V02-001~008 prior browser evidence | PASS | Retained. |
-| SimpleVTT Rerun control/STATE/PLAN inspection | PASS | sequence 1 / continue is correctly authorized and same-sequence continuation is intentional. |
-| v0.2.10 root-cause inspection | PASS | `continuationDisposition()` applied retry limit before considering a newer control generation. |
-| v0.2.11 remote source inspection | PASS | same sequence compares `control.updatedAt` against `lastSentAt` before retry-limit logic. |
-| v0.2.11 targeted decision probe | PASS | newer same-sequence generation -> fresh send; unchanged generation at retry count 2 -> retry_limit. |
-| v0.2.11 regression test update | COMMITTED | `tests/control.test.mjs` covers both paths. |
-| v0.2.11 exact latest full npm suite | NOT_RUN | Fresh GitHub checkout cannot be resolved from this runtime; do not claim full-suite PASS. |
-| v0.2.11 SimpleVTT browser dispatch | NOT_RUN | Requires extension Reload on the user's live SimpleVTT ChatGPT tab. |
+| SimpleVTT control/STATE/PLAN inspection | PASS | sequence 1 / continue is correctly authorized. |
+| SimpleVTT continuation-history inspection | PASS | at least twenty deliberate Phase 14 continuation authorizations exist in the same run. |
+| v0.2.11 max-runs root-cause inspection | PASS | lifetime checks occurred before/independent of fresh-generation classification. |
+| v0.2.12 source change | COMMITTED | lifetime checks removed from background dispatch/claim/handoff. |
+| v0.2.12 regression assertions | COMMITTED | control/watcher/popup tests updated. |
+| v0.2.12 exact latest full npm suite | NOT_RUN | container cannot resolve github.com and no mounted exact checkout is available. |
+| v0.2.12 SimpleVTT browser dispatch | NOT_RUN | Requires Reload on the user's live SimpleVTT ChatGPT tab. |
 
 ## Next Exact Action
 
-Reload unpacked extension v0.2.11. Return to the existing ChatGPT tab connected to `Kaetaeru/SimpleVTT @ main`. Keep/turn the watcher on. Do not change SimpleVTT's run/sequence merely to wake it. Expected after the next successful control fetch: the current sequence 1 `continue` generation is classified as fresh authorization rather than `retry_limit`, and the resume prompt is automatically submitted.
+Reload unpacked extension v0.2.12. Return to the existing ChatGPT tab connected to `Kaetaeru/SimpleVTT @ main`. Keep/turn the watcher on. Do not change SimpleVTT's run_id or sequence. Expected after the next successful control poll: current sequence 1 / `continue` dispatches even if Side Panel `Sent` is already 20 or higher.
 
-If that conversation is already exhausted, the existing automatic dispatch-failure -> fresh-chat handoff path should then open exactly one new ChatGPT tab and transfer watcher ownership.
+If that conversation is exhausted, the automatic failed-dispatch -> fresh-chat handoff path must also proceed without any lifetime send-count rejection.
 
 ## Do Not Repeat
 
 - Do not repeat V02-001 through V02-008.
-- Do not diagnose the user's SimpleVTT tab from this extension repository's own dogfood control state.
-- Do not increment SimpleVTT sequence solely to bypass retry_limit; v0.2.11 must support deliberate repeated control generations within the same sequence.
-- Do not remove retry protection for an unchanged control generation.
+- Do not change SimpleVTT sequence merely to bypass local extension counters.
+- Do not reintroduce a lifetime Max sends cap; deliberate fresh authorizations must be unlimited.
+- Do not remove per-generation retry protection for unchanged/stuck control.
 - Do not parse assistant limit-warning text.
 - Do not overwrite non-Rerun user drafts.
 - Do not recursively open fresh chats after direct handoff failure.

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Validate ChatGPT Rerun v0.2 after the session architecture changed from one browser-global runtime to independent per-tab runtimes, and verify that a workflow can be handed off to a fresh ChatGPT conversation using GitHub as the only durable state source.
+Validate ChatGPT Rerun v0.2/v0.2.1 after the session architecture changed from one browser-global runtime to independent per-tab runtimes, verify that a workflow can be handed off to a fresh ChatGPT conversation using GitHub as the only durable state source, and verify the simplified state-driven Start/Stop UX.
 
 ## Definition of Done
 
@@ -12,6 +12,7 @@ Validate ChatGPT Rerun v0.2 after the session architecture changed from one brow
 - [x] V02-004 `Continue in new chat` ownership transfer verified.
 - [ ] V02-005 handoff race/failure behavior verified to the extent safely reproducible.
 - [ ] V02-006 terminal state stops only the owning tab session.
+- [ ] V02-007 single state-driven Start/Stop toggle verified.
 - [ ] `docs/V02_E2E_TEST_PLAN.md` evidence is complete.
 - [ ] No unresolved blocker remains.
 
@@ -24,6 +25,7 @@ Validate ChatGPT Rerun v0.2 after the session architecture changed from one brow
 - One ChatGPT execution(turn) must end before the 20-minute hard stop; around 18 minutes checkpoint first and continue in the same sequence if unfinished.
 - Do not parse assistant output to detect token/context-limit text. New-chat continuation is an explicit GitHub-backed handoff.
 - Do not automate clicks on ChatGPT app approval, OAuth authorization, or administrator-approval UI. Repeated GitHub app-use approval is handled by ChatGPT app permissions where available.
+- When code changes require an unpacked-extension Reload, stop the active dogfood run with `needs_user` before relying on the new behavior.
 
 ## Validation Baseline
 
@@ -43,6 +45,7 @@ Validate ChatGPT Rerun v0.2 after the session architecture changed from one brow
 | V02-004 | verified | V02-003 | Verify fresh-chat handoff | User-confirmed successful ownership transfer to a fresh ChatGPT conversation using the GitHub-backed handoff path |
 | V02-005 | in_progress | V02-004 | Verify handoff race/failure safeguards | New owner receives the next sequence; successful handoff has no duplicate transfer; implementation/tests prove handoffPending suppression and deterministic failure cleanup to the extent safely reproducible |
 | V02-006 | pending | V02-003 | Verify terminal isolation | complete/needs_user/blocked stops only the owning tab session |
+| V02-007 | in_progress | V02-003 | Verify unified Start/Stop session control | Stopped shows only `Start`; clicking it starts the current tab and changes the same button to `Stop`; clicking `Stop` disables the current-tab session and changes the same button back to `Start` |
 
 Status vocabulary: `pending`, `in_progress`, `verified`, `blocked`.
 
@@ -60,4 +63,7 @@ Status vocabulary: `pending`, `in_progress`, `verified`, `blocked`.
 - V02-003 closed PASS at 23:09 KST: new-sequence auto-dispatch and same-sequence retry both occurred in tab A, while tab B still showed zero run/retry activity.
 - V02-004 closed PASS at 23:17 KST after the user confirmed `Continue in new chat` completed successfully.
 - The user's ChatGPT GitHub app permission was set to the persisted automatic-approval mode (`full_access`) to reduce repeated app-use approval prompts after fresh-chat handoff. This does not expand GitHub OAuth/repository scopes or bypass workspace/safety controls.
-- Current task is V02-005: verify ownership continuity in the new tab and race/failure safeguards without unnecessarily forcing a destructive browser failure.
+- At 23:21 KST the UX requirement changed: separate `Start this tab` and `Stop this tab` controls were replaced by one state-driven button. Extension/package version is now `0.2.1`.
+- The single toggle reads the latest tab runtime before acting: stopped -> Start path, running -> Stop path. Runtime/storage refresh changes the same button label, styling, and ARIA state.
+- `tests/popup-ui.test.mjs` was added to guard the single-toggle markup and both START/STOP message paths.
+- Current gate is V02-007: Reload the unpacked 0.2.1 extension and verify the button flips `Start -> Stop -> Start`. After that, resume unfinished V02-005 and V02-006.

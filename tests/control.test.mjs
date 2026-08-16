@@ -94,9 +94,11 @@ test("retry count is bounded", () => {
   assert.equal(normalizeMaxRetries(99), 10);
 });
 
-test("max runs is bounded", () => {
-  assert.equal(normalizeMaxRuns(0), 1);
-  assert.equal(normalizeMaxRuns(999), 100);
+test("legacy max runs values are normalized to effectively unlimited", () => {
+  assert.equal(normalizeMaxRuns(0), Number.MAX_SAFE_INTEGER);
+  assert.equal(normalizeMaxRuns(20), Number.MAX_SAFE_INTEGER);
+  assert.equal(normalizeMaxRuns(100), Number.MAX_SAFE_INTEGER);
+  assert.equal(normalizeMaxRuns(999), Number.MAX_SAFE_INTEGER);
 });
 
 test("new sequence is sent immediately", () => {

@@ -1,9 +1,9 @@
 {
   "version": 1,
   "run_id": "chatgpt-rerun-v02-20260816-01",
-  "sequence": 1,
+  "sequence": 2,
   "status": "continue",
-  "reason": "V02-001 tab isolation verified; test duplicate GitHub stream rejection in tab B while tab A remains running.",
-  "updated_at": "2026-08-16T14:01:00Z",
-  "task_id": "V02-002"
+  "reason": "V02-002 duplicate stream rejection verified; finish the per-tab dispatch/retry regression by confirming counters remain scoped to tab A.",
+  "updated_at": "2026-08-16T14:07:00Z",
+  "task_id": "V02-003"
 }

@@ -17,7 +17,7 @@
       return;
     }
 
-    if (message?.type === "RERUN_HANDOFF" || message?.type === "RERUN_BOOTSTRAP") {
+    if (["RERUN_HANDOFF", "RERUN_BOOTSTRAP", "RERUN_CONNECT"].includes(message?.type)) {
       sendDirectPrompt(String(message.prompt || ""))
         .then(() => sendResponse({ sent: true }))
         .catch((error) => sendResponse({

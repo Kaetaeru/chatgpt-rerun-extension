@@ -45,7 +45,8 @@ Validate ChatGPT Rerun v0.2.x after the architecture evolved to independent per-
 - v0.2.7 status-independent handoff source/prompt checks: PASS.
 - v0.2.8 browser probe exposed stale-prompt guard regression.
 - v0.2.9 stale Rerun prompt ownership fix: source/regression assertions committed; browser probe was then blocked by GitHub public API rate limiting.
-- v0.2.10 rate-limit resilience implementation and tests: COMMITTED, browser PENDING.
+- v0.2.10 rate-limit resilience implementation and tests: COMMITTED.
+- v0.2.10 browser UI load: PASS (`Public · rate-safe` observed by user).
 - v0.2.10 exact full npm suite: NOT_RUN in this environment.
 - Build: N/A (unpacked Manifest V3 extension).
 
@@ -57,26 +58,18 @@ Validate ChatGPT Rerun v0.2.x after the architecture evolved to independent per-
 | V02-002 | verified | Same-stream collision guard | Duplicate watcher Start was rejected |
 | V02-003 | verified | Dispatch/retry regression | New/same-sequence dispatch worked on owning tab only |
 | V02-004 | verified | Fresh-chat handoff baseline | User-confirmed GitHub-backed ownership transfer |
-| V02-005 | verified | Handoff race/failure safeguards | Live success + source-verified suppression/cleanup/failure paths |
+| V02-005 | verified | Handoff race/failure safeguards | Live success + source-verified suppression/cleanup paths |
 | V02-006 | verified | Persistent watcher across GitHub work states | `needs_user` kept watcher Watching; later `continue` auto-resumed |
 | V02-007 | verified | Unified Start/Stop watcher | User-confirmed Stop -> Start round trip |
 | V02-008 | verified | Unconnected-first explicit onboarding | User completed separate-project onboarding probe |
-| V02-009 | in_progress | Reliable auto-submit + fresh-chat recovery + rate-limit-resilient polling | Live browser verification pending on v0.2.10 |
+| V02-009 | in_progress | Reliable auto-submit + fresh-chat recovery + rate-limit-resilient polling | v0.2.10 loaded; re-arming live `continue` probe now |
 
-## V02-009 latest implementation notes
+## V02-009 latest browser finding
 
-The user's latest probe hit `GitHub API rate limit reached; wait for reset or use a token`. The previous unauthenticated minimum of 60 seconds consumed the full nominal 60 requests/hour budget and left no headroom for Start-time fetches, multiple watcher streams, or other requests.
+The user reported `API polling = Public · rate-safe` but no work started. The extension was not actually blocked by the public API mode. The authoritative control was still `needs_user`, which intentionally suppresses resume dispatch while leaving the tab watcher active.
 
-v0.2.10 changes polling behavior:
-
-1. unauthenticated minimum polling is 90 seconds for one watcher and scales to `90 * enabled unauthenticated watcher count`;
-2. authenticated polling retains the 5-second minimum;
-3. GitHub rate-limit responses use `Retry-After`, `X-RateLimit-Reset`, or a secondary-limit fallback to create `rateLimitPausedUntil`;
-4. Start while rate-limited keeps `runtime.enabled=true` and reports `rate_limited_wait` rather than failing;
-5. poll returns a wait result until the pause expires and resumes automatically afterward;
-6. Side Panel replaces raw `Rate remaining` with `API polling` state;
-7. handoff may use cached control/runtime identity during an extension API pause so an exhausted chat can still move to a fresh ChatGPT tab when enough local state exists.
+`Public · rate-safe` therefore means only: no token is configured and the watcher will use the conservative unauthenticated polling interval. It is not a work-start signal.
 
 ## Current gate
 
-Reload unpacked v0.2.10 and press Start on the same connected test tab. If the GitHub public quota is still exhausted, expected: `Tab watcher = Watching`, button = `Stop`, `API polling = Paused until ...`, no red rate-limit failure. After reset, polling must resume without another Start. Then continue the exhausted-chat fresh-handoff probe. If uninterrupted fast polling is desired, use a GitHub token and set Poll seconds to 5–10.
+The v0.2.10 reload gate is satisfied by the user's `Public · rate-safe` observation. Re-arm the existing sequence 9 from terminal `needs_user` to `continue` while the watcher remains enabled. Expected: no additional Start click is required; the watcher sees terminal -> continue as fresh authorization and automatically submits the resume prompt. On the exhausted/stale-prompt chat, the expected next behavior is a one-time fresh ChatGPT tab handoff and ownership transfer.

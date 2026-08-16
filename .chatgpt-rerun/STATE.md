@@ -3,73 +3,75 @@
 ## Identity
 
 - Run ID: `chatgpt-rerun-v02-20260816-01`
-- Sequence: `4`
-- Desired control status: `continue`
-- Current task: `V02-005`
-- Control reason: `V02-004 fresh-chat handoff verified; verify new-owner continuity and handoff race/failure safeguards.`
-- Phase: `awaiting_new_owner_sequence`
-- Last checkpoint (UTC): `2026-08-16T14:17:00Z`
-- Current execution started (UTC): `2026-08-16T14:17:00Z`
-- Current execution hard stop (UTC): `2026-08-16T14:37:00Z`
+- Sequence: `5`
+- Desired control status: `needs_user`
+- Current task: `V02-007`
+- Control reason: `v0.2.1 replaces separate Start/Stop controls with one state-driven toggle; reload the unpacked extension before browser verification.`
+- Phase: `awaiting_extension_reload_for_toggle_ux`
+- Last checkpoint (UTC): `2026-08-16T14:21:00Z`
+- Current execution started (UTC): `2026-08-16T14:21:00Z`
+- Current execution hard stop (UTC): `2026-08-16T14:41:00Z`
 
 ## Current Objective
 
-Execute V02-005 from `docs/V02_E2E_TEST_PLAN.md`: verify that the successful fresh-chat handoff leaves exactly one active owner, that the new owning tab receives the next GitHub sequence automatically, and that the implementation's `handoffPending` and failure-cleanup paths provide deterministic race protection without forcing an unsafe or unnecessarily destructive browser failure.
+Verify V02-007: after Reloading the unpacked extension at v0.2.1, the Side Panel must expose exactly one session control. When the current tab is stopped it says `Start`; clicking it starts only that tab and changes the same button to `Stop`; clicking `Stop` disables the current-tab Rerun and changes the same button back to `Start`.
 
 ## Completed in This Task
 
-- V02-001 verified: tab-specific Side Panel/config/draft/runtime separation worked.
-- V02-002 verified: duplicate Start on the same GitHub stream in tab B was rejected with the expected error.
-- V02-003 verified: new-sequence auto-dispatch, same-sequence retry, and counter isolation all passed under per-tab runtime.
-- V02-004 verified: user used **Continue in new chat** and reported that the fresh-chat handoff worked.
-- `docs/V02_E2E_RESULT.md` records the successful handoff observation.
-- `docs/TAB_SESSIONS_AND_HANDOFF.md` now states that ChatGPT app approval cards are not auto-clicked by the extension; repeated GitHub app-use approval should be handled by ChatGPT app permissions.
-- At the user's request, the connected ChatGPT GitHub app permission was changed to persisted automatic approval (`full_access`) so ordinary allowed GitHub app use does not require the normal per-use approval prompt where account/workspace/safety policy permits it.
-- PLAN marks V02-004 verified and V02-005 in_progress.
+- V02-001 through V02-004 remain verified.
+- V02-005 had begun after successful fresh-chat handoff but is temporarily paused for the user-requested UX change.
+- Separate footer buttons `Start this tab` and `Stop this tab` were removed from `popup.html`.
+- A single `sessionToggle` button was added; its visible label is `Start` while stopped and `Stop` while running.
+- `popup.js` now reads the latest tab runtime at click time and sends `START_TAB_SESSION` or `STOP_TAB_SESSION` from the same control.
+- Runtime/storage refresh updates the same button label, primary/danger styling, `aria-pressed`, and `aria-label` from `runtime.enabled`.
+- Footer layout was simplified to Save + session toggle.
+- Extension and package version were bumped from `0.2.0` to `0.2.1`.
+- `tests/popup-ui.test.mjs` was added to ensure there is exactly one session-toggle control and both Start/Stop message paths remain present.
+- The actual remote `popup.js`, `popup.html`, and new test were copied into the local validation container after GitHub clone was unavailable in that environment.
 
 ## Verification
 
 | Check | Command / observation | Result | Evidence / note |
 |---|---|---|---|
-| Syntax | `npm run check` | PASS | Previously verified on v0.2 head. |
-| Unit tests | `npm test` | PASS | 20/20 tests. |
-| Manifest JSON | JSON parse | PASS | v0.2 manifest valid. |
-| V02-001 tab/session separation | Chrome user observation | PASS | User confirmed two-tab separation at 23:01 KST. |
-| V02-002 duplicate stream rejection | Chrome Side Panel observation | PASS | User confirmed collision error before 23:07 KST. |
-| V02-003 dispatch/retry/counter isolation | Chrome runtime + user observation | PASS | New sequence + same-sequence retry occurred in tab A; tab B remained at zero. |
-| V02-004 new-chat handoff | Chrome user observation | PASS | User confirmed the `Continue in new chat` probe worked at 23:17 KST. |
-| GitHub app repeated-use permission | ChatGPT app setting | PASS | GitHub app-specific permission changed to `full_access` at user request. |
-| V02-005 new-owner next-sequence continuity | Chrome runtime observation | NOT_RUN | Next seq 4 automatic resume should arrive in the new owning tab. |
-| V02-005 race/failure safeguards | Browser + implementation evidence | IN_PROGRESS | Successful single handoff observed; retain code/test evidence for handoffPending and deterministic cleanup. |
+| New popup JS syntax | `node --check popup.js` against remote file contents | PASS | v0.2.1 `popup.js` parsed successfully. |
+| Single-toggle regression test | `node --test tests/popup-ui.test.mjs` against remote file contents | PASS | 1/1; asserts `sessionToggle`, no separate `start`/`stop` IDs, and both START/STOP message paths. |
+| Existing v0.2 protocol/static baseline | prior validation | PASS | Core background/content/control code was not changed by this UX patch. |
+| Browser V02-007 stopped state | Chrome Side Panel observation | NOT_RUN | Requires unpacked-extension Reload to v0.2.1. |
+| Browser V02-007 Start -> Stop | Chrome Side Panel observation | NOT_RUN | Reload, click Start, verify Running and same button becomes Stop. |
+| Browser V02-007 Stop -> Start | Chrome Side Panel observation | NOT_RUN | Click Stop, verify Stopped/manual and same button becomes Start. |
+| V02-005 new-owner continuity/race safeguards | Chrome/runtime evidence | IN_PROGRESS | Resume after V02-007 browser verification. |
 
 ## Pending / Failed
 
-- Publish seq 4 / continue / V02-005 to control.json last.
-- Confirm the next automatic resume prompt arrives in the new owning ChatGPT tab rather than the old handed-off tab.
-- Use that observation as ownership-continuity evidence after handoff.
-- Review/retain the existing implementation and unit-test evidence for `handoffPending`, pre-transfer failure release, and post-transfer send-failure stop behavior.
-- Do not add extension code that clicks ChatGPT GitHub approval/OAuth/admin approval UI.
-- After V02-005 is sufficiently verified, proceed to V02-006 terminal isolation.
+- Reload the unpacked extension in `chrome://extensions` so local Chrome uses v0.2.1.
+- Open the ChatGPT Rerun Side Panel for the current tab and verify there is one session button, not separate Start/Stop buttons.
+- With the session stopped, confirm the button says `Start`.
+- Click `Start`; confirm the tab becomes Running and the same button changes to `Stop`.
+- Click `Stop`; confirm the tab becomes Stopped with manual stop semantics and the same button changes back to `Start`.
+- Record V02-007 evidence, then resume V02-005 and V02-006.
 
 ## Files / Areas Touched
 
-- `docs/V02_E2E_RESULT.md`: V02-004 PASS and GitHub app-permission note.
-- `docs/TAB_SESSIONS_AND_HANDOFF.md`: app permission vs extension/UI-automation responsibility documented.
-- `.chatgpt-rerun/PLAN.md`: V02-004 verified; V02-005 in_progress.
-- `.chatgpt-rerun/STATE.md`: advanced to seq 4 / V02-005.
+- `popup.html`: one `sessionToggle` button replaces separate Start/Stop controls.
+- `popup.js`: state-driven toggle action and rendering.
+- `popup.css`: two-column footer and disabled-button treatment.
+- `tests/popup-ui.test.mjs`: UI regression guard.
+- `manifest.json`, `package.json`: version `0.2.1`.
+- `.chatgpt-rerun/PLAN.md`: V02-007 added as an explicit acceptance gate.
+- `.chatgpt-rerun/STATE.md`: Reload/browser-verification checkpoint.
 
 ## Next Exact Action
 
-After control seq 4 is published, wait for the configured automatic resume prompt. It must arrive in the new owning ChatGPT tab created by the successful handoff. On that execution, read the mandatory documents, record the new-owner continuity evidence, and finish V02-005 using the successful single-handoff observation plus existing implementation/tests for `handoffPending` and deterministic failure cleanup. Do not force a destructive failure solely to manufacture evidence if the safeguard is already adequately covered by code/tests.
+User Reloads the unpacked extension from the latest `agent/mvp-autoresume` checkout. Then inspect the current tab Side Panel: verify the stopped state shows exactly one `Start` control, click it and verify the same control becomes `Stop` while Running, click `Stop` and verify it becomes `Start` while Stopped. Report the observed result. After V02-007 is verified, restore the active run to `continue` and resume V02-005 from the successful fresh-chat handoff checkpoint.
 
 ## Do Not Repeat
 
-- Do not repeat V02-001, V02-002, V02-003, or V02-004.
-- Do not rerun static validation unless code changes.
-- Do not manually copy prior conversation text into the new chat.
-- Do not change GitHub sequence merely because a chat changes; seq 4 is this task's normal progression after V02-004 verification.
+- Do not repeat V02-001 through V02-004.
+- Do not rely on the locally loaded 0.2.0 Side Panel to verify V02-007.
+- Do not create separate Start/Stop controls again; runtime state must drive one control.
+- Do not resume V02-005 automatic progression until the user has Reloaded 0.2.1.
 - Do not automate ChatGPT app approval, OAuth authorization, or administrator-approval button clicks in the extension.
 
 ## Blockers / User Decisions
 
-- None. The next expected event is automatic seq 4 delivery in the new owning tab.
+- User action required: Reload the unpacked extension to v0.2.1 and perform the short Start -> Stop -> Start UI probe.

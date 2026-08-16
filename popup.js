@@ -1,13 +1,17 @@
 import {
-  DEFAULT_SETTINGS,
+  DEFAULT_CONFIG,
+  DEFAULT_RUNTIME,
   effectivePollInterval,
   effectiveRetryDelay,
   normalizeMaxRetries,
   normalizeMaxRuns,
-  streamKey
+  streamKey,
+  tabConfigKey,
+  tabDraftKey,
+  tabRuntimeKey
 } from "./control.js";
 
-const DRAFT_KEY = "formDraft";
+const LEGACY_DRAFT_KEY = "formDraft";
 const ids = [
   "owner",
   "repo",
@@ -25,12 +29,26 @@ const elements = Object.fromEntries(ids.map((id) => [id, document.getElementById
 const statusLine = document.getElementById("statusLine");
 const statusDot = document.getElementById("statusDot");
 const errorBox = document.getElementById("errorBox");
+let currentTabId = null;
 
+const activeTab = await getActiveChatGptTab();
+currentTabId = activeTab.id;
+await migrateLegacySession(currentTabId);
 await loadForm();
 await refreshRuntime();
 setInterval(refreshRuntime, 1000);
 
-chrome.storage.onChanged.addListener(() => refreshRuntime());
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local") return;
+  const relevantKeys = new Set([
+    tabConfigKey(currentTabId),
+    tabRuntimeKey(currentTabId),
+    tabDraftKey(currentTabId)
+  ]);
+  if (Object.keys(changes).some((key) => relevantKeys.has(key))) {
+    void refreshRuntime();
+  }
+});
 
 for (const element of Object.values(elements)) {
   element.addEventListener("input", () => {
@@ -42,7 +60,7 @@ for (const element of Object.values(elements)) {
 document.getElementById("save").addEventListener("click", async () => {
   try {
     await saveSettings({ requireTarget: false });
-    await refreshRuntime("Saved");
+    await refreshRuntime("Saved for this tab");
   } catch (error) {
     showError(error);
   }
@@ -52,56 +70,97 @@ document.getElementById("start").addEventListener("click", async () => {
   try {
     await persistFormDraft();
     await saveSettings({ requireTarget: true });
-
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id || !isChatGptUrl(tab.url || "")) {
-      throw new Error("활성 ChatGPT 탭을 선택한 상태에서 Start를 눌러주세요.");
-    }
-
-    await ensureContentScript(tab.id);
-
-    await chrome.storage.local.set({
-      enabled: true,
-      targetTabId: tab.id,
-      stopReason: null,
-      lastError: null,
-      pendingSequence: null,
-      pendingRunId: null,
-      pendingIsRetry: false
+    const response = await chrome.runtime.sendMessage({
+      type: "START_TAB_SESSION",
+      tabId: currentTabId
     });
-
-    const wake = await chrome.tabs.sendMessage(tab.id, { type: "RERUN_WAKE" });
-    if (!wake?.ready) {
-      throw new Error("ChatGPT 탭의 rerun content script가 응답하지 않습니다.");
-    }
-
-    await refreshRuntime("Running on current ChatGPT tab");
+    if (!response?.ok) throw new Error(response?.error || "Start failed");
+    await refreshRuntime(`Running on tab ${currentTabId}`);
   } catch (error) {
-    await chrome.storage.local.set({ enabled: false, stopReason: "start_failed" });
     showError(error);
   }
 });
 
 document.getElementById("stop").addEventListener("click", async () => {
-  await chrome.storage.local.set({
-    enabled: false,
-    stopReason: "manual",
-    pendingSequence: null,
-    pendingRunId: null,
-    pendingIsRetry: false
-  });
-  await refreshRuntime();
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "STOP_TAB_SESSION",
+      tabId: currentTabId,
+      reason: "manual"
+    });
+    if (!response?.ok) throw new Error(response?.error || "Stop failed");
+    await refreshRuntime();
+  } catch (error) {
+    showError(error);
+  }
 });
 
+document.getElementById("handoff").addEventListener("click", async () => {
+  try {
+    await persistFormDraft();
+    await saveSettings({ requireTarget: true });
+    statusLine.textContent = "Opening a new ChatGPT tab…";
+    const response = await chrome.runtime.sendMessage({
+      type: "HANDOFF_NEW_CHAT",
+      tabId: currentTabId
+    });
+    if (!response?.ok) throw new Error(response?.error || "New-chat handoff failed");
+    await refreshRuntime(`Handed off to tab ${response.newTabId}`);
+  } catch (error) {
+    showError(error);
+  }
+});
+
+async function getActiveChatGptTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !isChatGptUrl(tab.url || "")) {
+    throw new Error("이 Side Panel은 활성 ChatGPT 탭에서 열어주세요.");
+  }
+  return tab;
+}
+
+async function migrateLegacySession(tabId) {
+  const configKey = tabConfigKey(tabId);
+  const runtimeKey = tabRuntimeKey(tabId);
+  const draftKey = tabDraftKey(tabId);
+  const existing = await chrome.storage.local.get([configKey, runtimeKey, draftKey]);
+  if (existing[configKey] || existing[runtimeKey] || existing[draftKey]) return;
+
+  const legacy = await chrome.storage.local.get(null);
+  const config = { ...DEFAULT_CONFIG };
+  for (const key of Object.keys(DEFAULT_CONFIG)) {
+    if (legacy[key] !== undefined) config[key] = legacy[key];
+  }
+
+  const runtime = { ...DEFAULT_RUNTIME };
+  if (Number(legacy.targetTabId) === tabId) {
+    for (const key of Object.keys(DEFAULT_RUNTIME)) {
+      if (legacy[key] !== undefined) runtime[key] = legacy[key];
+    }
+  }
+
+  const legacyDraft = legacy[LEGACY_DRAFT_KEY] && typeof legacy[LEGACY_DRAFT_KEY] === "object"
+    ? legacy[LEGACY_DRAFT_KEY]
+    : config;
+
+  await chrome.storage.local.set({
+    [configKey]: config,
+    [runtimeKey]: runtime,
+    [draftKey]: legacyDraft
+  });
+}
+
 async function loadForm() {
-  const stored = await chrome.storage.local.get(null);
-  const settings = { ...DEFAULT_SETTINGS, ...stored };
-  const draft = stored[DRAFT_KEY] && typeof stored[DRAFT_KEY] === "object"
-    ? stored[DRAFT_KEY]
+  const configKey = tabConfigKey(currentTabId);
+  const draftKey = tabDraftKey(currentTabId);
+  const stored = await chrome.storage.local.get([configKey, draftKey]);
+  const config = { ...DEFAULT_CONFIG, ...(stored[configKey] || {}) };
+  const draft = stored[draftKey] && typeof stored[draftKey] === "object"
+    ? stored[draftKey]
     : {};
 
   for (const id of ids) {
-    elements[id].value = draft[id] ?? settings[id] ?? "";
+    elements[id].value = draft[id] ?? config[id] ?? "";
   }
 }
 
@@ -110,11 +169,18 @@ function collectFormDraft() {
 }
 
 async function persistFormDraft() {
-  await chrome.storage.local.set({ [DRAFT_KEY]: collectFormDraft() });
+  await chrome.storage.local.set({
+    [tabDraftKey(currentTabId)]: collectFormDraft()
+  });
 }
 
 async function saveSettings({ requireTarget }) {
-  const before = { ...DEFAULT_SETTINGS, ...(await chrome.storage.local.get(null)) };
+  const configKey = tabConfigKey(currentTabId);
+  const runtimeKey = tabRuntimeKey(currentTabId);
+  const stored = await chrome.storage.local.get([configKey, runtimeKey]);
+  const before = { ...DEFAULT_CONFIG, ...(stored[configKey] || {}) };
+  const runtime = { ...DEFAULT_RUNTIME, ...(stored[runtimeKey] || {}) };
+
   const token = elements.githubToken.value.trim();
   const pollIntervalSeconds = effectivePollInterval(
     elements.pollIntervalSeconds.value,
@@ -124,8 +190,8 @@ async function saveSettings({ requireTarget }) {
     owner: elements.owner.value.trim(),
     repo: elements.repo.value.trim(),
     branch: elements.branch.value.trim() || "main",
-    path: elements.path.value.trim() || DEFAULT_SETTINGS.path,
-    resumePrompt: elements.resumePrompt.value || DEFAULT_SETTINGS.resumePrompt,
+    path: elements.path.value.trim() || DEFAULT_CONFIG.path,
+    resumePrompt: elements.resumePrompt.value || DEFAULT_CONFIG.resumePrompt,
     githubToken: token,
     pollIntervalSeconds,
     retryDelaySeconds: effectiveRetryDelay(elements.retryDelaySeconds.value, pollIntervalSeconds),
@@ -138,8 +204,10 @@ async function saveSettings({ requireTarget }) {
   }
 
   const changedStream = streamKey(before) !== streamKey(next);
-  const reset = changedStream
+  const nextRuntime = changedStream
     ? {
+        ...runtime,
+        enabled: false,
         lastRunId: null,
         lastHandledSequence: -1,
         lastSentAt: null,
@@ -148,12 +216,20 @@ async function saveSettings({ requireTarget }) {
         pendingRunId: null,
         pendingIsRetry: false,
         runCount: 0,
+        stopReason: null,
+        lastError: null,
         lastStatus: null,
-        lastSequence: null
+        lastSequence: null,
+        handoffPending: false,
+        handoffFromTabId: null,
+        handoffToTabId: null
       }
-    : {};
+    : runtime;
 
-  await chrome.storage.local.set({ ...next, ...reset });
+  await chrome.storage.local.set({
+    [configKey]: next,
+    [runtimeKey]: nextRuntime
+  });
 
   elements.branch.value = next.branch;
   elements.path.value = next.path;
@@ -164,40 +240,28 @@ async function saveSettings({ requireTarget }) {
   await persistFormDraft();
 }
 
-async function ensureContentScript(tabId) {
-  try {
-    const ping = await chrome.tabs.sendMessage(tabId, { type: "RERUN_PING" });
-    if (ping?.ready) return;
-  } catch {
-    // The tab may have been open before the extension was loaded/reloaded.
-  }
-
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ["content.js"]
-  });
-
-  const ping = await chrome.tabs.sendMessage(tabId, { type: "RERUN_PING" });
-  if (!ping?.ready) {
-    throw new Error("ChatGPT 탭에 rerun content script를 주입하지 못했습니다.");
-  }
-}
-
 async function refreshRuntime(transientMessage) {
-  const settings = { ...DEFAULT_SETTINGS, ...(await chrome.storage.local.get(null)) };
-  statusDot.classList.toggle("running", Boolean(settings.enabled));
-  statusLine.textContent = transientMessage || (settings.enabled ? "Running" : `Stopped${settings.stopReason ? ` · ${settings.stopReason}` : ""}`);
-  document.getElementById("runId").textContent = settings.lastRunId || "-";
-  document.getElementById("sequence").textContent = settings.lastSequence ?? "-";
-  document.getElementById("githubStatus").textContent = settings.lastStatus || "-";
-  document.getElementById("runCount").textContent = String(settings.runCount || 0);
-  document.getElementById("retryCount").textContent = `${settings.sameSequenceRetryCount || 0}/${settings.maxRetriesPerSequence}`;
-  document.getElementById("lastSentAt").textContent = formatTime(settings.lastSentAt);
-  document.getElementById("rateLimit").textContent = settings.rateLimitRemaining ?? "-";
+  if (currentTabId === null) return;
+  const key = tabRuntimeKey(currentTabId);
+  const stored = await chrome.storage.local.get(key);
+  const runtime = { ...DEFAULT_RUNTIME, ...(stored[key] || {}) };
 
-  if (settings.lastError) {
+  statusDot.classList.toggle("running", Boolean(runtime.enabled));
+  statusLine.textContent = transientMessage || (runtime.enabled
+    ? `Running · tab ${currentTabId}`
+    : `Stopped · tab ${currentTabId}${runtime.stopReason ? ` · ${runtime.stopReason}` : ""}`);
+  document.getElementById("tabId").textContent = String(currentTabId);
+  document.getElementById("runId").textContent = runtime.lastRunId || "-";
+  document.getElementById("sequence").textContent = runtime.lastSequence ?? "-";
+  document.getElementById("githubStatus").textContent = runtime.lastStatus || "-";
+  document.getElementById("runCount").textContent = String(runtime.runCount || 0);
+  document.getElementById("retryCount").textContent = `${runtime.sameSequenceRetryCount || 0}/${elements.maxRetriesPerSequence.value || DEFAULT_CONFIG.maxRetriesPerSequence}`;
+  document.getElementById("lastSentAt").textContent = formatTime(runtime.lastSentAt);
+  document.getElementById("rateLimit").textContent = runtime.rateLimitRemaining ?? "-";
+
+  if (runtime.lastError) {
     errorBox.hidden = false;
-    errorBox.textContent = settings.lastError;
+    errorBox.textContent = runtime.lastError;
   } else if (!transientMessage) {
     hideError();
   }

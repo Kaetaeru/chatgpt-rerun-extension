@@ -3,7 +3,7 @@
   "run_id": "chatgpt-rerun-v02-20260816-01",
   "sequence": 9,
   "status": "needs_user",
-  "reason": "v0.2.8 automatically hands off a confirmed failed resume dispatch from an exhausted chat to a fresh ChatGPT tab; reload before browser verification.",
-  "updated_at": "2026-08-16T18:12:00Z",
+  "reason": "v0.2.9 fixes the stale Rerun prompt being mistaken for a user draft before automatic exhausted-chat handoff; reload before browser verification.",
+  "updated_at": "2026-08-16T18:20:00Z",
   "task_id": "V02-009"
 }

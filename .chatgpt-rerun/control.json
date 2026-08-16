@@ -3,7 +3,7 @@
   "run_id": "chatgpt-rerun-v02-20260816-01",
   "sequence": 5,
   "status": "needs_user",
-  "reason": "v0.2.3 adds explicit Rerun connection-prompt onboarding plus the unified Start/Stop toggle; reload the unpacked extension before browser verification.",
-  "updated_at": "2026-08-16T14:51:00Z",
+  "reason": "v0.2.4 separates the Chrome tab watcher from GitHub work status; reload the unpacked extension before browser verification.",
+  "updated_at": "2026-08-16T15:02:00Z",
   "task_id": "V02-007"
 }

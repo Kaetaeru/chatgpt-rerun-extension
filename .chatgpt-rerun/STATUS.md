@@ -6,59 +6,51 @@
 
 | Item | Current |
 |---|---|
-| Last updated | `2026-08-16T16:05:00Z` (01:05 KST, Aug 17) |
+| Last updated | `2026-08-16T17:20:00Z` (02:20 KST, Aug 17) |
 | Run | `chatgpt-rerun-v02-20260816-01` |
-| Sequence | `8` |
-| GitHub work status | `complete` |
-| Final task | `V02-008` |
-| Extension version | `0.2.5` |
-| Browser E2E | V02-001~008 PASS |
-| `npm run check` | PASS |
-| `npm test` | PASS — 38/38 |
-| Formal project DoD | COMPLETE |
+| Sequence | `9` |
+| GitHub work status | `needs_user` |
+| Current task | `V02-009` |
+| Extension version to verify | `0.2.6` |
+| Previous V02-001~008 | PASS |
+| v0.2.6 targeted syntax | PASS |
+| v0.2.6 auto-submit tests | PASS — 4/4 |
+| Formal project DoD | REOPENED FOR AUTO-SUBMIT REGRESSION |
 
-## 완료 상태
+## 발견된 회귀
 
-ChatGPT Rerun v0.2.5 dogfood run이 완료됐습니다.
+사용자가 Start를 눌렀을 때 Rerun 재개 프롬프트가 ChatGPT 입력창에는 들어가지만 실제 전송이 바로 되지 않는 현상을 확인했습니다.
 
-마지막 남은 V02-008 신규 프로젝트 온보딩도 사용자가 요청된 최종 절차를 수행한 뒤 `다 됐어.`라고 확인했습니다. 따라서 신규 탭의 unconnected-first 연결 흐름까지 browser acceptance가 완료됐습니다.
+이 동작은 정상 동작이 아닙니다. Rerun의 자동 dispatch는 **프롬프트 입력 + 실제 전송**까지 포함해야 합니다. 사용자가 별도로 Send를 누르거나 Enter를 눌러야 한다면 실패입니다.
 
-최신 branch의 정확한 GitHub blobs로 임시 checkout을 구성해 전체 검증도 다시 수행했습니다.
+## v0.2.6 수정
 
-- `npm run check`: PASS
-- `npm test`: 38 passed / 0 failed
-- `manifest.json` parse: PASS
-- `package.json` parse: PASS
+`content.js`의 제출 경로를 보강했습니다.
 
-첫 전체 테스트에서 오래된 regression assertion 한 건이 현재 `content.js` 구현 문법과 맞지 않아 실패했습니다. 제품 기능 실패가 아니라 테스트가 `RERUN_CONNECT` 추가 전의 조건문 형태를 기대하던 문제였습니다. `tests/bootstrap-flow.test.mjs`를 현재 세 direct-prompt 메시지 계약에 맞게 수정한 뒤 전체 suite가 38/38 PASS했습니다.
+1. 프롬프트 삽입 뒤 explicit input/change 이벤트로 ChatGPT editor state 동기화 시도
+2. 실제 composer에 프롬프트가 들어갔는지 확인
+3. 활성 Send 버튼을 최대 4초 기다린 뒤 클릭
+4. 활성 Send 버튼이 나타나지 않으면 Enter 제출 fallback
+5. composer가 비워지거나 사라지거나 ChatGPT 생성이 시작된 것을 확인한 뒤에만 sequence ACK
+6. 제출 증거가 없으면 성공한 척하지 않고 send failure 처리
 
-## Final progress
+새 `tests/content-send.test.mjs`를 추가했고 exact v0.2.6 `content.js`에 대해 문법 확인 및 targeted tests 4/4가 통과했습니다.
 
-| Task | Result | 사용자 관점 요약 |
-|---|---|---|
-| V02-001 탭별 세션 분리 | PASS | 탭별 설정/runtime 독립 |
-| V02-002 동일 stream 충돌 차단 | PASS | 중복 watcher 방지 |
-| V02-003 dispatch/retry | PASS | 새 sequence와 제한적 retry 정상 |
-| V02-004 새 채팅 이어가기 | PASS | GitHub 상태 기반 handoff 정상 |
-| V02-005 handoff 보호 | PASS | race/failure cleanup 경로 검증 |
-| V02-006 persistent watcher | PASS | terminal에서도 Watching, 이후 continue 자동 재개 |
-| V02-007 Start/Stop watcher | PASS | 단일 버튼 왕복 정상 |
-| V02-008 신규 연결 | PASS | Unconnected-first 신규 프로젝트 온보딩 정상 |
+## 지금 필요한 확인
 
-## 현재 동작 의미
-
-GitHub control은 `complete`입니다. 이것은 **현재 dogfood 작업이 완료됐다는 뜻**이며 Chrome watcher를 강제로 끄는 신호가 아닙니다.
-
-현재 탭 watcher가 여전히 Watching이라면 설정된 주기로 GitHub를 계속 확인할 수 있습니다. 미래에 이 run 또는 새로운 유효 control이 `continue`로 게시되면 watcher 정책에 따라 다시 평가할 수 있습니다.
+1. `chrome://extensions`에서 ChatGPT Rerun **v0.2.6**을 Reload합니다.
+2. 이 탭의 watcher는 Reload 뒤 다시 Start할 수 있습니다.
+3. GitHub work state는 현재 `needs_user`라 자동 실행하지 않습니다.
+4. Reload가 끝났다고 알려주면 GitHub를 `continue`로 전환해 자동 프롬프트가 **입력뿐 아니라 실제 전송까지 되는지** 확인합니다.
 
 ## Blockers / risks
 
-- 현재 blocker 없음.
+- 실제 ChatGPT UI에서의 v0.2.6 제출 동작은 아직 browser NOT_RUN입니다.
+- 이전 V02-001~008 증거는 그대로 유효하며 반복하지 않습니다.
 - PR #1은 사용자 요청 없이 merge하지 않습니다.
-- 이후 코드가 변경되면 해당 변경이 영향을 주는 acceptance evidence는 다시 검증해야 합니다.
 
 ## Freshness policy
 
-완료 상태에서 실제 진행이 없으면 시각만 갱신하는 heartbeat commit은 만들지 않습니다. 향후 상태나 작업이 의미 있게 바뀌면 STATUS를 다시 갱신합니다.
+의미 있는 상태/task/검증 변화가 있으면 즉시 갱신합니다. 내용이 동일하면 시각만 바꾸는 heartbeat commit은 만들지 않습니다.
 
 STATUS는 presentation-only이며 자동화 판단에는 사용하지 않습니다.

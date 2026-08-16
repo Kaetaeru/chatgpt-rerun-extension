@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildNewChatHandoffPrompt,
   buildRepositoryBootstrapPrompt,
+  buildRerunConnectionPrompt,
   continuationDisposition,
   effectivePollInterval,
   effectiveRetryDelay,
@@ -186,6 +187,34 @@ test("runtime storage key parses its tab ID", () => {
 test("invalid tab IDs are rejected", () => {
   assert.throws(() => tabConfigKey(-1), /valid Chrome tab ID/);
   assert.throws(() => tabRuntimeKey("x"), /valid Chrome tab ID/);
+});
+
+test("Rerun connection prompt can identify the repository from conversation context", () => {
+  const prompt = buildRerunConnectionPrompt();
+
+  assert.match(prompt, /현재 대화의 GitHub 사용 맥락/);
+  assert.match(prompt, /후보가 둘 이상이거나 확신이 없으면/);
+  assert.match(prompt, /README\.md/);
+  assert.match(prompt, /PLAN\.md/);
+  assert.match(prompt, /STATE\.md/);
+  assert.match(prompt, /STATUS\.md/);
+  assert.match(prompt, /control\.json/);
+  assert.match(prompt, /기존 run_id, sequence, task, 검증 기록을 초기화하거나 덮어쓰지 마/);
+  assert.match(prompt, /마지막 authoritative write/);
+  assert.match(prompt, /실제 구현 task를 시작하지 말고 종료/);
+});
+
+test("Rerun connection prompt treats side-panel coordinates as a hint", () => {
+  const prompt = buildRerunConnectionPrompt({
+    owner: "example",
+    repo: "project",
+    branch: "dev",
+    path: ".chatgpt-rerun/control.json"
+  });
+
+  assert.match(prompt, /example\/project/);
+  assert.match(prompt, /branch dev/);
+  assert.match(prompt, /실제로 작업 중인 저장소와 일치하는지 확인/);
 });
 
 test("auto-bootstrap only applies to the standard control path", () => {

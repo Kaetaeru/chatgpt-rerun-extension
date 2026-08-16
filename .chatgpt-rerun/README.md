@@ -14,16 +14,31 @@
 8. `docs/TAB_SESSIONS_AND_HANDOFF.md`
 9. 저장소 고유 지침과 현재 task 관련 코드/테스트/최근 변경사항
 
-현재 active dogfood run은 v0.2/v0.2.1다. 과거 `docs/E2E_TEST_PLAN.md` / `docs/E2E_RESULT.md`는 v0.1 역사적 evidence이며, 현재 run의 PASS 판정에 사용하지 않는다.
+현재 active dogfood run은 v0.2.x다. 과거 `docs/E2E_TEST_PLAN.md` / `docs/E2E_RESULT.md`는 v0.1 역사적 evidence이며, 현재 run의 PASS 판정에 사용하지 않는다.
 
 ## Source-of-truth roles
 
 - `PLAN.md`: 무엇을 완료해야 하는가.
 - `STATE.md`: 지금 어디까지 했고 다음 authoritative control에 어떤 상태를 게시해야 하는가.
-- `control.json`: 확장프로그램이 실행 여부를 판단하는 최소 machine signal.
+- `control.json`: GitHub 쪽 work state와 sequence/task를 표현하는 최소 machine signal.
 - `STATUS.md`: 사용자가 GitHub에서 현황을 즉시 이해하도록 만드는 **presentation-only human dashboard**.
 
 `STATUS.md`는 source of truth가 아니다. STATUS와 PLAN/STATE/control이 충돌하면 PLAN/STATE/control을 우선하고 STATUS를 다시 생성한다. STATUS를 근거로 sequence/status/task를 추측하거나 reconciliation하지 않는다.
+
+## Chrome tab watcher vs GitHub work state
+
+v0.2.4부터 Chrome 탭의 Start/Stop과 GitHub control 상태를 서로 다른 축으로 취급한다.
+
+- Side Panel `Start`: 현재 ChatGPT 탭의 GitHub watcher를 켠다. watcher가 켜져 있는 동안 설정된 polling 주기로 control을 계속 확인한다.
+- Side Panel `Stop`: 현재 탭 watcher를 명시적으로 끈다.
+- `control.status=continue`: GitHub 쪽 작업 시작/재개 신호다. watcher가 켜져 있고 안전 조건을 만족하면 자동 resume prompt를 보낸다.
+- `complete`, `needs_user`, `blocked`: 현재 GitHub 작업의 dispatch 대기 상태다. **이 상태만으로 Chrome watcher를 끄지 않는다.** watcher는 계속 polling한다.
+- terminal 상태 뒤 GitHub가 다시 `continue`가 되면, 같은 sequence라도 terminal -> continue 전환을 새로운 실행 허가로 보고 즉시 재개할 수 있어야 한다.
+- `max sends`, retry limit, sequence regression 같은 dispatch guard도 watcher 자체를 끄지 않고 계속 관찰한다. 새 run/새 유효 상태가 오면 다시 평가한다.
+- 사용자 composer draft 보호, prompt 전송 실패, bootstrap/handoff 실패처럼 브라우저 안전을 위해 명시적 중지가 필요한 경우는 예외다.
+- 탭이 닫히면 그 tab ID의 watcher/config/runtime은 제거된다. 확장프로그램이 꺼져 있으면 polling도 없다.
+
+따라서 GitHub의 `complete`는 "확장프로그램 Stop"이 아니라 "현재 작업 완료, 다음 GitHub work signal을 기다림"을 뜻한다.
 
 ## Human-readable live status
 
@@ -60,6 +75,8 @@ STATUS에는 최소한 다음 정보를 유지한다.
 - Recoverable pending handoff: STATE.Sequence가 control.sequence보다 정확히 1 크고 이전 task 검증 완료 및 새 intended status/task가 명확하면 이전 task를 반복하지 않고 control handoff만 게시한 뒤 이번 실행을 종료한다.
 - Unsafe mismatch: run_id 불일치, control이 STATE보다 앞섬, STATE가 2 이상 앞섬, 같은 sequence에서 status/task 모순은 작업을 추측으로 진행하지 말고 `needs_user`로 안전 정지한다.
 
+여기서 `needs_user`로 안전 정지한다는 것은 **GitHub work state를 needs_user로 게시한다는 뜻**이다. Chrome watcher가 켜져 있다면 watcher는 계속 GitHub를 관찰한다.
+
 ## Hard execution time budget
 
 **한 번의 ChatGPT 실행은 시작부터 종료까지 반드시 20분을 넘기지 않는다.** 이 제한은 sequence 전체가 아니라 개별 실행(turn)에 적용된다. 같은 sequence는 여러 실행에 걸쳐 재개할 수 있다.
@@ -86,17 +103,20 @@ STATUS에는 최소한 다음 정보를 유지한다.
 7. control 게시 후 STATUS가 달라졌다면 presentation-only STATUS를 갱신할 수 있다.
 8. 작업 중에는 current `continue` sequence를 유지한다. `working`을 사용하지 않는다.
 9. 한 탭의 runtime evidence를 다른 탭의 evidence로 추정하지 않는다.
-10. 같은 GitHub control stream은 두 탭이 동시에 소유하지 않는다.
+10. 같은 GitHub control stream은 두 탭이 동시에 watcher ownership을 갖지 않는다.
 11. 새 채팅 handoff는 이전 대화 본문이 아니라 GitHub README/control/STATE/PLAN을 기준으로 복구한다.
 12. assistant output을 파싱해 token/context-limit 문구를 감지하지 않는다.
+13. terminal GitHub status를 Chrome watcher Stop으로 해석하지 않는다.
 
 ## Per-tab and new-chat invariants
 
 - 설정, runtime, draft는 Chrome tab ID별로 독립적이어야 한다.
-- Start/Stop은 해당 탭 세션에만 적용되어야 한다.
-- 동일 owner/repo/branch/control path를 이미 실행 중인 다른 탭이 있으면 두 번째 Start는 거부한다.
-- `Continue in new chat` handoff 중 기존 탭은 `handoffPending`으로 normal polling을 멈춘다.
-- handoff 성공 시 새 탭이 같은 GitHub run/sequence의 소유권을 이어받고 기존 탭은 중지한다.
+- Start/Stop은 해당 탭 watcher에만 적용되어야 한다.
+- 동일 owner/repo/branch/control path를 이미 감시 중인 다른 탭이 있으면 두 번째 Start는 거부한다.
+- watcher가 켜져 있으면 `complete`, `needs_user`, `blocked`에서도 polling을 계속한다.
+- terminal -> `continue` 전환은 같은 sequence라도 즉시 재개 가능해야 한다.
+- `Continue in new chat` handoff 중 기존 탭은 `handoffPending`으로 normal polling을 잠시 멈춘다.
+- handoff 성공 시 새 탭이 같은 GitHub run/sequence의 watcher ownership을 이어받고 기존 탭 watcher는 중지한다.
 - 대화가 바뀌었다는 이유만으로 GitHub sequence를 증가시키지 않는다.
 
 ## Verification
@@ -106,3 +126,5 @@ STATUS에는 최소한 다음 정보를 유지한다.
 ## Completion
 
 `PLAN.md`의 현재 Definition of Done과 실행 가능한 acceptance criteria가 충족되기 전 `complete`를 게시하지 않는다. 완료 시 PLAN을 먼저 완료 상태로 만들고 STATE를 다음 sequence / `complete`로 갱신한 뒤 control을 마지막 authoritative write로 일치시킨다. 이후 STATUS를 완료 상태로 갱신할 수 있다. 고정된 terminal sequence 번호를 가정하지 않는다.
+
+`complete`가 게시되어도 Chrome watcher가 켜져 있으면 watcher는 계속 polling하며, 향후 GitHub control이 다시 `continue`가 되었을 때 새 작업을 재개할 수 있다.

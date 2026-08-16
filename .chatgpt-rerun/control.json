@@ -1,9 +1,9 @@
 {
   "version": 1,
   "run_id": "chatgpt-rerun-dogfood-20260816-02",
-  "sequence": 0,
+  "sequence": 1,
   "status": "continue",
-  "reason": "Startup fixes applied; retest Side Panel persistence and initial automatic dispatch.",
-  "updated_at": "2026-08-16T13:17:00Z",
-  "task_id": "E2E-001"
+  "reason": "E2E-001 seq 0 startup completed; start the same-sequence retry probe.",
+  "updated_at": "2026-08-16T13:31:00Z",
+  "task_id": "E2E-002"
 }

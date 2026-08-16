@@ -191,8 +191,7 @@ async function actionForControl(settings, control, intervalSeconds, now) {
 
   const maxRuns = normalizeMaxRuns(settings.maxRuns);
   if (Number(settings.runCount || 0) >= maxRuns) {
-    await stopSession("max_runs");
-    return { action: "stop", reason: "max_runs", control };
+    return { action: "stop_when_idle", reason: "max_runs", control };
   }
 
   const disposition = continuationDisposition(
@@ -209,8 +208,7 @@ async function actionForControl(settings, control, intervalSeconds, now) {
   }
 
   if (disposition.action === "retry_limit") {
-    await stopSession("retry_limit");
-    return { action: "stop", reason: "retry_limit", control };
+    return { action: "stop_when_idle", reason: "retry_limit", control };
   }
 
   if (disposition.action !== "send") {

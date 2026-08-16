@@ -2,7 +2,7 @@
 
 ## Goal
 
-Validate ChatGPT Rerun v0.2.x after the architecture evolved to independent per-tab runtimes, GitHub-backed fresh-chat handoff, persistent tab watchers independent from GitHub work state, human-readable STATUS, explicit unconnected-first project onboarding, reliable automatic prompt submission, and automatic fresh-chat recovery when an exhausted current chat cannot dispatch.
+Validate ChatGPT Rerun v0.2.x after the architecture evolved to independent per-tab runtimes, GitHub-backed fresh-chat handoff, persistent tab watchers independent from GitHub work state, explicit unconnected-first onboarding, reliable automatic prompt submission, automatic exhausted-chat recovery, and rate-limit-resilient GitHub polling.
 
 ## Definition of Done
 
@@ -15,8 +15,9 @@ Validate ChatGPT Rerun v0.2.x after the architecture evolved to independent per-
 - [x] V02-007 single state-driven Start/Stop watcher toggle verified.
 - [x] V02-008 unconnected-first Rerun connection onboarding verified on a separate safe project.
 - [ ] V02-009 current-tab resume prompt is automatically submitted without manual Send/Enter.
-- [ ] V02-009 an exhausted chat with a stale Rerun-owned prompt automatically transfers the watcher to a fresh chat.
-- [ ] V02-009 fresh-chat handoff auto-submits its prompt and works under both `continue` and terminal GitHub work states.
+- [ ] V02-009 exhausted/stale-Rerun-prompt path transfers watcher to one fresh chat while user drafts remain protected.
+- [ ] V02-009 fresh-chat handoff auto-submits and works under both `continue` and terminal GitHub work states.
+- [ ] V02-009 GitHub REST rate limits pause polling without stopping the watcher, then auto-resume.
 - [ ] V02-009 browser evidence is recorded.
 - [ ] No unresolved blocker remains.
 
@@ -24,27 +25,28 @@ Validate ChatGPT Rerun v0.2.x after the architecture evolved to independent per-
 
 - Do not merge PR #1 as part of this automated run.
 - Authoritative state writes use PLAN -> STATE -> control.json; control is the last authoritative write.
-- `.chatgpt-rerun/STATUS.md` is presentation-only and is never used for reconciliation.
+- `.chatgpt-rerun/STATUS.md` is presentation-only and never participates in reconciliation.
 - One ChatGPT execution must end before the 20-minute hard stop; around 18 minutes checkpoint first.
 - Do not parse assistant output or limit-message text to detect context/token limits.
 - Do not automate ChatGPT app approval, OAuth, or administrator-approval clicks.
-- `runtime.enabled` is the current-tab GitHub watcher on/off state, independent of GitHub work status.
-- `continue` is the GitHub work-start/resume signal; `complete`, `needs_user`, `blocked` pause implementation dispatch but do not stop a watcher.
-- `Continue in new chat` transfers watcher ownership and must not be blocked solely because GitHub work status is terminal.
-- Automatic dispatch means both composing the prompt and submitting it; leaving text in the composer is failure.
-- A non-empty composer is protected as a user draft unless its normalized text exactly matches the resume prompt Rerun is currently trying to dispatch.
-- An exact Rerun-owned stale prompt may trigger fresh-chat handoff without being mistaken for a user draft.
-- Confirmed post-insertion dispatch failure and prompt/editor synchronization failure may trigger one automatic fresh-chat handoff; direct fresh-chat handoff submission itself must not recurse.
-- Prompt submission remains content-blind and requires observable dispatch evidence before sequence ACK.
+- `runtime.enabled` is the current-tab GitHub watcher on/off state, independent from GitHub work status.
+- `continue` is work start/resume; `complete`, `needs_user`, `blocked` pause implementation dispatch but do not stop a watcher.
+- GitHub REST `403/429` rate limiting is also not a watcher Stop. Respect GitHub reset/retry timing and keep the watcher enabled.
+- Unauthenticated polling must reserve headroom below GitHub's public REST quota and share that budget across enabled unauthenticated watchers.
+- Authenticated polling may run at the existing 5-second minimum and should retain conditional ETag requests.
+- Automatic dispatch means compose + actual submit; leaving text in the composer is failure.
+- A non-empty composer is protected unless its normalized text exactly equals the current configured Rerun resume prompt.
+- Automatic fresh-chat recovery must not recursively open new tabs after a direct handoff prompt fails.
 
 ## Validation baseline
 
 - v0.2.5 full syntax/test baseline: PASS, 38/38.
-- v0.2.6 auto-submit targeted syntax/tests: PASS, 4/4.
+- v0.2.6 targeted auto-submit tests: PASS, 4/4.
 - v0.2.7 status-independent handoff source/prompt checks: PASS.
-- v0.2.8 exhausted-chat auto-handoff implementation: browser probe exposed stale-prompt guard regression.
-- v0.2.9 stale Rerun prompt ownership fix + regression assertions: COMMITTED, browser PENDING.
-- Latest exact full npm suite after v0.2.9: NOT_RUN in this environment.
+- v0.2.8 browser probe exposed stale-prompt guard regression.
+- v0.2.9 stale Rerun prompt ownership fix: source/regression assertions committed; browser probe was then blocked by GitHub public API rate limiting.
+- v0.2.10 rate-limit resilience implementation and tests: COMMITTED, browser PENDING.
+- v0.2.10 exact full npm suite: NOT_RUN in this environment.
 - Build: N/A (unpacked Manifest V3 extension).
 
 ## Tasks
@@ -53,30 +55,28 @@ Validate ChatGPT Rerun v0.2.x after the architecture evolved to independent per-
 |---|---|---|---|
 | V02-001 | verified | Tab-scoped Side Panel/config/runtime | Two ChatGPT tabs kept independent state |
 | V02-002 | verified | Same-stream collision guard | Duplicate watcher Start was rejected |
-| V02-003 | verified | Dispatch/retry regression | New sequence + same-sequence retry worked on owning tab only |
+| V02-003 | verified | Dispatch/retry regression | New/same-sequence dispatch worked on owning tab only |
 | V02-004 | verified | Fresh-chat handoff baseline | User-confirmed GitHub-backed ownership transfer |
 | V02-005 | verified | Handoff race/failure safeguards | Live success + source-verified suppression/cleanup/failure paths |
-| V02-006 | verified | Persistent watcher across GitHub work states | `needs_user` kept watcher Watching; same-seq `continue` auto-resumed without another Start |
+| V02-006 | verified | Persistent watcher across GitHub work states | `needs_user` kept watcher Watching; later `continue` auto-resumed |
 | V02-007 | verified | Unified Start/Stop watcher | User-confirmed Stop -> Start round trip |
-| V02-008 | verified | Unconnected-first explicit onboarding | User completed final separate-project onboarding probe successfully |
-| V02-009 | in_progress | Reliable auto-submit + automatic exhausted-chat handoff | Stale Rerun prompt is recognized as extension-owned, user drafts remain protected, and exhausted chats transfer to one fresh tab |
+| V02-008 | verified | Unconnected-first explicit onboarding | User completed separate-project onboarding probe |
+| V02-009 | in_progress | Reliable auto-submit + fresh-chat recovery + rate-limit-resilient polling | Live browser verification pending on v0.2.10 |
 
-## V02-009 implementation notes
+## V02-009 latest implementation notes
 
-v0.2.6 fixed the original prompt-inserted-but-not-submitted regression. v0.2.7 made fresh-chat handoff independent from GitHub terminal work state. v0.2.8 attempted automatic handoff after a confirmed failed watcher dispatch.
+The user's latest probe hit `GitHub API rate limit reached; wait for reset or use a token`. The previous unauthenticated minimum of 60 seconds consumed the full nominal 60 requests/hour budget and left no headroom for Start-time fetches, multiple watcher streams, or other requests.
 
-The v0.2.8 browser probe exposed an earlier guard that ran before auto-handoff: a failed Rerun prompt could remain in the composer, and the next Start treated any non-empty composer as a user draft. `composer_not_empty` therefore stopped the watcher immediately before the automatic handoff path was reached.
+v0.2.10 changes polling behavior:
 
-v0.2.9 changes this safely:
-
-1. read the existing composer text before claiming the sequence;
-2. normalize whitespace and compare it with the exact current Rerun resume prompt;
-3. if non-empty text differs, retain the existing `composer_not_empty` user-draft safety stop;
-4. if it matches exactly, treat it as a stale Rerun-owned prompt and immediately attempt `HANDOFF_NEW_CHAT`;
-5. if the stale-prompt handoff fails, safe-stop with `auto_handoff_failed` and preserve the concrete error;
-6. prompt/editor synchronization failure is also eligible for the same one-shot handoff fallback;
-7. no assistant output or limit-warning text is parsed.
+1. unauthenticated minimum polling is 90 seconds for one watcher and scales to `90 * enabled unauthenticated watcher count`;
+2. authenticated polling retains the 5-second minimum;
+3. GitHub rate-limit responses use `Retry-After`, `X-RateLimit-Reset`, or a secondary-limit fallback to create `rateLimitPausedUntil`;
+4. Start while rate-limited keeps `runtime.enabled=true` and reports `rate_limited_wait` rather than failing;
+5. poll returns a wait result until the pause expires and resumes automatically afterward;
+6. Side Panel replaces raw `Rate remaining` with `API polling` state;
+7. handoff may use cached control/runtime identity during an extension API pause so an exhausted chat can still move to a fresh ChatGPT tab when enough local state exists.
 
 ## Current gate
 
-Reload the unpacked extension at v0.2.9. Use the same exhausted chat with the stale Rerun resume prompt still present if possible. With a valid `continue` control, Start should no longer return immediately to Start because of `composer_not_empty`; it should open one fresh ChatGPT tab and transfer watcher ownership. If any different user-authored text is in the composer, Rerun must still Stop instead of overwriting it.
+Reload unpacked v0.2.10 and press Start on the same connected test tab. If the GitHub public quota is still exhausted, expected: `Tab watcher = Watching`, button = `Stop`, `API polling = Paused until ...`, no red rate-limit failure. After reset, polling must resume without another Start. Then continue the exhausted-chat fresh-handoff probe. If uninterrupted fast polling is desired, use a GitHub token and set Poll seconds to 5–10.

@@ -71,8 +71,13 @@ test("rejects unknown control fields", () => {
   );
 });
 
-test("unauthenticated polling is clamped to 60 seconds", () => {
-  assert.equal(effectivePollInterval(5, false), 60);
+test("unauthenticated polling keeps headroom below the 60 per hour boundary", () => {
+  assert.equal(effectivePollInterval(5, false), 90);
+});
+
+test("multiple unauthenticated watchers share a conservative aggregate request budget", () => {
+  assert.equal(effectivePollInterval(5, false, 2), 180);
+  assert.equal(effectivePollInterval(5, false, 3), 270);
 });
 
 test("authenticated polling is clamped to 5 seconds", () => {

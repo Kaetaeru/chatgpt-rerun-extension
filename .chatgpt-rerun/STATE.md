@@ -6,64 +6,71 @@
 - Sequence: `7`
 - Desired control status: `needs_user`
 - Current task: `V02-008`
-- Control reason: `V02-001 through V02-007 are verified; perform the clean new-project Rerun connection-prompt onboarding probe on a separate safe repository.`
-- Phase: `awaiting_separate_project_onboarding_probe`
-- Last checkpoint (UTC): `2026-08-16T15:20:00Z`
-- Current execution started (UTC): `2026-08-16T15:20:00Z`
-- Current execution hard stop (UTC): `2026-08-16T15:40:00Z`
+- Control reason: `v0.2.5 makes new tabs truly Unconnected and requires connection discovery from actual conversation GitHub usage; reload before the final onboarding probe.`
+- Phase: `awaiting_v025_reload_and_unconnected_onboarding_probe`
+- Last checkpoint (UTC): `2026-08-16T15:42:00Z`
+- Current execution started (UTC): `2026-08-16T15:42:00Z`
+- Current execution hard stop (UTC): `2026-08-16T16:02:00Z`
 
 ## Current Objective
 
-Complete the final browser acceptance item, V02-008, on a separate safe project. The project conversation must already clearly know its GitHub repository. While its watcher is Stopped, send `Rerun 연결 프롬프트` and observe the clean/new-project path that creates or safely repairs the five standard Rerun files before any implementation work begins.
+Complete final V02-008 against a separate safe project using the stricter v0.2.5 onboarding model. A brand-new ChatGPT tab must first show `Repository connection = Unconnected` with no inherited Owner/Repository/Branch. Before that conversation has actually used any GitHub repository, the connection prompt must return `RERUN_CONNECTION: UNCONNECTED` and write nothing. After the same conversation actually reads/uses one test repository, the second connection prompt must identify that real repo/branch, install the five Rerun documents, report complete CONNECTED coordinates, and stop before implementation. The user then stores the reported coordinates in the Side Panel and presses Start to begin the first task.
 
 ## Completed
 
-- V02-001 tab/session isolation: PASS.
-- V02-002 duplicate same-stream ownership rejection: PASS.
-- V02-003 new-sequence/same-sequence dispatch and tab-scoped counters: PASS.
-- V02-004 fresh-chat GitHub-backed handoff: PASS.
-- V02-005 handoff race/failure safeguards: PASS to the stated safely reproducible scope. Successful transfer was observed live; source inspection verifies polling suppression, pre-transfer pending cleanup, post-transfer `handoff_send_failed`, and terminal handoff refusal without watcher shutdown.
-- V02-006 persistent watcher across GitHub terminal work states: PASS. Same-sequence `needs_user -> continue` automatically resumed without another Start.
-- V02-007 unified Start/Stop watcher: PASS. User completed the explicit Stop -> Start round-trip and reported `잘 됐어.`.
-- Current-project connection prompt preservation path: PASS as partial V02-008 evidence; existing run was reconciled and preserved.
+- V02-001 through V02-007 remain verified and were not repeated.
+- v0.2.5 `control.js`: connection prompt no longer accepts Side Panel coordinates as identification hints.
+- The prompt requires actual GitHub app/tool usage in the current conversation; text mentions alone are insufficient.
+- No actual repo -> `RERUN_CONNECTION: UNCONNECTED`, no writes.
+- Multiple/unclear repo or branch -> `RERUN_CONNECTION: AMBIGUOUS`, no writes.
+- Confirmed repo -> install/repair README/PLAN/STATE/STATUS/control and report `RERUN_CONNECTION: CONNECTED` with owner/repo, canonical URL, exact branch/ref, control path, setup mode, run_id, sequence, status, task_id, and project goal.
+- v0.2.5 `popup.js`: new tabs no longer inherit unrelated legacy repository coordinates; only the actual legacy `targetTabId` can receive legacy config/runtime migration.
+- `DEFAULT_CONFIG.branch` now starts blank; Save/Start still resolves an explicitly connected blank branch to `main`.
+- Side Panel now displays `Repository connection = Unconnected` separately from watcher/work status and explains the new onboarding flow.
+- The extension remains content-blind: it does not parse the assistant's CONNECTED result; the user confirms and stores the reported coordinates.
+- `tests/control.test.mjs` and `tests/popup-ui.test.mjs` were updated for UNCONNECTED/AMBIGUOUS/CONNECTED and no-legacy-inheritance invariants.
+- README and V02 E2E runbook were updated to v0.2.5 semantics.
+- Extension/package version is now `0.2.5`.
 
 ## Verification
 
 | Check | Result | Evidence / note |
 |---|---|---|
-| V02-001~004 live browser core | PASS | Prior dogfood observations retained. |
-| V02-005 live successful handoff | PASS | User confirmed fresh-chat handoff worked. |
-| V02-005 race/failure control flow | PASS | Remote `background.js` inspection confirms required suppression/cleanup branches. |
-| V02-006 watcher persistence + auto-resume | PASS | Watching under `needs_user`, then same-seq `continue` auto-resumed with no Start. |
-| V02-007 Stop -> Start round-trip | PASS | User reported requested manual toggle probe worked. |
-| V02-008 existing-run preservation | PASS/PARTIAL | Connection prompt reconciled this active project without resetting run state. |
-| V02-008 clean new-project creation path | NOT_RUN | Requires separate safe project. |
-| Full latest `npm run check` | NOT_RUN | Environment cannot resolve `github.com` for latest checkout. |
-| Full latest `npm test` | NOT_RUN | Same environment limitation. |
+| V02-001~007 live browser | PASS | Existing verified evidence retained. |
+| v0.2.5 connection prompt source contract | PASS | Remote source includes actual-GitHub-use requirement, UNCONNECTED/AMBIGUOUS no-write branches, and full CONNECTED report. |
+| v0.2.5 Side Panel source contract | PASS | Remote source shows Unconnected connection row and connection prompt no longer passes owner/repo/branch hints. |
+| v0.2.5 legacy isolation source contract | PASS | Remote `popup.js` migrates repository config only when `legacy.targetTabId === current tabId`. |
+| v0.2.5 regression tests | COMMITTED | Updated control and popup UI tests are present on branch. |
+| Full latest `npm run check` | NOT_RUN | Complete latest checkout unavailable in this environment; do not claim PASS. |
+| Full latest `npm test` | NOT_RUN | Same limitation. |
+| V02-008 true UNCONNECTED browser path | NOT_RUN | Requires v0.2.5 Reload and a brand-new ChatGPT tab. |
+| V02-008 CONNECTED first-install browser path | NOT_RUN | Requires separate safe test repo after UNCONNECTED probe. |
 
 ## Pending
 
-- Use a separate safe project conversation whose GitHub repo/branch is already unambiguous.
-- Ensure that project's watcher is Stopped.
-- Click `Rerun 연결 프롬프트`.
-- Confirm ChatGPT identifies the intended repository rather than guessing.
-- Confirm `.chatgpt-rerun/README.md`, `PLAN.md`, `STATE.md`, `STATUS.md`, and `control.json` are created or safely repaired.
-- For a genuinely new Rerun project, confirm PLAN/STATE reflect the real project goal, control is sequence 0 / `continue`, and control is the last authoritative write.
-- Confirm the connection turn ends before implementation.
-- Then Start the watcher and confirm the standard resume prompt begins the first task.
+- Reload unpacked extension at v0.2.5.
+- Open a brand-new ChatGPT tab and confirm Repository connection is Unconnected and old repo coordinates are not inherited.
+- Before using GitHub in that chat, press `Rerun 연결 프롬프트`; confirm `RERUN_CONNECTION: UNCONNECTED` and no GitHub writes.
+- In the same chat, actually read/use the safe test repository through GitHub.
+- Press `Rerun 연결 프롬프트` again; confirm CONNECTED report and five-file first installation with control last, no implementation work.
+- Store the reported Owner/Repository/Branch in Side Panel, Save, then Start.
+- Confirm watcher begins and seq 0 / continue starts the first task.
+- Run full latest Node checks when an up-to-date checkout is available before final release-quality declaration.
 
 ## Next Exact Action
 
-Run V02-008 in a separate safe project. Do not alter or delete this repository's existing `.chatgpt-rerun` state to manufacture a clean onboarding case.
+User Reloads v0.2.5 and starts V02-008-A in a new ChatGPT tab that has not yet used any GitHub repository. The first connection prompt must produce UNCONNECTED/no writes.
 
 ## Do Not Repeat
 
 - Do not repeat V02-001 through V02-007.
-- Do not reset this active run to test onboarding.
-- Do not claim V02-008 clean-project creation PASS until it is actually observed.
-- Do not claim the complete latest Node suite passed; it remains unexecuted in this environment.
-- Do not use STATUS for reconciliation.
+- Do not prefill the new test tab with repository coordinates before the UNCONNECTED probe.
+- Do not mention the test repo in a way that is treated as actual GitHub use; the decisive evidence must be GitHub app/tool access.
+- Do not delete this repository's current `.chatgpt-rerun` state.
+- Do not parse assistant output in the extension to auto-fill repository fields.
+- Do not claim V02-008 PASS before both UNCONNECTED and CONNECTED first-install paths are observed.
+- Do not claim the full latest Node suite passed.
 
 ## Blockers / User Decisions
 
-- Final formal acceptance requires one separate safe GitHub project for the V02-008 clean onboarding probe.
+- User action required: Reload unpacked extension to v0.2.5 and perform the final separate-project onboarding probe.

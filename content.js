@@ -146,11 +146,22 @@
   async function sendPrompt(composer, prompt) {
     writeComposerText(composer, prompt);
 
-    const sendButton = await waitForSendButton(2500);
-    if (!sendButton) throw new Error("send button not found or did not become enabled");
-    if (!isChatIdle()) throw new Error("ChatGPT started generating before send");
+    if (!await waitForComposerText(composer, prompt, 1500)) {
+      throw new Error("prompt text did not synchronize with the ChatGPT composer");
+    }
 
-    sendButton.click();
+    const sendButton = await waitForSendButton(4000);
+    if (sendButton) {
+      sendButton.click();
+    } else {
+      dispatchEnter(composer);
+    }
+
+    if (!await waitForDispatchEvidence(4000)) {
+      throw new Error(sendButton
+        ? "prompt inserted but send button click did not start sending"
+        : "prompt inserted but Enter fallback did not start sending");
+    }
   }
 
   function writeComposerText(composer, text) {
@@ -163,8 +174,7 @@
       const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
       if (!setter) throw new Error("composer value setter unavailable");
       setter.call(composer, text);
-      composer.dispatchEvent(new Event("input", { bubbles: true }));
-      composer.dispatchEvent(new Event("change", { bubbles: true }));
+      dispatchComposerInput(composer, text);
       return;
     }
 
@@ -176,6 +186,7 @@
       selection?.addRange(range);
 
       if (typeof document.execCommand === "function" && document.execCommand("insertText", false, text)) {
+        dispatchComposerInput(composer, text);
         return;
       }
 
@@ -183,6 +194,15 @@
       const paragraph = document.createElement("p");
       paragraph.textContent = text;
       composer.appendChild(paragraph);
+      dispatchComposerInput(composer, text);
+      return;
+    }
+
+    throw new Error("unsupported ChatGPT composer element");
+  }
+
+  function dispatchComposerInput(composer, text) {
+    if (typeof InputEvent === "function") {
       composer.dispatchEvent(
         new InputEvent("input", {
           bubbles: true,
@@ -190,10 +210,22 @@
           data: text
         })
       );
-      return;
+    } else {
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
     }
+    composer.dispatchEvent(new Event("change", { bubbles: true }));
+  }
 
-    throw new Error("unsupported ChatGPT composer element");
+  async function waitForComposerText(composer, expected, timeoutMs) {
+    const expectedText = String(expected || "").trim();
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const current = findComposer() || composer;
+      const currentText = readComposerText(current).trim();
+      if (currentText === expectedText || currentText.includes(expectedText)) return true;
+      await sleep(100);
+    }
+    return false;
   }
 
   async function waitForSendButton(timeoutMs) {
@@ -226,6 +258,32 @@
       if (anywhere) return anywhere;
     }
     return null;
+  }
+
+  function dispatchEnter(composer) {
+    composer.focus();
+    const options = {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true
+    };
+    composer.dispatchEvent(new KeyboardEvent("keydown", options));
+    composer.dispatchEvent(new KeyboardEvent("keyup", options));
+  }
+
+  async function waitForDispatchEvidence(timeoutMs) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const current = findComposer();
+      if (!current) return true;
+      if (!readComposerText(current).trim()) return true;
+      if (!isChatIdle()) return true;
+      await sleep(100);
+    }
+    return false;
   }
 
   function sleep(ms) {

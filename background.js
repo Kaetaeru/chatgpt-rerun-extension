@@ -2,8 +2,10 @@ import {
   DEFAULT_CONFIG,
   DEFAULT_RUNTIME,
   buildNewChatHandoffPrompt,
+  buildRepositoryBootstrapPrompt,
   continuationDisposition,
   effectivePollInterval,
+  isAutoBootstrapPath,
   normalizeMaxRuns,
   parseControlPayload,
   streamKey,
@@ -141,7 +143,24 @@ async function poll(sender) {
   const cache = cacheFor(config);
 
   let control;
-  if (now - cache.lastFetchAt < intervalSeconds * 1000 && cache.cachedControl) {
+  if (runtime.bootstrapPending) {
+    if (now - cache.lastFetchAt < intervalSeconds * 1000) {
+      if (cache.cachedControl) {
+        control = cache.cachedControl;
+      } else {
+        return { action: "none", phase: "bootstrap_wait" };
+      }
+    } else {
+      control = await fetchControl(config, tabId, { allowMissing: true });
+      if (!control) return { action: "none", phase: "bootstrap_wait" };
+    }
+
+    runtime = await updateRuntime(tabId, {
+      bootstrapPending: false,
+      bootstrapCompletedAt: new Date().toISOString(),
+      lastError: null
+    });
+  } else if (now - cache.lastFetchAt < intervalSeconds * 1000 && cache.cachedControl) {
     control = cache.cachedControl;
   } else {
     control = await fetchControl(config, tabId);
@@ -158,6 +177,7 @@ function cacheFor(config) {
     cache = {
       lastEtag: null,
       cachedControl: null,
+      controlMissing: false,
       lastFetchAt: 0
     };
     fetchCaches.set(key, cache);
@@ -165,7 +185,7 @@ function cacheFor(config) {
   return cache;
 }
 
-async function fetchControl(config, tabId) {
+async function fetchControl(config, tabId, { allowMissing = false } = {}) {
   const owner = String(config.owner || "").trim();
   const repo = String(config.repo || "").trim();
   const branch = String(config.branch || "main").trim();
@@ -184,12 +204,7 @@ async function fetchControl(config, tabId) {
   );
   url.searchParams.set("ref", branch);
 
-  const headers = {
-    Accept: "application/vnd.github.raw+json",
-    "X-GitHub-Api-Version": "2022-11-28"
-  };
-  const token = String(config.githubToken || "").trim();
-  if (token) headers.Authorization = `Bearer ${token}`;
+  const headers = githubHeaders(config, "application/vnd.github.raw+json");
   if (cache.lastEtag) headers["If-None-Match"] = cache.lastEtag;
 
   const response = await fetch(url.toString(), {
@@ -198,20 +213,21 @@ async function fetchControl(config, tabId) {
     cache: "no-store"
   });
   cache.lastFetchAt = Date.now();
-
-  const remaining = response.headers.get("x-ratelimit-remaining");
-  const reset = response.headers.get("x-ratelimit-reset");
-  await updateRuntime(tabId, {
-    lastCheckedAt: new Date().toISOString(),
-    rateLimitRemaining: remaining === null ? null : Number(remaining),
-    rateLimitResetAt: reset === null ? null : new Date(Number(reset) * 1000).toISOString()
-  });
+  await recordRateLimit(tabId, response);
 
   if (response.status === 304 && cache.cachedControl) {
     return cache.cachedControl;
   }
 
+  if (response.status === 404 && allowMissing) {
+    cache.lastEtag = null;
+    cache.cachedControl = null;
+    cache.controlMissing = true;
+    return null;
+  }
+
   if (!response.ok) {
+    const remaining = response.headers.get("x-ratelimit-remaining");
     if (response.status === 404) {
       throw new Error("GitHub control file was not found");
     }
@@ -226,7 +242,59 @@ async function fetchControl(config, tabId) {
 
   cache.lastEtag = response.headers.get("etag");
   cache.cachedControl = parseControlPayload(await response.text());
+  cache.controlMissing = false;
   return cache.cachedControl;
+}
+
+function githubHeaders(config, accept) {
+  const headers = {
+    Accept: accept,
+    "X-GitHub-Api-Version": "2022-11-28"
+  };
+  const token = String(config.githubToken || "").trim();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
+async function recordRateLimit(tabId, response) {
+  const remaining = response.headers.get("x-ratelimit-remaining");
+  const reset = response.headers.get("x-ratelimit-reset");
+  await updateRuntime(tabId, {
+    lastCheckedAt: new Date().toISOString(),
+    rateLimitRemaining: remaining === null ? null : Number(remaining),
+    rateLimitResetAt: reset === null ? null : new Date(Number(reset) * 1000).toISOString()
+  });
+}
+
+async function assertRepositoryBranchAccessible(config, tabId) {
+  const owner = String(config.owner || "").trim();
+  const repo = String(config.repo || "").trim();
+  const branch = String(config.branch || "main").trim() || "main";
+  const url = new URL(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents`
+  );
+  url.searchParams.set("ref", branch);
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: githubHeaders(config, "application/vnd.github+json"),
+    cache: "no-store"
+  });
+  await recordRateLimit(tabId, response);
+
+  if (response.ok) return;
+
+  const remaining = response.headers.get("x-ratelimit-remaining");
+  if (response.status === 401) {
+    throw new Error("GitHub authentication failed");
+  }
+  if (response.status === 403 && remaining === "0") {
+    throw new Error("GitHub API rate limit reached; wait for reset or use a token");
+  }
+  if (response.status === 404) {
+    throw new Error("설정한 GitHub 저장소/branch를 읽을 수 없습니다. Owner, Repository, Branch 또는 token 권한을 확인해주세요.");
+  }
+  throw new Error(`GitHub repository probe failed with HTTP ${response.status}`);
 }
 
 async function actionForControl(tabId, config, runtime, control, intervalSeconds, now) {
@@ -296,7 +364,9 @@ async function claimSequence(sender, message) {
   const tabId = requireSenderTabId(sender);
   const config = await loadConfig(tabId);
   const runtime = await loadRuntime(tabId);
-  if (!runtime.enabled || runtime.handoffPending) return { claimed: false, reason: "stopped" };
+  if (!runtime.enabled || runtime.handoffPending || runtime.bootstrapPending) {
+    return { claimed: false, reason: "stopped" };
+  }
 
   const runId = String(message.runId || "");
   const sequence = Number(message.sequence);
@@ -390,6 +460,49 @@ async function startTabSession(tabId) {
 
   await configureTabSidePanel(tabId);
   await ensureContentScript(tabId);
+
+  const control = await fetchControl(config, tabId, { allowMissing: true });
+  if (!control) {
+    if (!isAutoBootstrapPath(config)) {
+      throw new Error("Custom control file이 존재하지 않습니다. 자동 초기화는 기본 .chatgpt-rerun/control.json 경로에서만 동작합니다.");
+    }
+
+    await assertRepositoryBranchAccessible(config, tabId);
+    await updateRuntime(tabId, {
+      enabled: true,
+      stopReason: null,
+      lastError: null,
+      lastRunId: null,
+      lastHandledSequence: -1,
+      lastSentAt: null,
+      sameSequenceRetryCount: 0,
+      pendingSequence: null,
+      pendingRunId: null,
+      pendingIsRetry: false,
+      runCount: 0,
+      lastStatus: "initializing",
+      lastSequence: null,
+      handoffPending: false,
+      handoffToTabId: null,
+      bootstrapPending: true,
+      bootstrapRequestedAt: new Date().toISOString(),
+      bootstrapCompletedAt: null
+    });
+
+    const response = await chrome.tabs.sendMessage(tabId, {
+      type: "RERUN_BOOTSTRAP",
+      prompt: buildRepositoryBootstrapPrompt(config)
+    });
+    if (!response?.sent) {
+      const detail = response?.error || "ChatGPT 탭에 repository bootstrap 프롬프트를 보내지 못했습니다.";
+      await stopSession(tabId, "bootstrap_send_failed");
+      await updateRuntime(tabId, { lastError: detail });
+      throw new Error(detail);
+    }
+
+    return { action: "bootstrapping", tabId };
+  }
+
   await updateRuntime(tabId, {
     enabled: true,
     stopReason: null,
@@ -398,7 +511,9 @@ async function startTabSession(tabId) {
     pendingRunId: null,
     pendingIsRetry: false,
     handoffPending: false,
-    handoffToTabId: null
+    handoffToTabId: null,
+    bootstrapPending: false,
+    bootstrapCompletedAt: null
   });
 
   const wake = await chrome.tabs.sendMessage(tabId, { type: "RERUN_WAKE" });
@@ -428,6 +543,9 @@ async function handoffToNewChat(oldTabId) {
   const oldRuntime = await loadRuntime(oldTabId);
   if (!String(config.owner || "").trim() || !String(config.repo || "").trim()) {
     throw new Error("새 채팅 handoff 전에 Owner와 Repository를 설정해야 합니다.");
+  }
+  if (oldRuntime.bootstrapPending) {
+    throw new Error("저장소 bootstrap이 끝난 뒤 새 채팅으로 이어갈 수 있습니다.");
   }
 
   const conflictTabId = await findConflictingTab(oldTabId, config);
@@ -469,7 +587,8 @@ async function handoffToNewChat(oldTabId) {
       lastError: null,
       handoffPending: true,
       handoffFromTabId: oldTabId,
-      handoffToTabId: null
+      handoffToTabId: null,
+      bootstrapPending: false
     };
 
     await chrome.storage.local.set({
@@ -484,6 +603,7 @@ async function handoffToNewChat(oldTabId) {
       pendingSequence: null,
       pendingRunId: null,
       pendingIsRetry: false,
+      bootstrapPending: false,
       stopReason: `handed_off_to_tab_${newTabId}`,
       handoffToTabId: newTabId
     });
@@ -543,6 +663,7 @@ async function stopSession(tabId, reason) {
     pendingRunId: null,
     pendingIsRetry: false,
     handoffPending: false,
+    bootstrapPending: false,
     stopReason: reason
   });
   return { action: "stop", reason, tabId };

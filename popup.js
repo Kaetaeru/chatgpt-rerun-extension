@@ -1,4 +1,11 @@
-import { DEFAULT_SETTINGS, effectivePollInterval, normalizeMaxRuns, streamKey } from "./control.js";
+import {
+  DEFAULT_SETTINGS,
+  effectivePollInterval,
+  effectiveRetryDelay,
+  normalizeMaxRetries,
+  normalizeMaxRuns,
+  streamKey
+} from "./control.js";
 
 const ids = [
   "owner",
@@ -7,6 +14,8 @@ const ids = [
   "path",
   "resumePrompt",
   "pollIntervalSeconds",
+  "retryDelaySeconds",
+  "maxRetriesPerSequence",
   "githubToken",
   "maxRuns"
 ];
@@ -44,7 +53,8 @@ document.getElementById("start").addEventListener("click", async () => {
       stopReason: null,
       lastError: null,
       pendingSequence: null,
-      pendingRunId: null
+      pendingRunId: null,
+      pendingIsRetry: false
     });
     await refreshRuntime();
   } catch (error) {
@@ -57,7 +67,8 @@ document.getElementById("stop").addEventListener("click", async () => {
     enabled: false,
     stopReason: "manual",
     pendingSequence: null,
-    pendingRunId: null
+    pendingRunId: null,
+    pendingIsRetry: false
   });
   await refreshRuntime();
 });
@@ -72,14 +83,20 @@ async function loadForm() {
 async function saveSettings() {
   const before = { ...DEFAULT_SETTINGS, ...(await chrome.storage.local.get(null)) };
   const token = elements.githubToken.value.trim();
+  const pollIntervalSeconds = effectivePollInterval(
+    elements.pollIntervalSeconds.value,
+    Boolean(token)
+  );
   const next = {
     owner: elements.owner.value.trim(),
     repo: elements.repo.value.trim(),
     branch: elements.branch.value.trim() || "main",
     path: elements.path.value.trim() || DEFAULT_SETTINGS.path,
-    resumePrompt: elements.resumePrompt.value || "진행",
+    resumePrompt: elements.resumePrompt.value || DEFAULT_SETTINGS.resumePrompt,
     githubToken: token,
-    pollIntervalSeconds: effectivePollInterval(elements.pollIntervalSeconds.value, Boolean(token)),
+    pollIntervalSeconds,
+    retryDelaySeconds: effectiveRetryDelay(elements.retryDelaySeconds.value, pollIntervalSeconds),
+    maxRetriesPerSequence: normalizeMaxRetries(elements.maxRetriesPerSequence.value),
     maxRuns: normalizeMaxRuns(elements.maxRuns.value)
   };
 
@@ -90,8 +107,11 @@ async function saveSettings() {
     ? {
         lastRunId: null,
         lastHandledSequence: -1,
+        lastSentAt: null,
+        sameSequenceRetryCount: 0,
         pendingSequence: null,
         pendingRunId: null,
+        pendingIsRetry: false,
         runCount: 0,
         lastStatus: null,
         lastSequence: null
@@ -100,6 +120,8 @@ async function saveSettings() {
 
   await chrome.storage.local.set({ ...next, ...reset });
   elements.pollIntervalSeconds.value = String(next.pollIntervalSeconds);
+  elements.retryDelaySeconds.value = String(next.retryDelaySeconds);
+  elements.maxRetriesPerSequence.value = String(next.maxRetriesPerSequence);
 }
 
 async function refreshRuntime(transientMessage) {
@@ -110,6 +132,8 @@ async function refreshRuntime(transientMessage) {
   document.getElementById("sequence").textContent = settings.lastSequence ?? "-";
   document.getElementById("githubStatus").textContent = settings.lastStatus || "-";
   document.getElementById("runCount").textContent = String(settings.runCount || 0);
+  document.getElementById("retryCount").textContent = `${settings.sameSequenceRetryCount || 0}/${settings.maxRetriesPerSequence}`;
+  document.getElementById("lastSentAt").textContent = formatTime(settings.lastSentAt);
   document.getElementById("rateLimit").textContent = settings.rateLimitRemaining ?? "-";
 
   if (settings.lastError) {
@@ -119,6 +143,13 @@ async function refreshRuntime(transientMessage) {
     errorBox.hidden = true;
     errorBox.textContent = "";
   }
+}
+
+function formatTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleTimeString();
 }
 
 function isChatGptUrl(url) {

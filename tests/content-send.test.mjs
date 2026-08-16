@@ -29,9 +29,22 @@ test("submission is acknowledged only after visible dispatch evidence", () => {
   assert.match(content, /prompt inserted but send button click did not start sending/);
 });
 
+test("a stale Rerun-owned prompt is distinguished from a user draft", () => {
+  assert.match(content, /const staleRerunPrompt = isSameRerunPrompt\(existingComposerText, prompt\)/);
+  assert.match(content, /if \(existingComposerText && !staleRerunPrompt\)[\s\S]*composer_not_empty/);
+  assert.match(content, /function isSameRerunPrompt\(existing, expected\)/);
+  assert.match(content, /replace\(\/\\s\+\/g, " "\)/);
+});
+
+test("a stale Rerun-owned prompt immediately attempts fresh-chat handoff", () => {
+  assert.match(content, /if \(staleRerunPrompt\) \{[\s\S]*handoffAfterDispatchFailure\(\)/);
+  assert.match(content, /stale Rerun prompt could not be handed off/);
+});
+
 test("confirmed dispatch failure attempts fresh-chat handoff instead of immediately stopping", () => {
   assert.match(content, /function isConfirmedDispatchFailure\(detail\)/);
   assert.match(content, /startsWith\("prompt inserted but "\)/);
+  assert.match(content, /prompt text did not synchronize with the ChatGPT composer/);
   assert.match(content, /const handoff = await handoffAfterDispatchFailure\(\)/);
   assert.match(content, /type: "HANDOFF_NEW_CHAT"/);
   assert.match(content, /if \(handoff\?\.ok\) return/);

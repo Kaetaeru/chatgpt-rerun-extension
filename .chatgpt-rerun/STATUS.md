@@ -6,47 +6,58 @@
 
 | Item | Current |
 |---|---|
-| Last updated | `2026-08-16T17:20:00Z` (02:20 KST, Aug 17) |
+| Last updated | `2026-08-16T18:01:00Z` (03:01 KST, Aug 17) |
 | Run | `chatgpt-rerun-v02-20260816-01` |
 | Sequence | `9` |
 | GitHub work status | `needs_user` |
 | Current task | `V02-009` |
-| Extension version to verify | `0.2.6` |
+| Extension version to verify | `0.2.7` |
 | Previous V02-001~008 | PASS |
-| v0.2.6 targeted syntax | PASS |
-| v0.2.6 auto-submit tests | PASS — 4/4 |
-| Formal project DoD | REOPENED FOR AUTO-SUBMIT REGRESSION |
+| v0.2.6 auto-submit targeted tests | PASS — 4/4 |
+| v0.2.7 handoff logic targeted check | PASS |
+| Browser verification | PENDING RELOAD |
 
-## 발견된 회귀
+## 새 채팅 자동 재시작 문제 확인
 
-사용자가 Start를 눌렀을 때 Rerun 재개 프롬프트가 ChatGPT 입력창에는 들어가지만 실제 전송이 바로 되지 않는 현상을 확인했습니다.
+사용자가 새 채팅에서 자동 재시작이 되지 않는다고 보고했습니다.
 
-이 동작은 정상 동작이 아닙니다. Rerun의 자동 dispatch는 **프롬프트 입력 + 실제 전송**까지 포함해야 합니다. 사용자가 별도로 Send를 누르거나 Enter를 눌러야 한다면 실패입니다.
+확인 결과 실제 설계 불일치가 있었습니다. v0.2.4부터 Chrome watcher와 GitHub work status는 독립적이어야 하지만, `Continue in new chat`에는 예전 규칙이 남아 있어 `control.status !== continue`이면 handoff 자체를 거부하고 있었습니다.
 
-## v0.2.6 수정
+현재 이 프로젝트 control도 `needs_user`이므로 구버전에서는 바로 그 조건에 걸릴 수 있습니다.
 
-`content.js`의 제출 경로를 보강했습니다.
+## v0.2.7 수정
 
-1. 프롬프트 삽입 뒤 explicit input/change 이벤트로 ChatGPT editor state 동기화 시도
-2. 실제 composer에 프롬프트가 들어갔는지 확인
-3. 활성 Send 버튼을 최대 4초 기다린 뒤 클릭
-4. 활성 Send 버튼이 나타나지 않으면 Enter 제출 fallback
-5. composer가 비워지거나 사라지거나 ChatGPT 생성이 시작된 것을 확인한 뒤에만 sequence ACK
-6. 제출 증거가 없으면 성공한 척하지 않고 send failure 처리
+- `continue`, `complete`, `needs_user`, `blocked` 어느 상태에서도 fresh-chat watcher ownership transfer 허용
+- handoff prompt에 owner/repo, branch, control path, run_id, sequence, status, task_id 포함
+- `continue`면 새 채팅이 GitHub STATE에서 실제 미완료 작업 재개
+- terminal이면 repo/run context만 복구하고 implementation은 시작하지 않음
+- terminal handoff 뒤에도 새 탭 watcher는 계속 polling
+- 이후 GitHub가 `continue`가 되면 Start 재클릭 없이 새 탭에서 자동 재개
+- v0.2.6의 composer 동기화 + Send/Enter fallback + dispatch evidence 확인을 `RERUN_HANDOFF`에도 그대로 사용
 
-새 `tests/content-send.test.mjs`를 추가했고 exact v0.2.6 `content.js`에 대해 문법 확인 및 targeted tests 4/4가 통과했습니다.
+## 현재 검증
 
-## 지금 필요한 확인
+- remote `background.js`에서 terminal handoff 차단 제거: PASS
+- status-aware handoff prompt targeted check: PASS
+- watcher-flow regression test 수정: COMMITTED
+- handoff-status regression test 추가: COMMITTED
+- 실제 Chrome v0.2.7 fresh-chat handoff: NOT_RUN
+- 실제 Chrome v0.2.7 prompt auto-submit: NOT_RUN
 
-1. `chrome://extensions`에서 ChatGPT Rerun **v0.2.6**을 Reload합니다.
-2. 이 탭의 watcher는 Reload 뒤 다시 Start할 수 있습니다.
-3. GitHub work state는 현재 `needs_user`라 자동 실행하지 않습니다.
-4. Reload가 끝났다고 알려주면 GitHub를 `continue`로 전환해 자동 프롬프트가 **입력뿐 아니라 실제 전송까지 되는지** 확인합니다.
+## 다음 확인
+
+1. `chrome://extensions`에서 ChatGPT Rerun **v0.2.7 Reload**
+2. 현재/테스트 탭 watcher를 Start해서 Watching 상태 확인
+3. GitHub work status가 `needs_user`인 상태에서도 **Continue in new chat** 실행
+4. 새 탭이 열리고 handoff prompt가 자동 제출되는지 확인
+5. 새 탭에서 구현은 시작하지 않고 context만 복구하는지 확인
+6. 새 탭 watcher가 Watching인지 확인
+7. 그 뒤 GitHub를 `continue`로 바꾸면 Start를 다시 누르지 않아도 자동 resume가 제출되는지 확인
 
 ## Blockers / risks
 
-- 실제 ChatGPT UI에서의 v0.2.6 제출 동작은 아직 browser NOT_RUN입니다.
-- 이전 V02-001~008 증거는 그대로 유효하며 반복하지 않습니다.
+- v0.2.7 실제 browser evidence가 아직 없습니다.
+- 최신 전체 npm suite는 현재 container의 GitHub DNS 제한 때문에 다시 실행하지 못했습니다. targeted logic check만 PASS입니다.
 - PR #1은 사용자 요청 없이 merge하지 않습니다.
 
 ## Freshness policy

@@ -8,9 +8,9 @@
 - Current task: `V02-002`
 - Control reason: `V02-001 tab isolation verified; test duplicate GitHub stream rejection in tab B while tab A remains running.`
 - Phase: `awaiting_same_stream_collision_probe`
-- Last checkpoint (UTC): `2026-08-16T14:01:00Z`
-- Current execution started (UTC): `2026-08-16T14:01:00Z`
-- Current execution hard stop (UTC): `2026-08-16T14:21:00Z`
+- Last checkpoint (UTC): `2026-08-16T14:03:00Z`
+- Current execution started (UTC): `2026-08-16T14:03:00Z`
+- Current execution hard stop (UTC): `2026-08-16T14:23:00Z`
 
 ## Current Objective
 
@@ -19,11 +19,10 @@ Execute V02-002 from `docs/V02_E2E_TEST_PLAN.md`: while tab A remains enabled on
 ## Completed in This Task
 
 - v0.2 extension Reload gate passed.
-- Tab A seq 0 automatic dispatch worked under the per-tab runtime.
-- User completed the two-tab isolation probe and reported `분리 잘 됐어.` at 23:01 KST.
-- V02-001 is therefore verified: tab-specific sessions/config/drafts/runtime remained separated and starting the owning tab did not make the other tab run.
-- `docs/V02_E2E_RESULT.md` records V02-001 PASS.
-- PLAN marks V02-001 `verified` and V02-002 `in_progress`.
+- V02-001 is verified: user confirmed the two-tab panel/config/draft/runtime separation probe succeeded.
+- After GitHub advanced from seq 0 to seq 1, the exact configured resume prompt automatically arrived in the owning tab A at 23:03 KST.
+- That seq 1 arrival proves the v0.2 per-tab runtime preserves new-sequence automatic dispatch on the owning tab; this is partial V02-003 evidence.
+- `docs/V02_E2E_RESULT.md` records the seq 1 automatic-dispatch evidence.
 
 ## Verification
 
@@ -33,9 +32,10 @@ Execute V02-002 from `docs/V02_E2E_TEST_PLAN.md`: while tab A remains enabled on
 | Unit tests | `npm test` | PASS | 20/20 tests. |
 | Manifest JSON | JSON parse | PASS | v0.2 manifest valid. |
 | Extension Reload | Chrome user observation | PASS | User confirmed Reload at 22:55 KST. |
-| Tab A automatic dispatch | Chrome runtime observation | PASS | Seq 0 resume prompt automatically arrived at 22:58 KST. |
 | V02-001 tab/session separation | Chrome user observation | PASS | User confirmed the two-tab separation probe succeeded at 23:01 KST. |
+| V02-003 new-sequence dispatch | Chrome runtime observation | PASS | Seq 1 resume prompt automatically arrived in owning tab A at 23:03 KST after seq 0 -> seq 1 transition. |
 | V02-002 duplicate stream rejection | Chrome Side Panel observation | NOT_RUN | Must attempt Start on tab B with the exact same stream while A remains enabled. |
+| V02-003 same-sequence retry | Chrome runtime observation | NOT_RUN | To be exercised after V02-002. |
 
 ## Pending / Failed
 
@@ -48,9 +48,8 @@ Execute V02-002 from `docs/V02_E2E_TEST_PLAN.md`: while tab A remains enabled on
 
 ## Files / Areas Touched
 
-- `docs/V02_E2E_RESULT.md`: V02-001 PASS and V02-002 next probe.
-- `.chatgpt-rerun/PLAN.md`: V02-001 verified; V02-002 in_progress.
-- `.chatgpt-rerun/STATE.md`: advanced to seq 1 / V02-002.
+- `docs/V02_E2E_RESULT.md`: seq 1 new-sequence dispatch evidence recorded.
+- `.chatgpt-rerun/STATE.md`: current execution checkpoint refreshed; V02-002 remains the active task.
 
 ## Next Exact Action
 
@@ -62,6 +61,7 @@ On ChatGPT tab B, enter the same GitHub coordinates currently used by tab A (`Ka
 - Do not rerun static validation unless code changes.
 - Do not stop tab A before testing the duplicate-stream guard.
 - Do not mark V02-002 PASS without observing the rejected Start in tab B and confirming A is unaffected.
+- Do not change control.json while V02-002 remains incomplete; keep seq 1 / continue so the owning tab stays resumable.
 
 ## Blockers / User Decisions
 

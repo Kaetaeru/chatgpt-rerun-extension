@@ -34,7 +34,8 @@ v0.2.4부터 Chrome 탭의 Start/Stop과 GitHub control 상태를 서로 다른 
 - `control.status=continue`: GitHub 쪽 작업 시작/재개 신호다. watcher가 켜져 있고 안전 조건을 만족하면 자동 resume prompt를 보낸다.
 - `complete`, `needs_user`, `blocked`: 현재 GitHub 작업의 dispatch 대기 상태다. **이 상태만으로 Chrome watcher를 끄지 않는다.** watcher는 계속 polling한다.
 - terminal 상태 뒤 GitHub가 다시 `continue`가 되면, 같은 sequence라도 terminal -> continue 전환을 새로운 실행 허가로 보고 즉시 재개할 수 있어야 한다.
-- `max sends`, retry limit, sequence regression 같은 dispatch guard도 watcher 자체를 끄지 않고 계속 관찰한다. 새 run/새 유효 상태가 오면 다시 평가한다.
+- retry limit, sequence regression 같은 dispatch guard도 watcher 자체를 끄지 않고 계속 관찰한다. 새 run/새 유효 상태가 오면 다시 평가한다.
+- **workflow 전체의 lifetime send 횟수에는 상한을 두지 않는다.** `Sent`/`runCount`는 진단용 누적 통계일 뿐 dispatch 또는 fresh-chat handoff를 차단하지 않는다. 동일한 control generation의 반복만 per-sequence retry 안전장치로 제한한다.
 - 사용자 composer draft 보호, prompt 전송 실패, bootstrap/handoff 실패처럼 브라우저 안전을 위해 명시적 중지가 필요한 경우는 예외다.
 - 탭이 닫히면 그 tab ID의 watcher/config/runtime은 제거된다. 확장프로그램이 꺼져 있으면 polling도 없다.
 

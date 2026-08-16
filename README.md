@@ -22,7 +22,21 @@ Chrome Extension
     blocked ─┴─ 중지
 ```
 
-응답이 구현/검증 도중 끊기면 같은 `continue` sequence가 남는다. retry 시간이 지난 뒤 ChatGPT 탭이 유휴 상태면 같은 sequence를 다시 실행하고, ChatGPT는 `STATE.md` 체크포인트에서 재개한다.
+응답이 구현/검증 도중 끊기거나 20분 실행 시간 예산 때문에 체크포인트 종료되면 같은 `continue` sequence가 남는다. retry 시간이 지난 뒤 ChatGPT 탭이 유휴 상태면 같은 sequence를 다시 실행하고, ChatGPT는 `STATE.md` 체크포인트에서 재개한다.
+
+## 20-minute execution policy
+
+**한 번의 ChatGPT 실행은 반드시 20분을 넘기지 않는다.** 이 제한은 전체 sequence가 아니라 개별 실행(turn) 기준이다.
+
+- 실행 시작 시 20분 hard stop을 계산한다.
+- 약 18분부터는 새 장기 작업을 시작하지 않고 STATE 체크포인트 정리를 우선한다.
+- 20분 전에 반드시 응답을 종료한다.
+- task가 아직 검증 완료가 아니라면 `continue` + 같은 sequence를 유지한다.
+- `STATE.md`에 완료 내용, 검증 결과, 미완료 항목, `Next Exact Action`을 남긴다.
+- 다음 same-sequence retry는 새로운 20분 예산으로 이어서 수행한다.
+- 시간 제한 때문에 검증을 생략하고 task를 `verified`/`complete`로 처리하지 않는다.
+
+상세 규칙은 `.chatgpt-rerun/README.md`와 `docs/PROJECT_PROTOCOL.md`에 있다.
 
 ## Persistent Side Panel
 
@@ -61,7 +75,7 @@ Start는 ChatGPT 탭이 확장프로그램보다 먼저 열려 있었어도 동�
 
 - `README.md`: 매 실행 가장 먼저 읽는 운영 계약.
 - `PLAN.md`: 전체 계획, 의존성, acceptance criteria.
-- `STATE.md`: 중단 복구 체크포인트와 실제 검증 결과.
+- `STATE.md`: 중단 복구 체크포인트, 실행 시간 예산, 실제 검증 결과.
 - `control.json`: 확장프로그램이 읽는 최소 실행 신호.
 
 ## Control 상태
@@ -73,7 +87,7 @@ v1은 네 상태만 허용한다.
 - `needs_user`: 사람의 결정 필요, 중지.
 - `blocked`: 자동 해결 불가능, 중지.
 
-`working` 상태는 사용하지 않는다. 작업 중에는 현재 `continue` sequence를 유지해야 중간 종료 후 같은 sequence를 재실행할 수 있다.
+`working` 상태는 사용하지 않는다. 작업 중에는 현재 `continue` sequence를 유지해야 중간 종료 또는 시간 예산 종료 후 같은 sequence를 재실행할 수 있다.
 
 예시:
 
@@ -121,7 +135,7 @@ STATE가 control보다 정확히 1 sequence 앞선 채 중단된 경우 다음 �
 
 ## 안전 장치
 
-확장프로그램은 다음 경우 추측하지 않고 중지한다.
+확장프로그램/프로토콜은 다음 경우 추측하지 않고 중지 또는 체크포인트한다.
 
 - `complete`, `needs_user`, `blocked`
 - sequence 회귀
@@ -129,6 +143,7 @@ STATE가 control보다 정확히 1 sequence 앞선 채 중단된 경우 다음 �
 - max sends 한도
 - ChatGPT 입력창에 사용자 draft가 존재
 - content script 주입/재개 프롬프트 전송 실패
+- 개별 ChatGPT 실행 20분 hard stop 임박 → STATE 체크포인트 후 같은 sequence에서 종료/재개
 
 ChatGPT 또는 GitHub의 rate/service limit을 우회하도록 재시도하지 않는다.
 

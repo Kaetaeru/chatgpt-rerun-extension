@@ -65,6 +65,27 @@ Side Panel의 **Continue in new chat** 버튼은 현재 대화가 너무 길어�
 
 새 채팅으로 옮기는 것 자체는 GitHub sequence를 증가시키지 않는다. handoff 당시의 최신 control run/sequence를 그대로 사용한다.
 
+## GitHub app approval in fresh chats
+
+새 ChatGPT 대화에서 GitHub 앱 사용 승인 카드가 다시 나타날 수 있다. 이 승인을 Chrome 확장프로그램이 DOM을 찾아 자동으로 클릭하는 방식으로 우회하지 않는다.
+
+권장 방식은 **ChatGPT의 GitHub 앱별 Ask permission 설정을 지속형 자동 승인 모드로 구성**하는 것이다. 사용자가 이를 명시적으로 선택하면 이미 연결된 GitHub 앱의 허용된 작업은 새 대화에서도 일반적인 매회 승인 카드 없이 실행될 수 있다.
+
+이 설정은 다음과 구분된다.
+
+- GitHub OAuth 연결 자체를 새로 만들거나 저장소 접근 범위를 확대하지 않는다.
+- GitHub 조직/관리자 승인을 우회하지 않는다.
+- ChatGPT 또는 워크스페이스의 별도 안전 정책으로 차단되거나 추가 승인이 필요한 경우 이를 우회하지 않는다.
+- Rerun 확장프로그램은 승인 카드 텍스트/버튼을 읽거나 클릭하지 않는다.
+
+따라서 fresh-chat handoff의 책임 분리는 다음과 같다.
+
+```text
+Rerun extension: 새 탭 생성 + GitHub-backed handoff prompt 전달
+ChatGPT app permission: 연결된 GitHub 앱의 반복 승인 여부
+GitHub OAuth/admin: 실제 저장소 접근 범위와 조직 승인
+```
+
 ## Handoff prompt
 
 handoff prompt에는 최소한 다음 정보가 직접 포함된다.
@@ -95,6 +116,8 @@ handoff prompt에는 최소한 다음 정보가 직접 포함된다.
 
 그 대신 사용자가 대화가 길어졌다고 판단할 때 **Continue in new chat**을 명시적으로 누르는 방식이다. 이는 assistant output scraping에 의존하지 않고, 토큰 제한 문구/UI가 바뀌어도 GitHub 기반 handoff 자체가 유지되도록 하기 위함이다.
 
+또한 Rerun 확장프로그램은 ChatGPT의 앱 승인 카드나 OAuth/관리자 승인 UI를 자동 클릭하지 않는다. 반복 앱 사용 승인은 ChatGPT의 앱 권한 설정으로 처리한다.
+
 ## Manual verification
 
 ### Tab isolation
@@ -116,6 +139,7 @@ handoff prompt에는 최소한 다음 정보가 직접 포함된다.
 4. 새 탭에 GitHub 좌표/run/sequence가 들어간 handoff prompt가 자동 전송되는지 확인한다.
 5. 새 채팅이 GitHub 문서를 읽고 현재 미완료 checkpoint부터 재개하는지 확인한다.
 6. 이후 GitHub sequence가 증가하면 새 탭에서 자동 진행되는지 확인한다.
+7. GitHub 앱 사용 승인 카드가 반복된다면 확장프로그램 자동 클릭을 추가하지 말고 ChatGPT의 GitHub 앱 permission 설정을 확인한다.
 
 ## Chrome version
 

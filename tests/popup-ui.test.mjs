@@ -19,17 +19,30 @@ test("side panel exposes one runtime-driven Start/Stop watcher toggle", () => {
   assert.match(script, /Stop GitHub watcher on this tab/);
 });
 
-test("side panel shows tab watcher separately from GitHub work status", () => {
+test("side panel shows repository connection separately from watcher and GitHub work status", () => {
+  assert.match(html, /id="connectionState">Unconnected<\/strong>/);
   assert.match(html, /id="tabWatcher">Stopped<\/strong>/);
   assert.match(html, /GitHub work status/);
-  assert.match(script, /tabWatcher/);
+  assert.match(script, /connectionState/);
+  assert.match(script, /: "Unconnected"/);
   assert.match(script, /watching \? "Watching" : "Stopped"/);
   assert.match(script, /"continue · start"/);
 });
 
-test("side panel exposes an explicit Rerun connection prompt action", () => {
+test("new tabs do not inherit an unrelated legacy repository connection", () => {
+  assert.match(script, /const ownsLegacySession = Number\(legacy\.targetTabId\) === tabId/);
+  assert.match(script, /if \(ownsLegacySession\) \{[\s\S]*legacy\[key\]/);
+  assert.match(script, /const config = \{ \.\.\.DEFAULT_CONFIG \}/);
+  assert.match(script, /legacyDraft = ownsLegacySession/);
+});
+
+test("side panel exposes an explicit conversation-context Rerun connection prompt action", () => {
   assert.match(html, /id="connectPrompt"[^>]*>Rerun 연결 프롬프트<\/button>/);
-  assert.match(script, /buildRerunConnectionPrompt/);
+  assert.match(html, /새 탭은 저장소 좌표를 상속하지 않고 <strong>Unconnected<\/strong>/);
+  assert.match(html, /UNCONNECTED/);
+  assert.match(script, /const prompt = buildRerunConnectionPrompt\(\)/);
+  assert.doesNotMatch(script, /buildRerunConnectionPrompt\(\{[\s\S]{0,300}owner:/);
+  assert.match(script, /RERUN_CONNECTION 결과를 확인하세요/);
   assert.match(script, /type: "RERUN_CONNECT"/);
   assert.match(script, /connectPromptButton\.disabled = watching \|\| connectPromptBusy/);
   assert.match(content, /"RERUN_CONNECT"/);

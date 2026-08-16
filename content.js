@@ -9,7 +9,19 @@ async function tick() {
   ticking = true;
   try {
     const response = await chrome.runtime.sendMessage({ type: "POLL" });
-    if (!response?.ok || response.action !== "continue") return;
+    if (!response?.ok) return;
+
+    if (response.action === "stop_when_idle") {
+      if (isChatIdle()) {
+        await chrome.runtime.sendMessage({
+          type: "STOP_SESSION",
+          reason: response.reason || "stopped"
+        });
+      }
+      return;
+    }
+
+    if (response.action !== "continue") return;
 
     const { control, prompt } = response;
     if (!control || !isChatIdle()) return;

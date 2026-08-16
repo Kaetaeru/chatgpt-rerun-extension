@@ -267,13 +267,18 @@ export function buildNewChatHandoffPrompt(config, control) {
   const path = String(config.path || DEFAULT_CONFIG.path).trim() || DEFAULT_CONFIG.path;
   const runId = String(control?.runId || "unknown");
   const sequence = Number.isSafeInteger(control?.sequence) ? control.sequence : "unknown";
+  const status = String(control?.status || "unknown");
+  const taskId = String(control?.taskId || "unknown");
+  const workInstruction = status === "continue"
+    ? "현재 최신 control이 `continue`면 이전 채팅 내용에 의존하거나 검증된 작업을 반복하지 말고 STATE.md의 미완료 지점과 Next Exact Action부터 실제 작업을 재개해."
+    : "현재 최신 control이 `complete`, `needs_user`, `blocked` 중 하나면 실제 구현 task를 시작하지 마. GitHub 문서와 run context만 복구하고 현재 대기 이유를 확인한 뒤 종료해. 이 새 탭의 watcher는 계속 GitHub를 감시하고, 이후 유효한 `continue`가 오면 표준 재개 프롬프트로 자동 실행한다.";
 
   return [
-    "새 채팅에서 이전 자동 작업을 이어간다.",
+    "새 채팅으로 ChatGPT Rerun의 GitHub watcher ownership을 이어받는다.",
     `GitHub 저장소 ${owner}/${repo}, branch ${branch}를 먼저 읽어.`,
-    `${path}와 같은 디렉터리의 README.md, STATE.md, PLAN.md를 규정된 순서대로 읽고 preflight reconciliation을 수행해.`,
-    `현재 handoff 기준 run_id=${runId}, sequence=${sequence}다. GitHub의 실제 최신 상태가 다르면 GitHub 상태를 우선해.`,
-    "이전 채팅 내용에 의존하거나 완료된 작업을 반복하지 말고, STATE.md의 미완료 지점과 Next Exact Action부터 재개해.",
+    `${path}와 같은 디렉터리의 README.md, control.json, STATE.md, PLAN.md를 규정된 순서대로 읽고 preflight reconciliation을 수행해.`,
+    `현재 handoff 기준 run_id=${runId}, sequence=${sequence}, status=${status}, task_id=${taskId}다. GitHub의 실제 최신 상태가 다르면 GitHub 상태를 우선해.`,
+    workInstruction,
     "20분 실행 제한과 PLAN -> STATE -> control.json 쓰기 순서를 지켜."
   ].join(" ");
 }

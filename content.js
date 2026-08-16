@@ -1,6 +1,18 @@
 const BASE_TICK_MS = 2000;
 let ticking = false;
 
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "RERUN_PING") {
+    sendResponse({ ready: true });
+    return;
+  }
+
+  if (message?.type === "RERUN_WAKE") {
+    sendResponse({ ready: true });
+    void tick();
+  }
+});
+
 setInterval(tick, BASE_TICK_MS);
 tick();
 

@@ -29,6 +29,13 @@ test("side panel shows repository connection separately from watcher and GitHub 
   assert.match(script, /"continue · start"/);
 });
 
+test("side panel removes the lifetime Max sends cap", () => {
+  assert.doesNotMatch(html, />Max sends</);
+  assert.match(html, /id="maxRuns" type="hidden"/);
+  assert.match(html, /전체 작업의 send 횟수를 제한하지 않습니다/);
+  assert.match(html, /Retries \/ sequence/);
+});
+
 test("rate-limit UI shows polling mode instead of raw quota counters", () => {
   assert.match(html, /API polling/);
   assert.doesNotMatch(html, /Rate remaining/);

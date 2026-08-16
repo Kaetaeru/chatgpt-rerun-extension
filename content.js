@@ -4,6 +4,7 @@
 
   const BASE_TICK_MS = 2000;
   let ticking = false;
+  let currentTabId = null;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "RERUN_PING") {
@@ -28,9 +29,21 @@
     }
   });
 
-  void chrome.runtime.sendMessage({ type: "REGISTER_CHAT_TAB" }).catch(() => {});
+  void registerCurrentTab();
   setInterval(tick, BASE_TICK_MS);
   void tick();
+
+  async function registerCurrentTab() {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: "REGISTER_CHAT_TAB" });
+      if (response?.ok && Number.isSafeInteger(response.tabId)) {
+        currentTabId = response.tabId;
+      }
+    } catch {
+      // The background worker may be restarting. A later call can resolve it.
+    }
+    return currentTabId;
+  }
 
   async function tick() {
     if (ticking) return;
@@ -77,20 +90,56 @@
           sequence: control.sequence
         });
       } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
         await chrome.runtime.sendMessage({
           type: "RELEASE_SEQUENCE",
           runId: control.runId,
           sequence: control.sequence
         });
+
+        if (isConfirmedDispatchFailure(detail)) {
+          const handoff = await handoffAfterDispatchFailure();
+          if (handoff?.ok) return;
+
+          await chrome.runtime.sendMessage({
+            type: "STOP_SESSION",
+            reason: `auto_handoff_failed: ${handoff?.error || detail}`
+          });
+          return;
+        }
+
         await chrome.runtime.sendMessage({
           type: "STOP_SESSION",
-          reason: `send_failed: ${error instanceof Error ? error.message : String(error)}`
+          reason: `send_failed: ${detail}`
         });
       }
     } catch {
       // The background worker may be restarting. A later tick will retry.
     } finally {
       ticking = false;
+    }
+  }
+
+  function isConfirmedDispatchFailure(detail) {
+    return String(detail || "").startsWith("prompt inserted but ");
+  }
+
+  async function handoffAfterDispatchFailure() {
+    const tabId = currentTabId ?? await registerCurrentTab();
+    if (!Number.isSafeInteger(tabId)) {
+      return { ok: false, error: "current ChatGPT tab ID is unavailable for automatic handoff" };
+    }
+
+    try {
+      return await chrome.runtime.sendMessage({
+        type: "HANDOFF_NEW_CHAT",
+        tabId
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      };
     }
   }
 

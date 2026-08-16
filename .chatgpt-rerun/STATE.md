@@ -6,40 +6,34 @@
 - Sequence: `9`
 - Desired control status: `needs_user`
 - Current task: `V02-009`
-- Control reason: `v0.2.12 removes the lifetime Max sends gate that blocked the long-running SimpleVTT watcher; reload and retest the live SimpleVTT tab.`
-- Phase: `awaiting_v0212_simplevtt_unlimited_send_probe`
-- Last checkpoint (UTC): `2026-08-16T23:25:00Z`
+- Control reason: `v0.2.13 adds opt-in approval-aware waiting: suppress Rerun retry while a GitHub action confirmation is visible, never auto-click approval, and resume automatically after manual confirmation.`
+- Phase: `awaiting_v0213_simplevtt_approval_aware_probe`
+- Last checkpoint (UTC): `2026-08-16T23:51:00Z`
 
 ## Current Objective
 
-Verify v0.2.12 against the actual failing project, `Kaetaeru/SimpleVTT` on `main`.
+Verify v0.2.13 on the actual live project, `Kaetaeru/SimpleVTT @ main`, after two separate long-run blockers were already corrected:
 
-SimpleVTT itself is correctly authorized: sequence 1 / `continue`, with STATE/PLAN requiring further Phase 14 work. The latest no-dispatch behavior was not caused by `Public · rate-safe` and not by a missing GitHub work signal.
+1. fresh same-sequence `continue` rewrites must not be trapped by `retry_limit`;
+2. deliberate continuation count must not be capped by lifetime `Max sends`.
 
-## Root cause confirmed
+The new browser interruption reported by the user is ChatGPT's GitHub write-action confirmation card, e.g. while creating `tests/ui/connectedProjectedCharacterSpellProjection.test.ts`.
 
-v0.2.11 correctly recognized a newer same-sequence `updated_at` as a fresh authorization, but a separate lifetime counter still ran first:
+## v0.2.13 implementation
 
-1. every successful Rerun prompt/handoff increments `runtime.runCount`;
-2. default `maxRuns` was 20;
-3. normal dispatch returned `wait: max_runs` when `runCount >= maxRuns`;
-4. `CLAIM_SEQUENCE` separately rejected with `max_runs`;
-5. fresh-chat handoff separately threw `Max sends 한도에 도달했습니다...`;
-6. Side Panel could still show `Watching` / `Public · rate-safe`, hiding that dispatch had been suppressed.
+- `control.js`: adds tab-scoped `approvalAwareResume`, default `false`.
+- `popup.html`: adds **GitHub 승인 후 자동 계속** checkbox and explicit explanation that approval is still manual.
+- `popup.js`: persists the checkbox as a boolean in the existing per-tab config/draft and shows `GitHub approvals = Manual · auto-resume` when enabled.
+- `popup.css`: gives the checkbox a normal compact row layout instead of the generic 100%-width input styling.
+- `content.js`: before every Rerun `POLL`, reads the saved tab config. If approval-aware mode is enabled and a GitHub action-confirmation card is visible, the tick returns without polling.
+- The detector requires an interactive `허용`, `허용하기`, or `Allow` button and nearby GitHub confirmation text matching Korean `ChatGPT가 GitHub...사용하도록 허용할까요` or English `Allow ChatGPT to use GitHub`.
+- The detector does not click the approval button or dropdown. Manual confirmation remains required.
+- Once the user approves and the card disappears, the next normal content tick (base interval 2 seconds) resumes polling automatically.
+- Because the option is ordinary tab config, fresh-chat handoff copies it with the rest of the connection config.
 
-SimpleVTT Phase 14 has already used at least twenty deliberate continuation authorizations in the same run, so this lifetime cap matches the observed stop point.
+## Safety / protocol boundary
 
-## v0.2.12 implementation
-
-- `background.js`: removed all lifetime send-count gates from normal dispatch, sequence claim, and fresh-chat handoff.
-- `control.js`: legacy `maxRuns` normalization now returns `Number.MAX_SAFE_INTEGER` only for compatibility with older stored config/UI code; background execution no longer consults it.
-- `popup.html`: removed the visible `Max sends` setting and explains that total sends are unlimited while `Retries / sequence` remains the stuck-control safety guard.
-- `runtime.runCount` / Side Panel `Sent`: retained as diagnostic telemetry only.
-- `tests/watcher-flow.test.mjs`: now fails if `background.js` regains `max_runs`, `normalizeMaxRuns`, or the old `Max sends` rejection while preserving retry-limit and sequence-regression guards.
-- `tests/control.test.mjs`: legacy 0/20/100/999 maxRuns inputs all normalize to the compatibility unbounded sentinel.
-- `tests/popup-ui.test.mjs`: asserts the visible Max sends control is gone and the unlimited-send explanation is present.
-- manifest/package version bumped to `0.2.12`.
-- README contract now explicitly states there is no lifetime send limit.
+This is not an auto-approval feature. Rerun may detect the presence of the explicit GitHub action-confirmation UI only to avoid duplicate Rerun retries while the user is deciding. It must not click ChatGPT app approval, GitHub OAuth/repository-access, or administrator-approval UI.
 
 ## Verification
 
@@ -47,25 +41,35 @@ SimpleVTT Phase 14 has already used at least twenty deliberate continuation auth
 |---|---|---|
 | V02-001~008 prior browser evidence | PASS | Retained. |
 | SimpleVTT control/STATE/PLAN inspection | PASS | sequence 1 / continue is correctly authorized. |
-| SimpleVTT continuation-history inspection | PASS | at least twenty deliberate Phase 14 continuation authorizations exist in the same run. |
-| v0.2.11 max-runs root-cause inspection | PASS | lifetime checks occurred before/independent of fresh-generation classification. |
-| v0.2.12 source change | COMMITTED | lifetime checks removed from background dispatch/claim/handoff. |
-| v0.2.12 regression assertions | COMMITTED | control/watcher/popup tests updated. |
-| v0.2.12 exact latest full npm suite | NOT_RUN | container cannot resolve github.com and no mounted exact checkout is available. |
-| v0.2.12 SimpleVTT browser dispatch | NOT_RUN | Requires Reload on the user's live SimpleVTT ChatGPT tab. |
+| v0.2.12 lifetime send-cap removal | COMMITTED / SOURCE-VERIFIED | Historical `Sent` count no longer blocks dispatch/claim/handoff. |
+| v0.2.13 approval-aware config/UI | COMMITTED / SOURCE-VERIFIED | Checkbox, persistence, runtime label, CSS present. |
+| v0.2.13 detector ordering | COMMITTED / SOURCE-VERIFIED | approval check occurs before `POLL`. |
+| v0.2.13 no-auto-click boundary | COMMITTED / SOURCE-VERIFIED | detector returns card only; no approval click path. |
+| v0.2.13 phrase probe | PASS TARGETED | Korean exact/whitespace and English examples match; ordinary GitHub status text does not. |
+| v0.2.13 regression assertions | COMMITTED | content-send and popup-ui tests updated. |
+| v0.2.13 exact latest full npm suite | NOT_RUN | Exact branch checkout is not available in this runtime. |
+| v0.2.13 live approval-card browser behavior | NOT_RUN | Requires Reload and actual ChatGPT GitHub action confirmation. |
 
 ## Next Exact Action
 
-Reload unpacked extension v0.2.12. Return to the existing ChatGPT tab connected to `Kaetaeru/SimpleVTT @ main`. Keep/turn the watcher on. Do not change SimpleVTT's run_id or sequence. Expected after the next successful control poll: current sequence 1 / `continue` dispatches even if Side Panel `Sent` is already 20 or higher.
+1. Reload unpacked extension v0.2.13.
+2. Return to the existing ChatGPT tab connected to `Kaetaeru/SimpleVTT @ main`.
+3. Check **GitHub 승인 후 자동 계속**, then press **Save connection**.
+4. Keep/turn watcher Watching.
+5. Continue until a GitHub write action shows the confirmation card.
+6. Leave it unanswered past the configured retry delay; verify no duplicate Rerun resume prompt is sent and the approval UI is not auto-clicked.
+7. Manually approve (`허용하기` or `대화에서 허용하기`).
+8. Verify ChatGPT work continues and Rerun polling resumes without pressing Start again.
 
-If that conversation is exhausted, the automatic failed-dispatch -> fresh-chat handoff path must also proceed without any lifetime send-count rejection.
+Do not change SimpleVTT's run_id/sequence merely to wake the watcher.
 
 ## Do Not Repeat
 
 - Do not repeat V02-001 through V02-008.
 - Do not change SimpleVTT sequence merely to bypass local extension counters.
-- Do not reintroduce a lifetime Max sends cap; deliberate fresh authorizations must be unlimited.
+- Do not reintroduce a lifetime Max sends cap.
 - Do not remove per-generation retry protection for unchanged/stuck control.
+- Do not auto-click app approval, OAuth, repository-access, or administrator-approval UI.
 - Do not parse assistant limit-warning text.
 - Do not overwrite non-Rerun user drafts.
 - Do not recursively open fresh chats after direct handoff failure.

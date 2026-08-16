@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ChatGPT Rerun</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>ChatGPT Rerun</h1>
+          <p id="statusLine">Stopped</p>
+        </div>
+        <span id="statusDot" aria-hidden="true"></span>
+      </header>
+
+      <section>
+        <div class="grid two">
+          <label>Owner<input id="owner" autocomplete="off" placeholder="Kaetaeru" /></label>
+          <label>Repository<input id="repo" autocomplete="off" placeholder="project" /></label>
+        </div>
+        <div class="grid two">
+          <label>Branch<input id="branch" autocomplete="off" value="main" /></label>
+          <label>Max runs<input id="maxRuns" type="number" min="1" max="100" /></label>
+        </div>
+        <label>Control file<input id="path" autocomplete="off" /></label>
+        <label>Resume prompt<textarea id="resumePrompt" rows="2"></textarea></label>
+        <div class="grid two">
+          <label>Poll seconds<input id="pollIntervalSeconds" type="number" min="5" /></label>
+          <label>GitHub token <span class="muted">optional</span><input id="githubToken" type="password" autocomplete="off" /></label>
+        </div>
+        <p class="hint">토큰이 없으면 GitHub API 제한 때문에 최소 60초 간격을 사용합니다. 토큰이 있으면 최소 5초입니다.</p>
+      </section>
+
+      <section class="runtime">
+        <div><span>Run</span><strong id="runId">-</strong></div>
+        <div><span>Sequence</span><strong id="sequence">-</strong></div>
+        <div><span>GitHub status</span><strong id="githubStatus">-</strong></div>
+        <div><span>Sent</span><strong id="runCount">0</strong></div>
+        <div><span>Rate remaining</span><strong id="rateLimit">-</strong></div>
+      </section>
+
+      <p id="errorBox" class="error" hidden></p>
+
+      <footer>
+        <button id="save" class="secondary">Save</button>
+        <button id="stop" class="danger">Stop</button>
+        <button id="start" class="primary">Start on this tab</button>
+      </footer>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

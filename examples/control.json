@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "run_id": "example-run-001",
+  "sequence": 1,
+  "status": "continue",
+  "reason": "The verified task is complete and the next planned task can start."
+}

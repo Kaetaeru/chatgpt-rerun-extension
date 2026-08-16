@@ -19,18 +19,19 @@
       <p class="notice">Start/Stop은 현재 ChatGPT 탭의 GitHub watcher만 켜고 끕니다. GitHub의 `continue / complete / needs_user / blocked` 상태와는 독립적입니다. watcher가 켜져 있으면 terminal 상태에서도 설정된 주기로 계속 확인하고, GitHub가 다시 `continue`가 되면 자동 재개합니다.</p>
 
       <section class="setupBox">
-        <strong>새 프로젝트를 Rerun에 연결</strong>
-        <p>이 대화가 이미 작업 중인 GitHub 저장소를 알고 있다면, 먼저 연결 프롬프트를 보내 `.chatgpt-rerun`의 README / PLAN / STATE / STATUS / control 문서를 생성하거나 안전하게 보완합니다. Rerun watcher는 시작하지 않습니다.</p>
+        <strong>현재 채팅을 Rerun에 연결</strong>
+        <p>새 탭은 저장소 좌표를 상속하지 않고 <strong>Unconnected</strong>로 시작합니다. 연결 프롬프트는 Side Panel 값을 추측에 사용하지 않고, 이 채팅이 GitHub 앱으로 실제 사용한 repository와 branch를 확인합니다. 아직 실제 GitHub 프로젝트를 사용하지 않았다면 아무 파일도 쓰지 않고 `UNCONNECTED`라고 알려줍니다.</p>
+        <p>대상이 하나로 확인되면 Rerun 5문서를 생성/보완한 뒤 채팅에 repository, branch, control path, run/status/task, 프로젝트 목표를 연결 결과로 명확히 알려줍니다.</p>
         <button id="connectPrompt" class="secondary wide">Rerun 연결 프롬프트</button>
       </section>
 
       <section>
         <div class="grid two">
-          <label>Owner<input id="owner" autocomplete="off" placeholder="Kaetaeru" /></label>
-          <label>Repository<input id="repo" autocomplete="off" placeholder="project" /></label>
+          <label>Owner<input id="owner" autocomplete="off" placeholder="연결 결과의 owner" /></label>
+          <label>Repository<input id="repo" autocomplete="off" placeholder="연결 결과의 repository" /></label>
         </div>
         <div class="grid two">
-          <label>Branch<input id="branch" autocomplete="off" value="main" /></label>
+          <label>Branch<input id="branch" autocomplete="off" placeholder="main" /></label>
           <label>Max sends<input id="maxRuns" type="number" min="1" max="100" /></label>
         </div>
         <label>Control file<input id="path" autocomplete="off" /></label>
@@ -43,11 +44,12 @@
           <label>Retries / sequence<input id="maxRetriesPerSequence" type="number" min="0" max="10" /></label>
           <label>GitHub token <span class="muted">optional</span><input id="githubToken" type="password" autocomplete="off" /></label>
         </div>
-        <p class="hint">권장 흐름은 `Rerun 연결 프롬프트`로 프로젝트 문서를 먼저 준비한 뒤 Owner / Repository / Branch를 확인하고 Start해서 watcher를 켜는 것입니다. 같은 GitHub control stream은 동시에 한 탭만 감시할 수 있습니다. 표준 control이 없는 상태에서 Start한 경우의 안전한 자동 bootstrap은 fallback으로 유지됩니다.</p>
+        <p class="hint">처음에는 Owner / Repository / Branch가 비어 있는 것이 정상입니다. `Rerun 연결 프롬프트`가 채팅에 출력한 CONNECTED 결과를 확인한 뒤 그 좌표를 입력하고 Save한 다음 Start해서 watcher를 켭니다. 같은 GitHub control stream은 동시에 한 탭만 감시할 수 있습니다. 표준 control이 없는 저장소에서 좌표를 직접 입력하고 Start한 경우의 자동 bootstrap은 fallback으로 유지됩니다.</p>
       </section>
 
       <section class="runtime">
         <div><span>Chrome tab</span><strong id="tabId">-</strong></div>
+        <div><span>Repository connection</span><strong id="connectionState">Unconnected</strong></div>
         <div><span>Tab watcher</span><strong id="tabWatcher">Stopped</strong></div>
         <div><span>Run</span><strong id="runId">-</strong></div>
         <div><span>Sequence</span><strong id="sequence">-</strong></div>
@@ -67,7 +69,7 @@
       <p id="errorBox" class="error" hidden></p>
 
       <footer>
-        <button id="save" class="secondary">Save settings</button>
+        <button id="save" class="secondary">Save connection</button>
         <button id="sessionToggle" class="primary" aria-label="Start GitHub watcher on this tab" aria-pressed="false">Start</button>
       </footer>
     </main>

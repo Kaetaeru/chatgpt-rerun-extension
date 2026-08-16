@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Rerun",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "minimum_chrome_version": "116",
-  "description": "Keep GitHub-backed ChatGPT workflows watched per tab, decouple watcher state from GitHub work state, and hand them off to a fresh chat when needed.",
+  "description": "Connect each ChatGPT tab explicitly to its actual GitHub project, then keep GitHub-backed workflows watched and resumable.",
   "permissions": ["storage", "activeTab", "sidePanel", "scripting"],
   "host_permissions": [
     "https://api.github.com/*",

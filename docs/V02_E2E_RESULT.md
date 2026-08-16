@@ -6,7 +6,7 @@ Runbook: `docs/V02_E2E_TEST_PLAN.md`
 
 - Run ID: `chatgpt-rerun-v02-20260816-01`
 - Branch: `agent/mvp-autoresume`
-- Extension to verify: `0.2.12`
+- Extension to verify: `0.2.13`
 - Status: `V02_009_LIVE_VERIFY`
 - Current task: `V02-009`
 
@@ -32,60 +32,60 @@ Runbook: `docs/V02_E2E_TEST_PLAN.md`
 5. v0.2.9: a stale Rerun-owned prompt left in the composer no longer looks like a user draft and can route to handoff.
 6. A browser probe hit the GitHub public REST rate limit.
 7. v0.2.10 added rate-limit-safe polling and pause/resume behavior.
-8. SimpleVTT then exposed that same-sequence long tasks could hit `retry_limit` even after a fresh control rewrite.
-9. v0.2.11 made newer same-sequence `updated_at` a fresh authorization rather than an unchanged-control retry.
-10. SimpleVTT still stopped after many successful continuations because the independent lifetime `Max sends=20` gate ran before/around normal dispatch, claim, and handoff.
-11. v0.2.12 removes that lifetime send gate entirely.
+8. SimpleVTT exposed same-sequence long-task `retry_limit` behavior.
+9. v0.2.11 made newer same-sequence `updated_at` a fresh authorization.
+10. SimpleVTT still stopped after many successful continuations because lifetime `Max sends=20` remained.
+11. v0.2.12 removed that lifetime send gate entirely.
+12. The next workflow risk identified by the user is ChatGPT's GitHub write-action confirmation card. A long manual approval pause can outlive Rerun retry delay and create redundant continuation attempts if the page otherwise looks idle.
+13. v0.2.13 adds approval-aware manual-confirmation resume: detect the GitHub action-confirmation UI, suppress Rerun POLL/retry while it is visible, never click the approval control, and automatically resume polling after the user approves and the card disappears.
 
-## SimpleVTT evidence
+## SimpleVTT evidence retained
 
-The actual live failing project is `Kaetaeru/SimpleVTT @ main`, not the Rerun extension dogfood stream.
+The live project remains `Kaetaeru/SimpleVTT @ main` with run_id `b7f27a61-29d8-4ba2-9f93-8e66722d5f41`, sequence `1`, status `continue`, task `phase14-production-play-session-ux`. Its STATE/PLAN require continued work on the same sequence.
 
-Direct inspection showed:
+## v0.2.12 lifetime-send fix retained
 
-- run_id `b7f27a61-29d8-4ba2-9f93-8e66722d5f41`
-- sequence `1`
-- status `continue`
-- task `phase14-production-play-session-ux`
-- STATE/PLAN explicitly require continuation on the same sequence
-- Phase 14 history contains at least twenty deliberate continuation authorizations in the same run
+- Normal dispatch, `CLAIM_SEQUENCE`, and fresh-chat handoff no longer have a lifetime send-count gate.
+- `runCount` remains diagnostic only.
+- `Retries / sequence` still limits an unchanged control generation.
 
-The observed UI (`Watching`, `Public · rate-safe`, no dispatch) is consistent with the old lifetime `max_runs` wait path: API polling can remain healthy while dispatch is suppressed by a local counter.
+## v0.2.13 approval-aware resume
 
-## v0.2.12 lifetime-send fix
-
-- Normal `actionForControl()` no longer checks `runCount >= maxRuns`.
-- `CLAIM_SEQUENCE` no longer rejects `max_runs`.
-- `handoffToNewChat()` no longer rejects historical `Sent` count.
-- `runCount` remains a diagnostic counter only.
-- Side Panel no longer exposes a visible `Max sends` setting and explains that total deliberate sends are unlimited.
-- Existing stored `maxRuns` values remain compatibility-only and cannot stop the background worker.
-- The unchanged-control `Retries / sequence` guard remains intact, so removing the lifetime cap does not create an infinite duplicate-send loop for a stuck control generation.
-
-## Rate-limit resilience retained
-
-- Unauthenticated polling reserves headroom: minimum effective interval is 90 seconds for one unauthenticated watcher and scales by enabled unauthenticated watcher count.
-- Authenticated polling retains the 5-second minimum.
-- GitHub `403/429` rate-limit responses become a pause deadline rather than watcher Stop.
-- Side Panel shows `API polling`: `Public · rate-safe`, `Authenticated · conditional`, or `Paused until ...`.
+- `DEFAULT_CONFIG.approvalAwareResume=false` keeps the feature explicit opt-in.
+- Side Panel adds **GitHub 승인 후 자동 계속** and requires Save connection to apply the setting.
+- The Side Panel explains that Rerun does not click the approval button; runtime summary shows `GitHub approvals = Manual · auto-resume` when enabled.
+- `content.js` reads the saved tab-scoped config before every POLL.
+- When enabled, it looks for an interactive `허용/허용하기/Allow` button whose nearby card text contains GitHub plus either `ChatGPT가 GitHub...사용하도록 허용할까요` or `Allow ChatGPT to use GitHub`.
+- While that card exists, `tick()` returns before sending `POLL`; this prevents same-control retry/duplicate resume while the user is deciding.
+- The detector deliberately returns the card only; it contains no approval-button `.click()` path.
+- After the user manually approves and the card disappears, the next normal content tick resumes polling automatically.
+- The setting is part of tab config, so normal fresh-chat ownership transfer copies it with the rest of config.
 
 ## Validation status
 
 | Check | Result | Evidence |
 |---|---|---|
-| v0.2.12 background lifetime-cap removal | COMMITTED / SOURCE-VERIFIED | Remote background source has no `max_runs` dispatch/claim/handoff gate. |
-| v0.2.12 UI Max sends removal | COMMITTED / SOURCE-VERIFIED | Visible field removed; unlimited-send hint present. |
-| v0.2.12 regression assertions | COMMITTED | control/watcher/popup tests updated. |
-| v0.2.12 manifest | PASS SOURCE | version `0.2.12`. |
-| v0.2.12 latest full npm suite | NOT_RUN | Container cannot resolve github.com and no exact mounted checkout is available. |
-| v0.2.12 SimpleVTT browser dispatch | PENDING | Requires extension Reload on the user's live SimpleVTT tab. |
-| v0.2.12 exhausted-chat fresh handoff | PENDING | Must be observed after live dispatch reaches exhausted chat path. |
-| explicit rate-limit pause/resume | PENDING | Requires live `Paused until ...` observation or equivalent browser evidence. |
+| v0.2.12 lifetime-cap removal | COMMITTED / SOURCE-VERIFIED | Background dispatch/claim/handoff has no lifetime gate. |
+| v0.2.13 approval-aware config/UI | COMMITTED / SOURCE-VERIFIED | Checkbox, saved boolean, runtime summary, checkbox CSS present. |
+| v0.2.13 approval detector ordering | COMMITTED / SOURCE-VERIFIED | `shouldPauseForGitHubApproval()` runs before `POLL`. |
+| v0.2.13 no auto-approval | COMMITTED / SOURCE-VERIFIED | Detector only returns card; approval button is not clicked. |
+| v0.2.13 detector phrase probe | PASS TARGETED | Korean exact/sample, Korean whitespace, English sample matched; ordinary GitHub status text did not match. |
+| v0.2.13 regression assertions | COMMITTED | `tests/content-send.test.mjs` and `tests/popup-ui.test.mjs` updated. |
+| v0.2.13 latest full npm suite | NOT_RUN | Container still cannot materialize the exact GitHub checkout. |
+| v0.2.13 live GitHub approval-card behavior | PENDING | Requires Reload and an actual action confirmation in ChatGPT. |
+| v0.2.13 SimpleVTT browser dispatch | PENDING | Requires live browser observation. |
 
 ## Next browser probe
 
-Reload unpacked extension v0.2.12. On the existing SimpleVTT ChatGPT tab, keep the connection on `Kaetaeru/SimpleVTT @ main` and watcher enabled. Do not change SimpleVTT's run/sequence merely to wake it. The next successful control poll must be able to dispatch current sequence 1 / `continue` regardless of historical `Sent` count. If the chat is exhausted, fresh-chat handoff must also ignore historical `Sent` count.
+1. Reload unpacked ChatGPT Rerun v0.2.13.
+2. On the SimpleVTT tab, check **GitHub 승인 후 자동 계속** and press **Save connection**.
+3. Keep watcher Watching.
+4. Trigger/continue a GitHub write action that shows the GitHub action-confirmation card.
+5. Leave the card unanswered long enough to cross the configured retry delay; no duplicate Rerun resume prompt should be sent.
+6. Confirm Rerun did not click the approval control.
+7. Manually choose `허용하기` or `대화에서 허용하기`.
+8. After the card disappears, the running ChatGPT action and Rerun watcher should continue without another Start click.
 
 ## Completion assessment
 
-V02-001~008 remain verified. V02-009 remains in progress until the live SimpleVTT dispatch/fresh-chat handoff path succeeds and remaining rate-limit behavior is accepted or directly observed.
+V02-001~008 remain verified. V02-009 remains in progress until live SimpleVTT dispatch/fresh-chat behavior, rate-limit behavior, and approval-aware manual-confirmation resume are observed in the browser.

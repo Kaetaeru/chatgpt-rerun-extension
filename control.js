@@ -183,13 +183,22 @@ export function continuationDisposition(control, settings, nowMs = Date.now()) {
     return { action: "stale", isRetry: false };
   }
 
+  const lastSentMs = Date.parse(String(settings.lastSentAt || ""));
+  const controlUpdatedMs = Date.parse(String(control.updatedAt || ""));
+  if (
+    Number.isFinite(lastSentMs) &&
+    Number.isFinite(controlUpdatedMs) &&
+    controlUpdatedMs > lastSentMs
+  ) {
+    return { action: "send", isRetry: false };
+  }
+
   const maxRetries = normalizeMaxRetries(settings.maxRetriesPerSequence);
   const retryCount = Number(settings.sameSequenceRetryCount || 0);
   if (retryCount >= maxRetries) {
     return { action: "retry_limit", isRetry: true };
   }
 
-  const lastSentMs = Date.parse(String(settings.lastSentAt || ""));
   if (!Number.isFinite(lastSentMs)) {
     return { action: "send", isRetry: true };
   }

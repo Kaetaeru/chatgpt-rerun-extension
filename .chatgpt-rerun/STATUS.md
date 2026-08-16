@@ -6,59 +6,47 @@
 
 | Item | Current |
 |---|---|
-| Last updated | `2026-08-16T18:01:00Z` (03:01 KST, Aug 17) |
+| Last updated | `2026-08-16T18:12:00Z` (03:12 KST, Aug 17) |
 | Run | `chatgpt-rerun-v02-20260816-01` |
 | Sequence | `9` |
 | GitHub work status | `needs_user` |
 | Current task | `V02-009` |
-| Extension version to verify | `0.2.7` |
+| Extension version to verify | `0.2.8` |
 | Previous V02-001~008 | PASS |
-| v0.2.6 auto-submit targeted tests | PASS — 4/4 |
-| v0.2.7 handoff logic targeted check | PASS |
 | Browser verification | PENDING RELOAD |
 
-## 새 채팅 자동 재시작 문제 확인
+## 이번에 확인된 증상
 
-사용자가 새 채팅에서 자동 재시작이 되지 않는다고 보고했습니다.
+한도에 도달한 기존 ChatGPT 채팅에서 Start를 누르면 watcher가 잠깐 켜졌다가 즉시 다시 Stopped가 되어 버튼이 Start로 돌아왔습니다.
 
-확인 결과 실제 설계 불일치가 있었습니다. v0.2.4부터 Chrome watcher와 GitHub work status는 독립적이어야 하지만, `Continue in new chat`에는 예전 규칙이 남아 있어 `control.status !== continue`이면 handoff 자체를 거부하고 있었습니다.
+원인은 Start 자체가 아니라 그 직후 `continue` dispatch였습니다. 확장프로그램이 resume prompt를 넣고 Send/Enter를 시도했지만 실제 전송 증거를 얻지 못하면 기존 코드는 sequence claim을 풀고 곧바로 `STOP_SESSION`을 호출했습니다. 그래서 사용자는 watcher가 바로 꺼진 것처럼 보였습니다.
 
-현재 이 프로젝트 control도 `needs_user`이므로 구버전에서는 바로 그 조건에 걸릴 수 있습니다.
+## v0.2.8 수정
 
-## v0.2.7 수정
-
-- `continue`, `complete`, `needs_user`, `blocked` 어느 상태에서도 fresh-chat watcher ownership transfer 허용
-- handoff prompt에 owner/repo, branch, control path, run_id, sequence, status, task_id 포함
-- `continue`면 새 채팅이 GitHub STATE에서 실제 미완료 작업 재개
-- terminal이면 repo/run context만 복구하고 implementation은 시작하지 않음
-- terminal handoff 뒤에도 새 탭 watcher는 계속 polling
-- 이후 GitHub가 `continue`가 되면 Start 재클릭 없이 새 탭에서 자동 재개
-- v0.2.6의 composer 동기화 + Send/Enter fallback + dispatch evidence 확인을 `RERUN_HANDOFF`에도 그대로 사용
-
-## 현재 검증
-
-- remote `background.js`에서 terminal handoff 차단 제거: PASS
-- status-aware handoff prompt targeted check: PASS
-- watcher-flow regression test 수정: COMMITTED
-- handoff-status regression test 추가: COMMITTED
-- 실제 Chrome v0.2.7 fresh-chat handoff: NOT_RUN
-- 실제 Chrome v0.2.7 prompt auto-submit: NOT_RUN
+- resume prompt가 실제 composer에 들어간 뒤 Send/Enter 모두 dispatch를 만들지 못한 경우를 confirmed dispatch failure로 분류
+- sequence claim을 먼저 release
+- 현재 tab ID를 `REGISTER_CHAT_TAB` 응답으로 확인
+- 기존 `HANDOFF_NEW_CHAT` 경로를 자동 호출
+- 성공하면 old tab watcher는 fresh tab으로 ownership transfer
+- handoff 실패 시에만 `auto_handoff_failed`로 안전정지
+- 일반 composer/스크립트 오류는 기존처럼 안전정지하며 surprise new tab을 만들지 않음
+- fresh-chat handoff prompt 자체 실패는 다시 handoff하지 않아 무한 새 탭 루프를 만들지 않음
+- assistant 답변이나 한도 안내 문구는 파싱하지 않음
 
 ## 다음 확인
 
-1. `chrome://extensions`에서 ChatGPT Rerun **v0.2.7 Reload**
-2. 현재/테스트 탭 watcher를 Start해서 Watching 상태 확인
-3. GitHub work status가 `needs_user`인 상태에서도 **Continue in new chat** 실행
-4. 새 탭이 열리고 handoff prompt가 자동 제출되는지 확인
-5. 새 탭에서 구현은 시작하지 않고 context만 복구하는지 확인
-6. 새 탭 watcher가 Watching인지 확인
-7. 그 뒤 GitHub를 `continue`로 바꾸면 Start를 다시 누르지 않아도 자동 resume가 제출되는지 확인
+1. `chrome://extensions`에서 ChatGPT Rerun **v0.2.8 Reload**
+2. 같은 한도 도달 채팅/동일 테스트 프로젝트를 사용
+3. GitHub control이 유효한 `continue`일 때 Start
+4. 기존 탭이 단순히 Start로 되돌아가는 대신 fresh ChatGPT 탭 하나가 자동으로 열리는지 확인
+5. 새 탭에서 handoff prompt가 자동 제출되는지 확인
+6. 새 탭 watcher가 ownership을 이어받아 Watching인지 확인
 
-## Blockers / risks
+## 현재 검증 한계
 
-- v0.2.7 실제 browser evidence가 아직 없습니다.
-- 최신 전체 npm suite는 현재 container의 GitHub DNS 제한 때문에 다시 실행하지 못했습니다. targeted logic check만 PASS입니다.
-- PR #1은 사용자 요청 없이 merge하지 않습니다.
+- v0.2.8 source와 회귀 테스트 변경은 GitHub에 반영됨
+- 최신 exact checkout의 전체 npm suite는 현재 실행 환경에서 다시 돌리지 못했으므로 PASS라고 주장하지 않음
+- 실제 exhausted-chat browser E2E는 Reload 후 사용자 관찰이 필요
 
 ## Freshness policy
 

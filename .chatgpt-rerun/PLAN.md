@@ -15,7 +15,7 @@ Validate ChatGPT Rerun v0.2.x after the architecture evolved to independent per-
 - [x] V02-007 single state-driven Start/Stop watcher toggle verified.
 - [x] V02-008 unconnected-first Rerun connection onboarding verified on a separate safe project.
 - [ ] V02-009 current-tab resume prompt is automatically submitted without manual Send/Enter.
-- [ ] V02-009 confirmed current-chat dispatch failure automatically transfers the watcher to a fresh chat instead of immediately stopping.
+- [ ] V02-009 an exhausted chat with a stale Rerun-owned prompt automatically transfers the watcher to a fresh chat.
 - [ ] V02-009 fresh-chat handoff auto-submits its prompt and works under both `continue` and terminal GitHub work states.
 - [ ] V02-009 browser evidence is recorded.
 - [ ] No unresolved blocker remains.
@@ -31,10 +31,10 @@ Validate ChatGPT Rerun v0.2.x after the architecture evolved to independent per-
 - `runtime.enabled` is the current-tab GitHub watcher on/off state, independent of GitHub work status.
 - `continue` is the GitHub work-start/resume signal; `complete`, `needs_user`, `blocked` pause implementation dispatch but do not stop a watcher.
 - `Continue in new chat` transfers watcher ownership and must not be blocked solely because GitHub work status is terminal.
-- Terminal fresh-chat handoff restores repo/run context but must not start implementation; the new watcher keeps polling and later `continue` auto-resumes.
 - Automatic dispatch means both composing the prompt and submitting it; leaving text in the composer is failure.
-- A confirmed dispatch failure means the extension inserted the prompt, tried Send/Enter, and still observed no composer-clear or generation-start evidence.
-- Only that confirmed watcher-dispatch failure may trigger automatic fresh-chat handoff; generic content-script errors still safe-stop.
+- A non-empty composer is protected as a user draft unless its normalized text exactly matches the resume prompt Rerun is currently trying to dispatch.
+- An exact Rerun-owned stale prompt may trigger fresh-chat handoff without being mistaken for a user draft.
+- Confirmed post-insertion dispatch failure and prompt/editor synchronization failure may trigger one automatic fresh-chat handoff; direct fresh-chat handoff submission itself must not recurse.
 - Prompt submission remains content-blind and requires observable dispatch evidence before sequence ACK.
 
 ## Validation baseline
@@ -42,7 +42,9 @@ Validate ChatGPT Rerun v0.2.x after the architecture evolved to independent per-
 - v0.2.5 full syntax/test baseline: PASS, 38/38.
 - v0.2.6 auto-submit targeted syntax/tests: PASS, 4/4.
 - v0.2.7 status-independent handoff source/prompt checks: PASS.
-- v0.2.8 exhausted-chat auto-handoff implementation + regression tests: COMMITTED, browser PENDING.
+- v0.2.8 exhausted-chat auto-handoff implementation: browser probe exposed stale-prompt guard regression.
+- v0.2.9 stale Rerun prompt ownership fix + regression assertions: COMMITTED, browser PENDING.
+- Latest exact full npm suite after v0.2.9: NOT_RUN in this environment.
 - Build: N/A (unpacked Manifest V3 extension).
 
 ## Tasks
@@ -57,29 +59,24 @@ Validate ChatGPT Rerun v0.2.x after the architecture evolved to independent per-
 | V02-006 | verified | Persistent watcher across GitHub work states | `needs_user` kept watcher Watching; same-seq `continue` auto-resumed without another Start |
 | V02-007 | verified | Unified Start/Stop watcher | User-confirmed Stop -> Start round trip |
 | V02-008 | verified | Unconnected-first explicit onboarding | User completed final separate-project onboarding probe successfully |
-| V02-009 | in_progress | Reliable auto-submit + automatic exhausted-chat handoff | Normal dispatch auto-submits; confirmed dispatch failure opens a fresh chat and transfers watcher ownership; fresh chat resumes or waits according to GitHub status |
+| V02-009 | in_progress | Reliable auto-submit + automatic exhausted-chat handoff | Stale Rerun prompt is recognized as extension-owned, user drafts remain protected, and exhausted chats transfer to one fresh tab |
 
 ## V02-009 implementation notes
 
-v0.2.6 fixed the observed prompt-inserted-but-not-submitted regression by synchronizing editor input state, waiting longer for Send, falling back to Enter, and requiring dispatch evidence before ACK.
+v0.2.6 fixed the original prompt-inserted-but-not-submitted regression. v0.2.7 made fresh-chat handoff independent from GitHub terminal work state. v0.2.8 attempted automatic handoff after a confirmed failed watcher dispatch.
 
-v0.2.7 removed the stale rule that blocked `Continue in new chat` under terminal GitHub states and made the handoff prompt status-aware.
+The v0.2.8 browser probe exposed an earlier guard that ran before auto-handoff: a failed Rerun prompt could remain in the composer, and the next Start treated any non-empty composer as a user draft. `composer_not_empty` therefore stopped the watcher immediately before the automatic handoff path was reached.
 
-The user then tested Start on a chat that had reached its usable conversation limit. The watcher briefly enabled, attempted the current `continue` dispatch, failed to produce dispatch evidence, and the old `content.js` catch path unconditionally called `STOP_SESSION`. That made the button immediately return to Start.
+v0.2.9 changes this safely:
 
-v0.2.8 changes this failure path:
-
-1. release the claimed sequence first;
-2. classify only errors beginning `prompt inserted but ...` as confirmed dispatch failures;
-3. resolve the current Chrome tab ID through the existing `REGISTER_CHAT_TAB` response;
-4. invoke the existing `HANDOFF_NEW_CHAT` path automatically;
-5. if handoff succeeds, old-tab watcher ownership transfers to the new chat instead of stopping;
-6. if handoff itself fails, safe-stop with `auto_handoff_failed`;
-7. other send/composer failures still safe-stop and do not open surprise tabs;
-8. direct `RERUN_HANDOFF` submission failure on the fresh chat does not recursively open more chats.
-
-This does not scrape assistant output or look for a limit message. It relies only on observable failure to dispatch an extension-injected resume prompt.
+1. read the existing composer text before claiming the sequence;
+2. normalize whitespace and compare it with the exact current Rerun resume prompt;
+3. if non-empty text differs, retain the existing `composer_not_empty` user-draft safety stop;
+4. if it matches exactly, treat it as a stale Rerun-owned prompt and immediately attempt `HANDOFF_NEW_CHAT`;
+5. if the stale-prompt handoff fails, safe-stop with `auto_handoff_failed` and preserve the concrete error;
+6. prompt/editor synchronization failure is also eligible for the same one-shot handoff fallback;
+7. no assistant output or limit-warning text is parsed.
 
 ## Current gate
 
-Reload the unpacked extension at v0.2.8. On the exhausted test chat with a valid `continue` control, press Start. Expected behavior: the old tab may briefly become Watching, the failed dispatch triggers one fresh ChatGPT tab, watcher ownership transfers, and the fresh-chat handoff prompt is automatically submitted. The old tab must not simply fall back to Start unless the handoff itself fails.
+Reload the unpacked extension at v0.2.9. Use the same exhausted chat with the stale Rerun resume prompt still present if possible. With a valid `continue` control, Start should no longer return immediately to Start because of `composer_not_empty`; it should open one fresh ChatGPT tab and transfer watcher ownership. If any different user-authored text is in the composer, Rerun must still Stop instead of overwriting it.

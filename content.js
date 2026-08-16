@@ -70,8 +70,21 @@
       const composer = findComposer();
       if (!composer) return;
 
-      if (readComposerText(composer).trim()) {
+      const existingComposerText = readComposerText(composer).trim();
+      const staleRerunPrompt = isSameRerunPrompt(existingComposerText, prompt);
+      if (existingComposerText && !staleRerunPrompt) {
         await chrome.runtime.sendMessage({ type: "STOP_SESSION", reason: "composer_not_empty" });
+        return;
+      }
+
+      if (staleRerunPrompt) {
+        const handoff = await handoffAfterDispatchFailure();
+        if (handoff?.ok) return;
+
+        await chrome.runtime.sendMessage({
+          type: "STOP_SESSION",
+          reason: `auto_handoff_failed: ${handoff?.error || "stale Rerun prompt could not be handed off"}`
+        });
         return;
       }
 
@@ -120,8 +133,20 @@
     }
   }
 
+  function isSameRerunPrompt(existing, expected) {
+    const existingText = normalizeComposerText(existing);
+    const expectedText = normalizeComposerText(expected);
+    return Boolean(existingText && expectedText && existingText === expectedText);
+  }
+
+  function normalizeComposerText(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+  }
+
   function isConfirmedDispatchFailure(detail) {
-    return String(detail || "").startsWith("prompt inserted but ");
+    const message = String(detail || "");
+    return message.startsWith("prompt inserted but ") ||
+      message === "prompt text did not synchronize with the ChatGPT composer";
   }
 
   async function handoffAfterDispatchFailure() {

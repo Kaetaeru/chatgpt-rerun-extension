@@ -113,6 +113,25 @@ test("new sequence is sent immediately", () => {
   );
 });
 
+test("rewritten same sequence is a fresh authorization even after retry limit", () => {
+  const rewritten = {
+    ...control,
+    updatedAt: "2026-08-16T12:05:00Z"
+  };
+
+  assert.deepEqual(
+    continuationDisposition(rewritten, {
+      lastHandledSequence: 4,
+      lastSentAt: "2026-08-16T12:00:30Z",
+      sameSequenceRetryCount: 2,
+      maxRetriesPerSequence: 2,
+      retryDelaySeconds: 120,
+      pollIntervalSeconds: 60
+    }, Date.parse("2026-08-16T12:05:10Z")),
+    { action: "send", isRetry: false }
+  );
+});
+
 test("same sequence waits until retry delay elapses", () => {
   const decision = continuationDisposition(control, {
     lastHandledSequence: 4,
@@ -141,7 +160,7 @@ test("same sequence is retried after delay", () => {
   );
 });
 
-test("same sequence stops after retry limit", () => {
+test("same unchanged sequence stops after retry limit", () => {
   assert.deepEqual(
     continuationDisposition(control, {
       lastHandledSequence: 4,

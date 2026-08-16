@@ -49,6 +49,8 @@
     if (ticking) return;
     ticking = true;
     try {
+      if (await shouldPauseForGitHubApproval()) return;
+
       const response = await chrome.runtime.sendMessage({ type: "POLL" });
       if (!response?.ok) return;
 
@@ -131,6 +133,50 @@
     } finally {
       ticking = false;
     }
+  }
+
+  async function shouldPauseForGitHubApproval() {
+    const tabId = currentTabId ?? await registerCurrentTab();
+    if (!Number.isSafeInteger(tabId)) return false;
+
+    try {
+      const key = `tabConfig:${tabId}`;
+      const stored = await chrome.storage.local.get(key);
+      if (!stored[key]?.approvalAwareResume) return false;
+    } catch {
+      return false;
+    }
+
+    return Boolean(findGitHubApprovalCard());
+  }
+
+  function findGitHubApprovalCard() {
+    const buttons = Array.from(document.querySelectorAll("button"));
+    for (const button of buttons) {
+      const buttonText = normalizeUiText([
+        button.textContent,
+        button.getAttribute("aria-label")
+      ].filter(Boolean).join(" "));
+      if (!/^(허용(?:하기)?|Allow)(?:\s|$)/i.test(buttonText)) continue;
+
+      let node = button;
+      for (let depth = 0; node && depth < 10; depth += 1, node = node.parentElement) {
+        const text = normalizeUiText(node.textContent);
+        if (!text || text.length > 1600 || !text.includes("GitHub")) continue;
+        if (
+          /ChatGPT가\s*GitHub.*사용하도록\s*허용할까요/i.test(text) ||
+          /allow\s+ChatGPT\s+to\s+use\s+GitHub/i.test(text)
+        ) {
+          // Deliberately do not click the approval button. Manual confirmation remains required.
+          return node;
+        }
+      }
+    }
+    return null;
+  }
+
+  function normalizeUiText(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
   }
 
   function isSameRerunPrompt(existing, expected) {

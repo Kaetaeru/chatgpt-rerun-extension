@@ -2,25 +2,25 @@
 
 ## Scope
 
-v0.2는 v0.1 dogfood 중간에 구조가 바뀌었으므로 이전 run의 남은 E2E-003/004를 그대로 이어서 PASS 처리하지 않는다. v0.1에서 관찰된 evidence는 보존하되, 현재 head는 새 run으로 다시 검증한다. v0.2.1은 Side Panel Start/Stop UX를 단일 상태 기반 토글로 단순화했고, v0.2.2는 표준 control이 없는 저장소의 안전한 Start fallback bootstrap을 추가했다. v0.2.3은 프로젝트 시작 시 ChatGPT가 이미 알고 있는 GitHub 저장소에 Rerun 문서를 먼저 설치하는 명시적 **Rerun 연결 프롬프트**를 기본 온보딩으로 추가한다.
+v0.2는 v0.1 dogfood 중간에 구조가 바뀌었으므로 이전 run의 남은 E2E-003/004를 그대로 이어서 PASS 처리하지 않는다. v0.1에서 관찰된 evidence는 보존하되, 현재 head는 새 run으로 다시 검증한다. v0.2.1은 Side Panel Start/Stop UX를 단일 상태 기반 토글로 단순화했고, v0.2.2는 표준 control이 없는 저장소의 안전한 Start fallback bootstrap을 추가했다. v0.2.3은 프로젝트 시작 시 ChatGPT가 이미 알고 있는 GitHub 저장소에 Rerun 문서를 먼저 설치하는 명시적 **Rerun 연결 프롬프트**를 기본 온보딩으로 추가한다. v0.2.4는 Chrome tab watcher의 Start/Stop과 GitHub work status를 분리하여 terminal GitHub 상태에서도 watcher가 polling을 계속하도록 한다.
 
 검증 대상:
 
 1. Side Panel과 설정/runtime이 Chrome tab ID별로 분리되는가.
-2. 한 탭의 Start/Stop이 다른 탭 세션에 영향을 주지 않는가.
-3. 같은 GitHub control stream의 동시 실행이 차단되는가.
+2. 한 탭의 watcher Start/Stop이 다른 탭 세션에 영향을 주지 않는가.
+3. 같은 GitHub control stream의 동시 watcher ownership이 차단되는가.
 4. 기존 new-sequence dispatch와 same-sequence retry가 per-tab runtime에서도 유지되는가.
-5. `Continue in new chat`이 기존 탭을 멈추고 새 ChatGPT 탭으로 같은 GitHub run/sequence를 이관하는가.
+5. `Continue in new chat`이 기존 탭 watcher를 멈추고 새 ChatGPT 탭으로 같은 GitHub run/sequence watcher ownership을 이관하는가.
 6. 새 채팅이 이전 대화 본문 없이 GitHub STATE에서 재개하는가.
-7. terminal `complete`가 해당 탭 세션만 중지하는가.
-8. 실행 상태에 따라 하나의 session control이 `Start`와 `Stop` 사이에서 정확히 전환되는가.
-9. 새 프로젝트에서 `Rerun 연결 프롬프트`가 현재 대화가 이미 알고 있는 GitHub repo를 사용해 표준 5파일을 생성/보완하고, 그 뒤 Start가 정상 첫 task를 실행하는가.
+7. GitHub terminal 상태가 watcher를 끄지 않고 polling을 계속하며, 이후 `continue`가 되면 자동 재개하는가.
+8. 하나의 tab-watcher control이 `Start`와 `Stop` 사이에서 정확히 전환되는가.
+9. 새 프로젝트에서 `Rerun 연결 프롬프트`가 현재 대화가 이미 알고 있는 GitHub repo를 사용해 표준 5파일을 생성/보완하고, 그 뒤 Start가 watcher를 켜고 정상 첫 task를 실행하는가.
 
 ## Run gate
 
 코드 변경 후 로컬 unpacked extension이 최신 `agent/mvp-autoresume` head로 Reload되기 전에는 변경된 동작을 E2E PASS로 판정하지 않는다.
 
-코드 변경 중 구버전이 새 control sequence를 소비할 위험이 있으면 `needs_user`로 안전 정지하고, 사용자가 Reload 완료를 확인한 뒤 `continue`로 복귀한다.
+코드 변경 중 구버전이 새 control sequence를 소비할 위험이 있으면 GitHub work state를 `needs_user`로 두어 dispatch를 안전하게 멈추고, 사용자가 Reload 완료를 확인한 뒤 `continue`로 복귀한다. v0.2.4 이후 이 GitHub `needs_user` 자체는 watcher Stop을 의미하지 않는다.
 
 ## V02-001 — tab-scoped panel and storage
 
@@ -29,19 +29,19 @@ v0.2는 v0.1 dogfood 중간에 구조가 바뀌었으므로 이전 run의 남은
 3. 두 패널의 `Chrome tab` ID가 서로 다른지 확인한다.
 4. A의 Owner/Repo에 값을 입력하고 B에서 다른 값을 입력한다.
 5. 탭을 오가며 draft가 섞이지 않는지 확인한다.
-6. A에서 Start 후 B runtime이 Stopped인지 확인한다.
+6. A에서 Start 후 B watcher가 Stopped인지 확인한다.
 
 PASS: 각 탭이 별도 panel/storage/runtime을 유지한다.
 
 ## V02-002 — same-stream collision guard
 
-1. A를 특정 owner/repo/branch/control path로 실행한다.
+1. A watcher를 특정 owner/repo/branch/control path로 실행한다.
 2. B를 같은 네 좌표로 설정한다.
 3. B에서 Start를 누른다.
 
-PASS: B가 시작되지 않고 `같은 GitHub control stream이 이미 tab ...에서 실행 중` 오류가 표시된다. A는 계속 실행된다.
+PASS: B watcher가 시작되지 않고 `같은 GitHub control stream이 이미 tab ...에서 실행 중` 오류가 표시된다. A watcher는 계속 실행된다.
 
-별도 stream을 가진 실제 프로젝트가 준비되면 B에 다른 좌표를 넣고 A/B 동시 실행도 확인한다.
+별도 stream을 가진 실제 프로젝트가 준비되면 B에 다른 좌표를 넣고 A/B 동시 watcher도 확인한다.
 
 ## V02-003 — core rerun regression
 
@@ -55,7 +55,7 @@ PASS: v0.1 dispatch/retry 동작이 per-tab storage refactor 뒤에도 유지된
 
 ## V02-004 — Continue in new chat
 
-1. 실행 중인 tab A에서 **Continue in new chat**을 누른다.
+1. watcher가 켜져 있고 GitHub status가 `continue`인 tab A에서 **Continue in new chat**을 누른다.
 2. 새 `chatgpt.com` 탭 C가 열리는지 확인한다.
 3. A runtime이 `handed_off_to_tab_<C>`로 중지되는지 확인한다.
 4. C의 config/runtime이 A에서 복사되었는지 확인한다.
@@ -64,46 +64,58 @@ PASS: v0.1 dispatch/retry 동작이 per-tab storage refactor 뒤에도 유지된
 7. C가 `.chatgpt-rerun` 문서를 읽고 GitHub의 최신 실제 상태를 우선하는지 확인한다.
 8. 이전 대화 본문을 요구하지 않고 STATE의 미완료 지점부터 재개하는지 확인한다.
 
-PASS: 동일 GitHub workflow의 소유권이 A에서 C로 한 번만 이동하며 중복 prompt가 없다.
+PASS: 동일 GitHub workflow의 watcher ownership이 A에서 C로 한 번만 이동하며 중복 prompt가 없다.
 
 ## V02-005 — handoff race/failure behavior
 
 - handoff 중 기존 tab은 `handoffPending`이라 normal polling을 하지 않아야 한다.
 - 새 탭 준비 전에 오류가 나면 기존 tab의 `handoffPending`이 해제되어야 한다.
 - ownership 이전 후 새 탭 prompt 전송이 실패하면 새 tab은 `handoff_send_failed`로 멈춰야 한다.
+- GitHub status가 terminal이면 handoff 요청은 거부되지만 기존 watcher는 꺼지지 않아야 한다.
 
-## V02-006 — terminal isolation
+## V02-006 — persistent watcher across GitHub work states
 
-한 tab의 control이 `complete`, `needs_user`, `blocked`가 되었을 때 해당 tab만 중지되는지 확인한다. 다른 stream을 실행 중인 다른 tab 세션은 그대로 유지되어야 한다.
+1. tab A watcher를 Start해서 `Tab watcher = Watching` 상태로 둔다.
+2. A의 GitHub control을 `complete`, `needs_user`, 또는 `blocked` 중 하나로 게시한다.
+3. Side Panel에서 watcher가 계속 `Watching`이고 버튼이 계속 `Stop`인지 확인한다.
+4. 설정된 polling 주기가 지난 뒤 `Last checked`/rate-limit 또는 GitHub 상태 갱신을 통해 실제 polling이 계속되는지 확인한다.
+5. terminal 상태에서는 resume prompt가 새로 전송되지 않는지 확인한다.
+6. 같은 run/sequence를 다시 `continue`로 바꾸거나, 새 sequence `continue`를 게시한다.
+7. watcher를 다시 Start하지 않아도 owning tab에서 resume prompt가 자동 전송되는지 확인한다.
+8. 같은 sequence terminal -> `continue` 전환이라면 retry delay를 기다리지 않고 새 work authorization으로 즉시 dispatch되는지 확인한다.
+9. 다른 stream watcher가 있다면 그 탭 상태에는 영향이 없어야 한다.
 
-## V02-007 — unified Start/Stop session toggle
+PASS: GitHub work state와 Chrome watcher state가 독립적이다. terminal은 dispatch만 멈추고 watcher는 계속 polling하며, 이후 `continue`가 오면 자동 재개한다.
 
-1. 최신 v0.2.3 unpacked extension을 Reload한다.
-2. 현재 ChatGPT 탭이 Stopped인 상태에서 Side Panel footer를 확인한다.
-3. session control이 정확히 하나이고 텍스트가 `Start`인지 확인한다. 별도 `Stop` 버튼은 없어야 한다.
+## V02-007 — unified Start/Stop tab-watcher toggle
+
+1. 최신 v0.2.4 unpacked extension을 Reload한다.
+2. 현재 ChatGPT 탭 watcher가 Stopped인 상태에서 Side Panel footer를 확인한다.
+3. watcher control이 정확히 하나이고 텍스트가 `Start`인지 확인한다. 별도 `Stop` 버튼은 없어야 한다.
 4. `Start`를 누른다.
-5. 해당 탭 runtime이 Running이 되고 **같은 버튼**의 텍스트가 `Stop`으로 바뀌는지 확인한다.
-6. `Stop`을 누른다.
-7. 해당 탭 runtime이 Stopped (`manual`)가 되고 **같은 버튼**의 텍스트가 다시 `Start`로 바뀌는지 확인한다.
-8. 다른 ChatGPT 탭의 runtime에는 영향이 없어야 한다.
+5. `Tab watcher = Watching`이 되고 **같은 버튼**의 텍스트가 `Stop`으로 바뀌는지 확인한다.
+6. 이때 GitHub work status가 terminal이어도 watcher는 Watching이어야 한다.
+7. `Stop`을 누른다.
+8. watcher가 Stopped (`manual`)가 되고 **같은 버튼**의 텍스트가 다시 `Start`로 바뀌는지 확인한다.
+9. 다른 ChatGPT 탭 watcher에는 영향이 없어야 한다.
 
-PASS: `runtime.enabled`를 기준으로 단일 session control이 `Start -> Stop -> Start`로 전환되고 실제 현재-tab Start/Stop 동작과 일치한다.
+PASS: `runtime.enabled`는 GitHub 작업 진행 여부가 아니라 현재 tab watcher의 on/off만 나타내며, 단일 control이 `Start -> Stop -> Start`로 전환된다.
 
 ## V02-008 — explicit Rerun connection prompt onboarding
 
 준비: ChatGPT 대화가 이미 하나의 GitHub 프로젝트 repo/branch를 실제로 사용하고 있어 어느 저장소인지 대화 맥락에서 명확해야 한다. 테스트는 별도 안전한 프로젝트에서 수행하고 기존 active Rerun run을 파괴하지 않는다.
 
-1. Rerun runtime이 Stopped인 상태에서 Side Panel의 **Rerun 연결 프롬프트**를 누른다.
+1. Rerun watcher가 Stopped인 상태에서 Side Panel의 **Rerun 연결 프롬프트**를 누른다.
 2. Owner/Repository 입력이 비어 있어도 현재 대화가 이미 알고 있는 GitHub repo를 먼저 식별하라는 프롬프트가 전송되는지 확인한다.
 3. repo 후보가 둘 이상이거나 불명확하면 파일을 쓰지 않고 사용자에게 확인하도록 하는지 확인한다.
 4. 대상 repo가 확정되면 README / PLAN / STATE / STATUS / control 다섯 문서를 생성하거나 안전하게 보완하도록 요구하는지 확인한다.
 5. 기존 `.chatgpt-rerun` active run이 있으면 run_id/sequence/task/검증 기록을 초기화하거나 덮어쓰지 않도록 하는지 확인한다.
 6. 새 프로젝트에서는 실제 프로젝트 목표 기반 PLAN, 새 run_id/sequence 0 STATE, human-readable STATUS를 만들고 control을 마지막 authoritative write로 `continue` 게시하는지 확인한다.
 7. 연결 프롬프트 turn 자체는 실제 구현 task를 시작하지 않고 종료하는지 확인한다.
-8. 그 뒤 Side Panel에 실제 owner/repo/branch를 확인하고 `Start`를 누르면 표준 resume prompt가 첫 task execution을 시작하는지 확인한다.
-9. Rerun 실행 중에는 연결 프롬프트 버튼이 비활성화되어 active run 중간에 재초기화를 시도하지 못하는지 확인한다.
+8. 그 뒤 Side Panel에 실제 owner/repo/branch를 확인하고 `Start`를 누르면 watcher가 켜지고 표준 resume prompt가 첫 task execution을 시작하는지 확인한다.
+9. watcher가 켜져 있을 때는 연결 프롬프트 버튼이 비활성화되어 active watcher 중간에 재초기화를 시도하지 못하는지 확인한다.
 
-PASS: 프로젝트 시작 시 별도 scaffold 수작업 없이 한 번의 명시적 연결 프롬프트로 현재 대화의 GitHub 프로젝트에 Rerun 표준 문서를 설치/보완하고, 그 후 Start가 정상 실행을 시작한다.
+PASS: 프로젝트 시작 시 별도 scaffold 수작업 없이 한 번의 명시적 연결 프롬프트로 현재 대화의 GitHub 프로젝트에 Rerun 표준 문서를 설치/보완하고, 그 후 Start가 watcher와 정상 실행을 시작한다.
 
 ### Start fallback regression
 
@@ -113,11 +125,13 @@ v0.2.2의 안전한 자동 bootstrap은 보조 경로로 유지한다. 사용자
 
 - V02-001~008의 실행 가능한 항목에 실제 evidence가 기록된다.
 - multi-tab 설정/runtime이 섞이지 않는다.
-- 동일 stream 중복 실행이 차단된다.
+- 동일 stream 중복 watcher ownership이 차단된다.
 - new-chat handoff가 GitHub state만으로 작업을 복원한다.
 - handoff 동안 중복 자동 전송이 없다.
-- 기존 dispatch/retry/terminal 동작에 regression이 없다.
-- 단일 Start/Stop session toggle의 표시 상태와 실제 runtime 상태가 일치한다.
+- 기존 dispatch/retry 동작에 regression이 없다.
+- terminal GitHub status가 watcher를 끄지 않고 polling을 지속한다.
+- terminal -> `continue`가 watcher 재-Start 없이 자동 dispatch된다.
+- 단일 Start/Stop control의 표시 상태와 실제 tab watcher 상태가 일치한다.
 - 새 프로젝트의 기본 온보딩은 `Rerun 연결 프롬프트 -> 문서 설치/보완 -> Start`다.
 - 연결 프롬프트는 현재 대화의 GitHub repo 맥락을 우선하며 불명확한 대상을 추측하지 않는다.
 - README / PLAN / STATE / STATUS / control을 만들고 control을 마지막 authoritative write로 게시한다.

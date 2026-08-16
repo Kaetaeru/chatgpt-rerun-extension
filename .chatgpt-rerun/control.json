@@ -2,8 +2,8 @@
   "version": 1,
   "run_id": "chatgpt-rerun-v02-20260816-01",
   "sequence": 9,
-  "status": "continue",
-  "reason": "v0.2.10 is loaded and Public rate-safe mode is visible; resume the live automatic dispatch and exhausted-chat fresh-handoff verification.",
-  "updated_at": "2026-08-16T19:01:00Z",
+  "status": "needs_user",
+  "reason": "v0.2.11 fixes same-sequence fresh control generations being blocked by retry_limit; reload and retest the live SimpleVTT watcher.",
+  "updated_at": "2026-08-16T19:05:00Z",
   "task_id": "V02-009"
 }

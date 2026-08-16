@@ -29,6 +29,7 @@ const elements = Object.fromEntries(ids.map((id) => [id, document.getElementById
 const statusLine = document.getElementById("statusLine");
 const statusDot = document.getElementById("statusDot");
 const errorBox = document.getElementById("errorBox");
+const sessionToggle = document.getElementById("sessionToggle");
 let currentTabId = null;
 
 const activeTab = await getActiveChatGptTab();
@@ -66,8 +67,22 @@ document.getElementById("save").addEventListener("click", async () => {
   }
 });
 
-document.getElementById("start").addEventListener("click", async () => {
+sessionToggle.addEventListener("click", async () => {
+  hideError();
+  sessionToggle.disabled = true;
   try {
+    const runtime = await loadCurrentRuntime();
+    if (runtime.enabled) {
+      const response = await chrome.runtime.sendMessage({
+        type: "STOP_TAB_SESSION",
+        tabId: currentTabId,
+        reason: "manual"
+      });
+      if (!response?.ok) throw new Error(response?.error || "Stop failed");
+      await refreshRuntime();
+      return;
+    }
+
     await persistFormDraft();
     await saveSettings({ requireTarget: true });
     const response = await chrome.runtime.sendMessage({
@@ -78,20 +93,8 @@ document.getElementById("start").addEventListener("click", async () => {
     await refreshRuntime(`Running on tab ${currentTabId}`);
   } catch (error) {
     showError(error);
-  }
-});
-
-document.getElementById("stop").addEventListener("click", async () => {
-  try {
-    const response = await chrome.runtime.sendMessage({
-      type: "STOP_TAB_SESSION",
-      tabId: currentTabId,
-      reason: "manual"
-    });
-    if (!response?.ok) throw new Error(response?.error || "Stop failed");
-    await refreshRuntime();
-  } catch (error) {
-    showError(error);
+  } finally {
+    sessionToggle.disabled = false;
   }
 });
 
@@ -240,16 +243,33 @@ async function saveSettings({ requireTarget }) {
   await persistFormDraft();
 }
 
-async function refreshRuntime(transientMessage) {
-  if (currentTabId === null) return;
+async function loadCurrentRuntime() {
   const key = tabRuntimeKey(currentTabId);
   const stored = await chrome.storage.local.get(key);
-  const runtime = { ...DEFAULT_RUNTIME, ...(stored[key] || {}) };
+  return { ...DEFAULT_RUNTIME, ...(stored[key] || {}) };
+}
+
+function renderSessionToggle(runtime) {
+  const running = Boolean(runtime.enabled);
+  sessionToggle.textContent = running ? "Stop" : "Start";
+  sessionToggle.classList.toggle("primary", !running);
+  sessionToggle.classList.toggle("danger", running);
+  sessionToggle.setAttribute("aria-pressed", String(running));
+  sessionToggle.setAttribute(
+    "aria-label",
+    running ? "Stop Rerun on this tab" : "Start Rerun on this tab"
+  );
+}
+
+async function refreshRuntime(transientMessage) {
+  if (currentTabId === null) return;
+  const runtime = await loadCurrentRuntime();
 
   statusDot.classList.toggle("running", Boolean(runtime.enabled));
   statusLine.textContent = transientMessage || (runtime.enabled
     ? `Running · tab ${currentTabId}`
     : `Stopped · tab ${currentTabId}${runtime.stopReason ? ` · ${runtime.stopReason}` : ""}`);
+  renderSessionToggle(runtime);
   document.getElementById("tabId").textContent = String(currentTabId);
   document.getElementById("runId").textContent = runtime.lastRunId || "-";
   document.getElementById("sequence").textContent = runtime.lastSequence ?? "-";

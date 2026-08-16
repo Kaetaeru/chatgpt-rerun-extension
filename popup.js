@@ -1,6 +1,7 @@
 import {
   DEFAULT_CONFIG,
   DEFAULT_RUNTIME,
+  buildRerunConnectionPrompt,
   effectivePollInterval,
   effectiveRetryDelay,
   normalizeMaxRetries,
@@ -31,7 +32,9 @@ const statusDot = document.getElementById("statusDot");
 const errorBox = document.getElementById("errorBox");
 const sessionToggle = document.getElementById("sessionToggle");
 const handoffButton = document.getElementById("handoff");
+const connectPromptButton = document.getElementById("connectPrompt");
 let currentTabId = null;
+let connectPromptBusy = false;
 
 const activeTab = await getActiveChatGptTab();
 currentTabId = activeTab.id;
@@ -65,6 +68,40 @@ document.getElementById("save").addEventListener("click", async () => {
     await refreshRuntime("Saved for this tab");
   } catch (error) {
     showError(error);
+  }
+});
+
+connectPromptButton.addEventListener("click", async () => {
+  hideError();
+  connectPromptBusy = true;
+  connectPromptButton.disabled = true;
+  try {
+    const runtime = await loadCurrentRuntime();
+    if (runtime.enabled) {
+      throw new Error("Rerun 실행 중에는 연결 프롬프트를 보낼 수 없습니다. 먼저 Stop을 눌러주세요.");
+    }
+
+    await persistFormDraft();
+    await ensureContentScript(currentTabId);
+    const prompt = buildRerunConnectionPrompt({
+      owner: elements.owner.value.trim(),
+      repo: elements.repo.value.trim(),
+      branch: elements.branch.value.trim() || "main",
+      path: elements.path.value.trim() || DEFAULT_CONFIG.path
+    });
+    const response = await chrome.tabs.sendMessage(currentTabId, {
+      type: "RERUN_CONNECT",
+      prompt
+    });
+    if (!response?.sent) {
+      throw new Error(response?.error || "Rerun 연결 프롬프트를 전송하지 못했습니다.");
+    }
+    await refreshRuntime("Rerun 연결 프롬프트 전송됨");
+  } catch (error) {
+    showError(error);
+  } finally {
+    connectPromptBusy = false;
+    await refreshRuntime();
   }
 });
 
@@ -280,6 +317,7 @@ async function refreshRuntime(transientMessage) {
   statusLine.textContent = transientMessage || persistentStatus;
   renderSessionToggle(runtime);
   handoffButton.disabled = Boolean(runtime.bootstrapPending);
+  connectPromptButton.disabled = Boolean(runtime.enabled) || connectPromptBusy;
   document.getElementById("tabId").textContent = String(currentTabId);
   document.getElementById("runId").textContent = runtime.lastRunId || "-";
   document.getElementById("sequence").textContent = runtime.lastSequence ?? "-";
@@ -294,6 +332,25 @@ async function refreshRuntime(transientMessage) {
     errorBox.textContent = runtime.lastError;
   } else if (!transientMessage) {
     hideError();
+  }
+}
+
+async function ensureContentScript(tabId) {
+  try {
+    const ping = await chrome.tabs.sendMessage(tabId, { type: "RERUN_PING" });
+    if (ping?.ready) return;
+  } catch {
+    // The tab may predate the current unpacked-extension load/reload.
+  }
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["content.js"]
+  });
+
+  const ping = await chrome.tabs.sendMessage(tabId, { type: "RERUN_PING" });
+  if (!ping?.ready) {
+    throw new Error("ChatGPT 탭에 Rerun content script를 주입하지 못했습니다.");
   }
 }
 

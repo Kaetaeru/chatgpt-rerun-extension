@@ -8,7 +8,7 @@ export const CONTROL_STATUSES = new Set([
 export const DEFAULT_CONFIG = Object.freeze({
   owner: "",
   repo: "",
-  branch: "main",
+  branch: "",
   path: ".chatgpt-rerun/control.json",
   githubToken: "",
   resumePrompt: "진행. 먼저 이 대화에서 연결된 GitHub 저장소의 .chatgpt-rerun/README.md, control.json, STATE.md, PLAN.md를 안내된 순서대로 읽고 저장소 상태를 확인한 뒤, 현재 sequence의 미완료 지점부터 재개해. 검증된 작업은 반복하지 말고 프로토콜에 따라 GitHub 상태를 갱신해.",
@@ -213,28 +213,24 @@ export function streamKey(settings) {
     .join("/");
 }
 
-export function buildRerunConnectionPrompt(config = {}) {
-  const owner = String(config.owner || "").trim();
-  const repo = String(config.repo || "").trim();
-  const branch = String(config.branch || "main").trim() || "main";
-  const path = String(config.path || DEFAULT_CONFIG.path).replace(/^\/+/, "").trim() || DEFAULT_CONFIG.path;
-  const panelHint = owner && repo
-    ? `Side Panel에는 ${owner}/${repo}, branch ${branch}, control ${path}가 입력되어 있다. 이것이 이 대화에서 실제로 작업 중인 저장소와 일치하는지 확인하고, 불일치하거나 확신이 없으면 추측하지 말고 사용자에게 확인해.`
-    : "Side Panel의 repository 좌표는 비어 있을 수 있다. 이 대화의 기존 GitHub 사용 맥락과 연결된 저장소를 기준으로 현재 프로젝트 저장소를 식별해.";
-
+export function buildRerunConnectionPrompt() {
   return [
-    "이 대화에서 이미 작업 중이거나 연결된 GitHub 프로젝트 저장소를 ChatGPT Rerun에 연결해.",
-    "먼저 현재 대화의 GitHub 사용 맥락을 확인해서 실제 프로젝트 repository와 branch를 식별해. 후보가 둘 이상이거나 확신이 없으면 아무 파일도 쓰지 말고 사용자에게 어느 저장소인지 확인해.",
-    panelHint,
-    "대상 저장소가 확정되면 README, AGENTS.md, CONTRIBUTING.md 같은 프로젝트 지침과 이 대화의 사용자 목표를 먼저 확인해.",
+    "현재 이 ChatGPT 대화가 실제로 사용 중인 GitHub 프로젝트를 ChatGPT Rerun에 연결해.",
+    "중요: Side Panel은 최초 연결 전에는 의도적으로 Unconnected 상태이며 Owner/Repository/Branch 값은 신뢰 가능한 입력이 아니다. Side Panel 값이나 이 프롬프트 자체에 적힌 예시를 repository 식별 근거로 사용하지 마.",
+    "먼저 이 대화에서 GitHub 앱/도구로 실제 접근하거나 작업한 repository와 branch/ref가 있는지 확인해. 단순히 대화 텍스트에 repository 이름이 언급됐다는 이유만으로 연결됐다고 간주하지 마.",
+    "실제로 사용한 GitHub repository가 하나도 확인되지 않으면 아무 파일도 쓰지 말고 `RERUN_CONNECTION: UNCONNECTED`라고 명확히 보고한 뒤, 먼저 이 채팅에서 대상 GitHub repository를 실제로 읽거나 작업하게 해달라고 사용자에게 안내하고 종료해.",
+    "실제로 사용한 repository 후보가 둘 이상이거나 branch/ref가 불명확하면 아무 파일도 쓰지 말고 `RERUN_CONNECTION: AMBIGUOUS`라고 보고한 뒤 후보와 필요한 확인 사항을 사용자에게 물어보고 종료해.",
+    "대상 repository와 branch/ref가 하나로 확정되면 README, AGENTS.md, CONTRIBUTING.md 같은 프로젝트 지침과 이 대화의 실제 사용자 목표를 먼저 확인해.",
     "그 다음 저장소 루트의 `.chatgpt-rerun/README.md`, `PLAN.md`, `STATE.md`, `STATUS.md`, `control.json` 다섯 문서를 Rerun 표준에 맞게 생성하거나 보완해.",
-    "이미 `.chatgpt-rerun`이 존재하고 active run이 있으면 기존 run_id, sequence, task, 검증 기록을 초기화하거나 덮어쓰지 마. README/STATE/PLAN/control을 먼저 reconcile하고 누락되었거나 호환되지 않는 규칙만 안전하게 보완해.",
+    "이미 `.chatgpt-rerun`이 존재하고 active run이 있으면 기존 run_id, sequence, task, 검증 기록을 초기화하거나 덮어쓰지 마. README/control/STATE/PLAN을 먼저 reconcile하고 누락되었거나 호환되지 않는 규칙만 안전하게 보완해.",
     "새 프로젝트라면 README.md에는 mandatory read order(README -> control -> STATE -> PLAN), preflight reconciliation, 20분 hard stop/18분 checkpoint, PLAN -> STATE -> control.json authoritative write order를 적어. STATUS.md는 사람용 projection이며 reconciliation source of truth가 아니고, 의미 있는 상태 변화 시 즉시, 긴 active 실행은 약 5분 freshness를 목표로 갱신하도록 해.",
     "또 README.md에는 Chrome Side Panel의 Start/Stop은 tab watcher on/off이고 GitHub control status와 독립적이라고 명시해. `continue`는 work start/resume 신호이며 `complete`, `needs_user`, `blocked`는 dispatch 대기 상태일 뿐 watcher를 끄지 않고 polling을 계속한다. terminal 뒤 같은 sequence라도 다시 `continue`가 되면 새 work authorization으로 자동 재개할 수 있어야 해.",
     "PLAN.md에는 이 대화와 저장소에서 파악한 실제 프로젝트 목표, task ID, 의존성, acceptance criteria, 검증 방법을 작성해. STATE.md에는 새 고유 run_id, sequence 0, 첫 task, 실제 checkpoint와 Next Exact Action을 기록해.",
     "새 프로젝트의 control.json은 version 1, 같은 run_id, sequence 0, status `continue`, 첫 task_id, 현재 ISO updated_at으로 만들고, 반드시 PLAN과 STATE를 저장한 뒤 마지막 authoritative write로 게시해. `working` 상태는 사용하지 마.",
-    "GitHub 쓰기 권한이 없거나 프로젝트 목표가 불명확하면 성공한 척하지 말고 이 대화에서 필요한 권한이나 결정을 요청해.",
-    "Rerun 문서 연결/보완과 control 게시가 끝나면 이번 연결 프롬프트에서는 실제 구현 task를 시작하지 말고 종료해. 사용자가 확장프로그램의 Start를 눌렀을 때 tab watcher가 켜지고 표준 재개 프롬프트가 첫 task를 시작하게 해."
+    "GitHub 쓰기 권한이 없거나 프로젝트 목표가 불명확하면 성공한 척하지 말고 필요한 권한이나 결정을 요청해.",
+    "Rerun 문서 연결/보완과 control 게시가 끝나면 실제 구현 task는 시작하지 말고 종료해.",
+    "종료 직전에 사용자에게 `RERUN_CONNECTION: CONNECTED`라는 제목으로 연결 정보를 빠짐없이 명확히 알려줘: repository full name(owner/repo), canonical GitHub repository URL, 정확한 branch/ref, control path `.chatgpt-rerun/control.json`, 새로 생성인지 기존 run reconcile인지, run_id, sequence, control status, task_id, 현재 프로젝트 목표 요약. 이 값이 사용자가 Side Panel에 연결 좌표를 입력하고 확인하는 기준이다.",
+    "확장프로그램은 assistant 답변을 파싱해 이 값을 몰래 가져오지 않는다. 사용자가 연결 결과를 확인한 뒤 Side Panel에 확정된 Owner/Repository/Branch를 넣고 Start를 눌렀을 때 watcher가 시작되고 표준 재개 프롬프트가 첫 task를 실행하게 해."
   ].join(" ");
 }
 

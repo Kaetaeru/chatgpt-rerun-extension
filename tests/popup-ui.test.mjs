@@ -36,6 +36,16 @@ test("side panel removes the lifetime Max sends cap", () => {
   assert.match(html, /Retries \/ sequence/);
 });
 
+test("side panel exposes approval-aware manual-confirmation resume without auto-approval", () => {
+  assert.match(html, /id="approvalAwareResume" type="checkbox"/);
+  assert.match(html, /GitHub 승인 후 자동 계속/);
+  assert.match(html, /승인 버튼은 자동으로 누르지 않습니다/);
+  assert.match(html, /id="approvalMode">Manual<\/strong>/);
+  assert.match(script, /approvalAwareResume: Boolean\(elements\.approvalAwareResume\.checked\)/);
+  assert.match(script, /elements\[id\]\.type === "checkbox"/);
+  assert.match(script, /Manual · auto-resume/);
+});
+
 test("rate-limit UI shows polling mode instead of raw quota counters", () => {
   assert.match(html, /API polling/);
   assert.doesNotMatch(html, /Rate remaining/);

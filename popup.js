@@ -7,6 +7,7 @@ import {
   streamKey
 } from "./control.js";
 
+const DRAFT_KEY = "formDraft";
 const ids = [
   "owner",
   "repo",
@@ -31,9 +32,16 @@ setInterval(refreshRuntime, 1000);
 
 chrome.storage.onChanged.addListener(() => refreshRuntime());
 
+for (const element of Object.values(elements)) {
+  element.addEventListener("input", () => {
+    hideError();
+    void persistFormDraft();
+  });
+}
+
 document.getElementById("save").addEventListener("click", async () => {
   try {
-    await saveSettings();
+    await saveSettings({ requireTarget: false });
     await refreshRuntime("Saved");
   } catch (error) {
     showError(error);
@@ -42,11 +50,16 @@ document.getElementById("save").addEventListener("click", async () => {
 
 document.getElementById("start").addEventListener("click", async () => {
   try {
-    await saveSettings();
+    await persistFormDraft();
+    await saveSettings({ requireTarget: true });
+
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id || !isChatGptUrl(tab.url || "")) {
-      throw new Error("ChatGPT 탭에서 Start를 눌러주세요.");
+      throw new Error("활성 ChatGPT 탭을 선택한 상태에서 Start를 눌러주세요.");
     }
+
+    await ensureContentScript(tab.id);
+
     await chrome.storage.local.set({
       enabled: true,
       targetTabId: tab.id,
@@ -56,8 +69,15 @@ document.getElementById("start").addEventListener("click", async () => {
       pendingRunId: null,
       pendingIsRetry: false
     });
-    await refreshRuntime();
+
+    const wake = await chrome.tabs.sendMessage(tab.id, { type: "RERUN_WAKE" });
+    if (!wake?.ready) {
+      throw new Error("ChatGPT 탭의 rerun content script가 응답하지 않습니다.");
+    }
+
+    await refreshRuntime("Running on current ChatGPT tab");
   } catch (error) {
+    await chrome.storage.local.set({ enabled: false, stopReason: "start_failed" });
     showError(error);
   }
 });
@@ -74,13 +94,26 @@ document.getElementById("stop").addEventListener("click", async () => {
 });
 
 async function loadForm() {
-  const settings = { ...DEFAULT_SETTINGS, ...(await chrome.storage.local.get(null)) };
+  const stored = await chrome.storage.local.get(null);
+  const settings = { ...DEFAULT_SETTINGS, ...stored };
+  const draft = stored[DRAFT_KEY] && typeof stored[DRAFT_KEY] === "object"
+    ? stored[DRAFT_KEY]
+    : {};
+
   for (const id of ids) {
-    elements[id].value = settings[id] ?? "";
+    elements[id].value = draft[id] ?? settings[id] ?? "";
   }
 }
 
-async function saveSettings() {
+function collectFormDraft() {
+  return Object.fromEntries(ids.map((id) => [id, elements[id].value]));
+}
+
+async function persistFormDraft() {
+  await chrome.storage.local.set({ [DRAFT_KEY]: collectFormDraft() });
+}
+
+async function saveSettings({ requireTarget }) {
   const before = { ...DEFAULT_SETTINGS, ...(await chrome.storage.local.get(null)) };
   const token = elements.githubToken.value.trim();
   const pollIntervalSeconds = effectivePollInterval(
@@ -100,7 +133,9 @@ async function saveSettings() {
     maxRuns: normalizeMaxRuns(elements.maxRuns.value)
   };
 
-  if (!next.owner || !next.repo) throw new Error("Owner와 Repository를 입력해주세요.");
+  if (requireTarget && (!next.owner || !next.repo)) {
+    throw new Error("Owner와 Repository를 입력해주세요.");
+  }
 
   const changedStream = streamKey(before) !== streamKey(next);
   const reset = changedStream
@@ -119,9 +154,33 @@ async function saveSettings() {
     : {};
 
   await chrome.storage.local.set({ ...next, ...reset });
+
+  elements.branch.value = next.branch;
+  elements.path.value = next.path;
   elements.pollIntervalSeconds.value = String(next.pollIntervalSeconds);
   elements.retryDelaySeconds.value = String(next.retryDelaySeconds);
   elements.maxRetriesPerSequence.value = String(next.maxRetriesPerSequence);
+  elements.maxRuns.value = String(next.maxRuns);
+  await persistFormDraft();
+}
+
+async function ensureContentScript(tabId) {
+  try {
+    const ping = await chrome.tabs.sendMessage(tabId, { type: "RERUN_PING" });
+    if (ping?.ready) return;
+  } catch {
+    // The tab may have been open before the extension was loaded/reloaded.
+  }
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["content.js"]
+  });
+
+  const ping = await chrome.tabs.sendMessage(tabId, { type: "RERUN_PING" });
+  if (!ping?.ready) {
+    throw new Error("ChatGPT 탭에 rerun content script를 주입하지 못했습니다.");
+  }
 }
 
 async function refreshRuntime(transientMessage) {
@@ -139,9 +198,8 @@ async function refreshRuntime(transientMessage) {
   if (settings.lastError) {
     errorBox.hidden = false;
     errorBox.textContent = settings.lastError;
-  } else {
-    errorBox.hidden = true;
-    errorBox.textContent = "";
+  } else if (!transientMessage) {
+    hideError();
   }
 }
 
@@ -159,6 +217,11 @@ function isChatGptUrl(url) {
   } catch {
     return false;
   }
+}
+
+function hideError() {
+  errorBox.hidden = true;
+  errorBox.textContent = "";
 }
 
 function showError(error) {

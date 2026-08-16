@@ -21,8 +21,11 @@ test("bootstrap pending suppresses normal sequence claims until control appears"
   assert.match(background, /bootstrapCompletedAt: new Date\(\)\.toISOString\(\)/);
 });
 
-test("content script accepts bootstrap direct prompts without parsing assistant output", () => {
-  assert.match(content, /message\?\.type === "RERUN_HANDOFF" \|\| message\?\.type === "RERUN_BOOTSTRAP"/);
+test("content script accepts direct setup prompts without parsing assistant output", () => {
+  assert.match(
+    content,
+    /\["RERUN_HANDOFF", "RERUN_BOOTSTRAP", "RERUN_CONNECT"\]\.includes\(message\?\.type\)/
+  );
   assert.match(content, /sendDirectPrompt/);
   assert.doesNotMatch(content, /assistant.*text|response.*content/i);
 });

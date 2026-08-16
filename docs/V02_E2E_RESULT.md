@@ -7,7 +7,7 @@ Runbook: `docs/V02_E2E_TEST_PLAN.md`
 - Run ID: `chatgpt-rerun-v02-20260816-01`
 - Branch: `agent/mvp-autoresume`
 - Status: `IN_PROGRESS`
-- Control: seq 2 / `continue` / V02-003, preparing transition to V02-004
+- Control: seq 3 / `continue` / V02-004, preparing transition to V02-005
 - Extension Reload confirmed: `2026-08-16T13:55:00Z` (22:55 KST)
 
 ## Static validation
@@ -25,11 +25,22 @@ Runbook: `docs/V02_E2E_TEST_PLAN.md`
 | V02-001 tab-scoped panel/storage | PASS | After v0.2 Reload, seq 0 auto-dispatch worked in tab A. User then completed the two-tab probe and confirmed the tabs were properly separated: tab-specific panel/session state stayed independent and starting the owning tab did not cause the other tab to run. |
 | V02-002 same-stream collision guard | PASS | User attempted Start in tab B using the same owner/repo/branch/control path as running tab A and confirmed the expected collision error appeared. The duplicate session did not take ownership. |
 | V02-003 core dispatch/retry regression | PASS | Seq 1 auto-dispatched in owning tab A, a later automatic resume arrived again while control remained seq 1, and user confirmed rejected tab B still showed zero run/retry activity instead of inheriting A's counters. |
-| V02-004 Continue in new chat | NOT_RUN | Next: use the running tab A's `Continue in new chat` action and verify ownership moves once to a fresh ChatGPT tab. |
-| V02-005 handoff race/failure safeguards | NOT_RUN | |
+| V02-004 Continue in new chat | PASS | User ran `Continue in new chat` and confirmed the fresh-chat handoff worked. The successful probe establishes that the workflow moved to a new ChatGPT conversation and resumed through the GitHub-backed handoff path. |
+| V02-005 handoff race/failure safeguards | IN_PROGRESS | Successful single handoff path is observed. Continue with non-destructive evidence for ownership continuity and code-level failure/race safeguards. |
 | V02-006 terminal isolation | NOT_RUN | |
 
 ## Event log
+
+### V02-004 fresh-chat handoff PASS
+
+- Time: `2026-08-16T14:17:00Z` (23:17 KST)
+- Control before transition: seq 3 / continue / V02-004.
+- User pressed **Continue in new chat** from the owning session and then reported `잘 됐어.` after the requested handoff probe.
+- Result: the fresh-chat handoff path succeeded and V02-004 is PASS.
+- The user additionally requested that repeated GitHub-use approval prompts not interrupt future fresh-chat handoffs.
+- ChatGPT's GitHub app-specific permission was changed to `full_access` so already-connected GitHub app actions can run without the normal per-use approval prompt where the account/workspace and safety policy permit it.
+- This permission preference is a ChatGPT app setting, not DOM automation in the Chrome extension, and it does not grant new GitHub OAuth/repository scopes.
+- Next: V02-005 handoff race/failure safeguards.
 
 ### V02-003 per-tab counter isolation PASS
 
@@ -83,6 +94,7 @@ Runbook: `docs/V02_E2E_TEST_PLAN.md`
 ## Issues found during v0.2 run
 
 1. Active `.chatgpt-rerun/README.md` initially referenced the historical v0.1 `docs/E2E_*` runbook after the v0.2 reset. This documentation drift was corrected so active executions read the v0.2 runbook and handoff document.
+2. Fresh-chat handoff may encounter ChatGPT app-use approval cards even when the GitHub account is already connected. The preferred mitigation is ChatGPT's persisted GitHub app permission setting, not extension-driven approval-card clicking.
 
 ## Historical v0.1 evidence
 
@@ -90,4 +102,4 @@ The previous run `chatgpt-rerun-dogfood-20260816-02` verified initial dispatch, 
 
 ## Next event
 
-Advance to V02-004. In the current owning tab A, use **Continue in new chat**. PASS requires one fresh ChatGPT tab to open, ownership/config/runtime to move to it, the old tab to stop with a handoff reason, and the new tab to receive a handoff prompt containing the GitHub coordinates plus current run_id/sequence and resume from GitHub STATE without needing prior conversation text.
+Advance to V02-005. Verify the new owning tab receives the next GitHub sequence automatically, confirming ownership continuity after handoff. Use the successful single-handoff observation plus existing implementation/tests to verify `handoffPending` suppresses old-tab polling and that failure paths deterministically release or stop ownership without intentionally forcing a destructive browser failure unless needed.

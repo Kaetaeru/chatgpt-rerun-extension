@@ -1,13 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildNewChatHandoffPrompt,
   continuationDisposition,
   effectivePollInterval,
   effectiveRetryDelay,
   normalizeMaxRetries,
   normalizeMaxRuns,
   parseControlPayload,
-  streamKey
+  streamKey,
+  tabConfigKey,
+  tabDraftKey,
+  tabIdFromRuntimeKey,
+  tabRuntimeKey
 } from "../control.js";
 
 const control = {
@@ -160,4 +165,38 @@ test("stream key changes with repository coordinates", () => {
     streamKey({ owner: "a", repo: "b", branch: "main", path: "x.json" }),
     "a/b/main/x.json"
   );
+});
+
+test("tab storage keys are isolated by Chrome tab ID", () => {
+  assert.equal(tabConfigKey(12), "tabConfig:12");
+  assert.equal(tabRuntimeKey(12), "tabRuntime:12");
+  assert.equal(tabDraftKey(12), "tabDraft:12");
+  assert.equal(tabRuntimeKey(13), "tabRuntime:13");
+  assert.notEqual(tabRuntimeKey(12), tabRuntimeKey(13));
+});
+
+test("runtime storage key parses its tab ID", () => {
+  assert.equal(tabIdFromRuntimeKey("tabRuntime:42"), 42);
+  assert.equal(tabIdFromRuntimeKey("tabConfig:42"), null);
+  assert.equal(tabIdFromRuntimeKey("tabRuntime:nope"), null);
+});
+
+test("invalid tab IDs are rejected", () => {
+  assert.throws(() => tabConfigKey(-1), /valid Chrome tab ID/);
+  assert.throws(() => tabRuntimeKey("x"), /valid Chrome tab ID/);
+});
+
+test("new-chat handoff prompt contains durable GitHub coordinates", () => {
+  const prompt = buildNewChatHandoffPrompt({
+    owner: "Kaetaeru",
+    repo: "chatgpt-rerun-extension",
+    branch: "agent/mvp-autoresume",
+    path: ".chatgpt-rerun/control.json"
+  }, control);
+
+  assert.match(prompt, /Kaetaeru\/chatgpt-rerun-extension/);
+  assert.match(prompt, /agent\/mvp-autoresume/);
+  assert.match(prompt, /run_id=run-1/);
+  assert.match(prompt, /sequence=4/);
+  assert.match(prompt, /이전 채팅 내용에 의존하거나/);
 });

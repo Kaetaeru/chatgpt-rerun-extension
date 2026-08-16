@@ -122,9 +122,13 @@ sessionToggle.addEventListener("click", async () => {
       tabId: currentTabId
     });
     if (!response?.ok) throw new Error(response?.error || "Start failed");
-    await refreshRuntime(response.action === "bootstrapping"
+
+    const message = response.action === "bootstrapping"
       ? `Initializing repository · tab ${currentTabId}`
-      : `Watching GitHub · tab ${currentTabId}`);
+      : response.action === "rate_limited_wait"
+        ? `Watching GitHub · API pause until ${formatTime(response.retryAt)}`
+        : `Watching GitHub · tab ${currentTabId}`;
+    await refreshRuntime(message);
   } catch (error) {
     showError(error);
   } finally {
@@ -260,6 +264,10 @@ async function saveSettings({ requireTarget }) {
         lastError: null,
         lastStatus: null,
         lastSequence: null,
+        rateLimitRemaining: null,
+        rateLimitResetAt: null,
+        rateLimitPausedUntil: null,
+        rateLimitPauseReason: null,
         handoffPending: false,
         handoffFromTabId: null,
         handoffToTabId: null,
@@ -316,13 +324,18 @@ async function refreshRuntime(transientMessage) {
   const watching = Boolean(runtime.enabled);
   const connected = Boolean(String(config.owner || "").trim() && String(config.repo || "").trim());
   const branch = String(config.branch || "").trim() || "main";
+  const hasToken = Boolean(String(config.githubToken || "").trim());
+  const pauseUntilMs = Date.parse(String(runtime.rateLimitPausedUntil || ""));
+  const rateLimited = Number.isFinite(pauseUntilMs) && pauseUntilMs > Date.now();
 
   statusDot.classList.toggle("running", watching);
   const persistentStatus = runtime.bootstrapPending
     ? `Initializing repository · tab ${currentTabId}`
-    : watching
-      ? `Watching GitHub · tab ${currentTabId}`
-      : `Stopped · tab ${currentTabId}${runtime.stopReason ? ` · ${runtime.stopReason}` : ""}`;
+    : watching && rateLimited
+      ? `Watching GitHub · API pause until ${formatTime(runtime.rateLimitPausedUntil)}`
+      : watching
+        ? `Watching GitHub · tab ${currentTabId}`
+        : `Stopped · tab ${currentTabId}${runtime.stopReason ? ` · ${runtime.stopReason}` : ""}`;
   statusLine.textContent = transientMessage || persistentStatus;
   renderSessionToggle(runtime);
   handoffButton.disabled = Boolean(runtime.bootstrapPending);
@@ -340,7 +353,11 @@ async function refreshRuntime(transientMessage) {
   document.getElementById("runCount").textContent = String(runtime.runCount || 0);
   document.getElementById("retryCount").textContent = `${runtime.sameSequenceRetryCount || 0}/${elements.maxRetriesPerSequence.value || DEFAULT_CONFIG.maxRetriesPerSequence}`;
   document.getElementById("lastSentAt").textContent = formatTime(runtime.lastSentAt);
-  document.getElementById("rateLimit").textContent = runtime.rateLimitRemaining ?? "-";
+  document.getElementById("apiPolling").textContent = rateLimited
+    ? `Paused until ${formatTime(runtime.rateLimitPausedUntil)}`
+    : hasToken
+      ? "Authenticated · conditional"
+      : "Public · rate-safe";
 
   if (runtime.lastError) {
     errorBox.hidden = false;

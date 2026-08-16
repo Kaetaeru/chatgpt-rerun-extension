@@ -90,16 +90,32 @@ Stopped  → [ Start ]
 - `Stop`을 누르면 현재 탭만 `manual` stop 상태로 바꾸고 같은 버튼이 다시 `Start`로 바뀐다.
 - 다른 ChatGPT 탭의 Start/Stop 상태에는 영향을 주지 않는다.
 
-## Start bootstrap
+## Start and automatic repository bootstrap
 
-Start는 ChatGPT 탭이 확장프로그램보다 먼저 열려 있었어도 동작하도록 설계되어 있다.
+v0.2.2부터 Start는 대상 저장소에 Rerun 프로토콜이 아직 없어도 자동으로 초기화할 수 있다.
 
-1. 현재 ChatGPT 탭에 content script가 있는지 확인한다.
-2. content script가 없으면 `chrome.scripting.executeScript()`로 `content.js`를 주입한다.
-3. 해당 tab ID의 runtime을 활성화한다.
-4. `RERUN_WAKE`를 보내 첫 GitHub poll을 즉시 시작한다.
+Start 시 다음 순서로 동작한다.
 
-따라서 unpacked extension을 Reload한 뒤 기존 ChatGPT 탭을 반드시 새로고침할 필요는 없다.
+1. 현재 ChatGPT 탭의 content script를 준비한다.
+2. 설정한 owner/repo/branch의 기본 `.chatgpt-rerun/control.json`을 읽어본다.
+3. control이 있으면 기존 Rerun을 그대로 시작한다.
+4. control이 없으면 저장소/branch 자체가 실제로 읽히는지 같은 GitHub 인증으로 확인한다.
+5. 접근 가능한 저장소이고 control path가 기본 `.chatgpt-rerun/control.json`이면 runtime을 `Initializing repository`로 두고 bootstrap 프롬프트를 현재 ChatGPT 대화에 한 번 보낸다.
+6. ChatGPT가 저장소와 현재 대화의 목표를 읽은 뒤 `.chatgpt-rerun/README.md`, `PLAN.md`, `STATE.md`, `STATUS.md`, `control.json`을 생성/보완한다.
+7. `control.json`은 항상 마지막 authoritative write로 게시한다.
+8. bootstrap turn은 첫 구현 task를 실행하지 않고 종료한다.
+9. 확장프로그램이 새 control을 감지하면 일반 resume prompt를 자동 전송해 첫 task를 시작한다.
+
+안전 경계:
+
+- custom control path가 없을 때는 자동 생성으로 추측하지 않고 오류를 낸다.
+- 저장소/branch 자체를 읽을 수 없는 404/권한 오류를 “새 프로젝트”로 오인하지 않는다.
+- 일부 `.chatgpt-rerun` 파일이 이미 있으면 bootstrap prompt는 기존 내용을 무조건 덮어쓰지 않고 호환 가능한 누락 부분만 보완하도록 지시한다.
+- bootstrap 동안 같은 stream은 다른 탭이 점유할 수 없고 normal sequence claim도 중지된다.
+- bootstrap GitHub 쓰기는 확장프로그램 token이 아니라 ChatGPT의 연결된 GitHub 앱을 통해 수행한다. 따라서 확장프로그램에 contents write 권한을 추가하지 않는다.
+- 공개 저장소를 token 없이 polling하는 경우 control 생성 감지는 기존 비인증 polling 제한 때문에 최대 약 60초 늦을 수 있다. token이 있으면 설정된 인증 polling 간격을 따른다.
+
+확장프로그램 Reload 후 기존 ChatGPT 탭을 새로고침할 필요는 없다. content script가 없으면 Start가 동적으로 주입한다.
 
 ## Continue in new chat
 
@@ -127,7 +143,7 @@ Start는 ChatGPT 탭이 확장프로그램보다 먼저 열려 있었어도 동�
 └── control.json
 ```
 
-템플릿은 `templates/repository/.chatgpt-rerun/`에 있고 상세 규칙은 `docs/PROJECT_PROTOCOL.md`를 따른다.
+v0.2.2부터 기본 control path로 Start하면 이 디렉터리가 없을 때 ChatGPT가 자동 bootstrap할 수 있다. 템플릿은 `templates/repository/.chatgpt-rerun/`에 있고 상세 규칙은 `docs/PROJECT_PROTOCOL.md`를 따른다.
 
 - `README.md`: 매 실행 가장 먼저 읽는 운영 계약.
 - `PLAN.md`: 전체 계획, 의존성, acceptance criteria.
@@ -181,9 +197,9 @@ STATE가 control보다 정확히 1 sequence 앞선 채 중단된 경우 다음 �
 3. **Developer mode**를 켠다.
 4. 처음이면 **Load unpacked**, 이미 로드했다면 **Reload**를 누른다.
 5. 확장 아이콘을 클릭해 현재 ChatGPT 탭의 Rerun Side Panel을 연다.
-6. 자동화할 프로젝트에 `.chatgpt-rerun/` 문서를 준비한다.
-7. Side Panel에 Owner, Repository, Branch, Control file을 입력한다.
-8. 중지 상태의 단일 session control에서 **Start**를 누른다.
+6. Side Panel에 Owner, Repository, Branch, Control file을 입력한다.
+7. 중지 상태의 단일 session control에서 **Start**를 누른다.
+8. 대상 저장소에 `.chatgpt-rerun`이 없으면 기본 control path에서 자동 초기화가 먼저 실행된다.
 9. 실행 중에는 같은 control이 **Stop**으로 표시되며, 누르면 해당 탭 Rerun만 중지한다.
 10. 작업 진행 상황은 대상 저장소의 `.chatgpt-rerun/STATUS.md`를 열어 확인한다.
 
@@ -193,7 +209,7 @@ STATE가 control보다 정확히 1 sequence 앞선 채 중단된 경우 다음 �
 
 빠른 polling 또는 private repository가 필요하면 대상 저장소 contents read 권한으로 제한된 GitHub token을 사용한다. token과 설정 draft는 현재 Chrome profile의 `chrome.storage.local`에 저장되므로 공유 PC에서는 사용하지 않는다.
 
-확장프로그램의 token은 control polling용이다. STATUS를 작성하려고 확장프로그램에 GitHub contents write 권한을 요구하지 않는다.
+확장프로그램의 token은 control polling과 bootstrap 대상 저장소/branch 존재 확인용이다. 실제 bootstrap 파일 쓰기와 STATUS 갱신은 ChatGPT의 연결된 GitHub 앱이 담당하므로 확장프로그램 token에 contents write 권한을 요구하지 않는다.
 
 ## 안전 장치
 
@@ -204,16 +220,18 @@ STATE가 control보다 정확히 1 sequence 앞선 채 중단된 경우 다음 �
 - retries/sequence 한도
 - max sends 한도
 - ChatGPT 입력창에 사용자 draft가 존재
-- content script 주입/재개 프롬프트 전송 실패
+- content script 주입/재개/bootstrap 프롬프트 전송 실패
+- custom missing control path
+- 접근 불가능한 repository/branch를 bootstrap 대상으로 오인할 위험
 - 개별 ChatGPT 실행 20분 hard stop 임박 → STATE 체크포인트 후 같은 sequence에서 종료/재개
 
 ChatGPT 또는 GitHub의 rate/service limit을 우회하도록 재시도하지 않는다.
 
 ## E2E dogfood
 
-현재 v0.2/v0.2.1 실제 Chrome 검증은 `docs/V02_E2E_TEST_PLAN.md`를 따른다. 결과는 `docs/V02_E2E_RESULT.md`에 누적한다.
+현재 v0.2.x 실제 Chrome 검증은 `docs/V02_E2E_TEST_PLAN.md`를 따른다. 결과는 `docs/V02_E2E_RESULT.md`에 누적한다.
 
-검증 범위에는 per-tab isolation, 동일 stream collision guard, new-sequence/same-sequence retry, fresh-chat handoff, handoff race protection, terminal isolation, 그리고 v0.2.1 단일 Start/Stop session toggle이 포함된다.
+검증 범위에는 per-tab isolation, 동일 stream collision guard, new-sequence/same-sequence retry, fresh-chat handoff, handoff race protection, terminal isolation, 단일 Start/Stop session toggle, 그리고 새 저장소 자동 bootstrap이 포함된다.
 
 ## 개발
 
@@ -224,4 +242,4 @@ npm run check
 npm test
 ```
 
-`npm test`는 control parser/schema helper, polling/retry clamp, sequence retry/회귀 처리와 Side Panel의 단일 Start/Stop toggle 회귀를 검증한다.
+`npm test`는 control parser/schema helper, polling/retry clamp, sequence retry/회귀 처리, Side Panel 단일 Start/Stop toggle, repository bootstrap prompt와 bootstrap flow 회귀를 검증한다.

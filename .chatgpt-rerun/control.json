@@ -3,7 +3,7 @@
   "run_id": "chatgpt-rerun-v02-20260816-01",
   "sequence": 9,
   "status": "needs_user",
-  "reason": "v0.2.6 fixes the observed prompt-inserted-but-not-submitted regression; reload the unpacked extension before browser verification.",
-  "updated_at": "2026-08-16T17:20:00Z",
+  "reason": "v0.2.7 fixes fresh-chat auto-resume by decoupling watcher handoff from GitHub work status and retaining robust auto-submit; reload before browser verification.",
+  "updated_at": "2026-08-16T18:01:00Z",
   "task_id": "V02-009"
 }

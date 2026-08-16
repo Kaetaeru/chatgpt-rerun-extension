@@ -11,7 +11,7 @@ ChatGPT Rerun v0.2는 브라우저 전체에 하나의 전역 Rerun을 두지 �
 각 Chrome tab ID마다 세 키를 사용한다.
 
 ```text
-tabConfig:<tabId>   # owner/repo/branch/path/token/poll/retry/prompt
+tabConfig:<tabId>   # owner/repo/branch/path/token/poll/retry/prompt/approval-aware mode
 tabRuntime:<tabId>  # enabled/run/sequence/retry/stop/handoff runtime
 tabDraft:<tabId>    # Side Panel에 입력 중인 값
 ```
@@ -69,15 +69,24 @@ v0.2.7부터 이 동작은 **GitHub work status와 독립적인 watcher ownershi
 
 ## GitHub app approval in fresh chats
 
-새 ChatGPT 대화에서 GitHub 앱 사용 승인 카드가 다시 나타날 수 있다. 이 승인을 Chrome 확장프로그램이 DOM을 찾아 자동으로 클릭하는 방식으로 우회하지 않는다.
+새 ChatGPT 대화나 기존 대화의 write action에서 GitHub 앱 작업 승인 카드가 나타날 수 있다.
 
-권장 방식은 ChatGPT의 GitHub 앱별 권한 설정을 사용자가 원하는 지속형 승인 정책으로 구성하는 것이다. 이 설정은 GitHub OAuth 범위나 조직 관리자 승인을 우회하지 않는다.
+Rerun은 이 승인 카드의 `허용하기`/`Allow` 버튼이나 드롭다운을 자동 클릭하지 않는다. GitHub OAuth, repository-access, 조직 관리자 승인 UI도 자동화하지 않는다.
+
+v0.2.13의 Side Panel에는 **GitHub 승인 후 자동 계속** 옵션이 있다.
+
+- 옵션 OFF: 기존 동작을 유지한다.
+- 옵션 ON: content script가 GitHub action-confirmation 카드가 현재 DOM에 보이는 동안 Rerun의 `POLL`/retry를 잠시 보내지 않는다.
+- 사용자가 직접 승인하면 ChatGPT가 action을 계속 수행하고 승인 카드가 사라진다.
+- 카드가 사라지면 다음 content tick(기본 약 2초)부터 Rerun polling이 자동 재개된다.
+- 따라서 승인 대기 시간이 retry delay를 넘어가도 동일 control을 별도 resume prompt로 중복 전송하지 않는다.
+- 이 기능은 assistant 답변 내용을 읽어 승인 여부를 추측하지 않고, 실제 상호작용 가능한 GitHub 승인 UI의 존재만 감지한다.
 
 책임 분리는 다음과 같다.
 
 ```text
-Rerun extension: 새 탭 생성 + watcher ownership 이관 + GitHub-backed handoff prompt 전달
-ChatGPT app permission: 연결된 GitHub 앱의 반복 승인 여부
+Rerun extension: 새 탭 생성 + watcher ownership 이관 + GitHub-backed handoff prompt 전달 + 승인 대기 중 retry 억제/수동 승인 후 자동 재개
+ChatGPT app permission: GitHub action confirmation 표시와 사용자의 승인 선택
 GitHub OAuth/admin: 실제 저장소 접근 범위와 조직 승인
 ```
 
@@ -113,7 +122,7 @@ handoff prompt에는 최소한 다음 정보가 직접 포함된다.
 
 현재 구현은 ChatGPT 답변 본문을 읽어 "토큰 제한" 문구를 탐지하지 않는다.
 
-그 대신 사용자가 대화가 길어졌다고 판단할 때 **Continue in new chat**을 명시적으로 누르는 방식이다. 또한 Rerun 확장프로그램은 ChatGPT의 앱 승인 카드나 OAuth/관리자 승인 UI를 자동 클릭하지 않는다.
+그 대신 사용자가 대화가 길어졌다고 판단할 때 **Continue in new chat**을 명시적으로 누르는 방식이다. 또한 Rerun 확장프로그램은 ChatGPT의 앱 승인 카드나 OAuth/관리자 승인 UI를 자동 클릭하지 않는다. `GitHub 승인 후 자동 계속`도 승인 자체를 자동화하는 기능이 아니라 승인 대기 중 Rerun retry를 억제하고 수동 승인 뒤 자동 재개하는 기능이다.
 
 ## Manual verification
 
@@ -144,6 +153,15 @@ handoff prompt에는 최소한 다음 정보가 직접 포함된다.
 4. 실제 구현 task는 시작하지 않는지 확인한다.
 5. 새 탭 watcher가 계속 Watching인지 확인한다.
 6. 이후 같은 sequence 또는 새 sequence를 `continue`로 바꿨을 때 새 탭에서 자동 재개되는지 확인한다.
+
+### GitHub approval-aware resume
+
+1. Side Panel에서 **GitHub 승인 후 자동 계속**을 체크하고 Save connection을 누른다.
+2. GitHub write action이 `ChatGPT가 GitHub을(를) 사용하도록 허용할까요?` 카드를 띄우게 한다.
+3. 승인 카드를 누르지 않은 채 retry delay보다 오래 기다려도 Rerun resume prompt가 중복 전송되지 않는지 확인한다.
+4. 승인 버튼이 Rerun에 의해 자동 클릭되지 않는지 확인한다.
+5. 사용자가 직접 `허용하기` 또는 `대화에서 허용하기`를 선택한다.
+6. ChatGPT action이 계속되고 카드가 사라진 뒤 Rerun watcher가 Start 재클릭 없이 자동으로 polling/continuation을 이어가는지 확인한다.
 
 ## Chrome version
 

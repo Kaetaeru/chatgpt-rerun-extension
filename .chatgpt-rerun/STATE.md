@@ -2,61 +2,70 @@
 
 ## Identity
 
-- Run ID: `chatgpt-rerun-dogfood-20260816-02`
-- Sequence: `2`
-- Desired control status: `continue`
-- Current task: `E2E-003`
-- Control reason: `E2E-002 same-sequence retry verified; start the STATE/control handoff recovery probe.`
-- Phase: `not_started`
-- Last checkpoint (UTC): `2026-08-16T13:34:00Z`
+- Run ID: `chatgpt-rerun-v02-20260816-01`
+- Sequence: `0`
+- Desired control status: `needs_user`
+- Current task: `V02-001`
+- Control reason: `v0.2 per-tab runtime and new-chat handoff code is published; reload the unpacked extension before starting the new E2E run.`
+- Phase: `awaiting_extension_reload`
+- Last checkpoint (UTC): `2026-08-16T13:42:00Z`
+- Current execution started (UTC): `2026-08-16T13:42:00Z`
+- Current execution hard stop (UTC): `2026-08-16T14:02:00Z`
 
 ## Current Objective
 
-Execute E2E-003 from `docs/E2E_TEST_PLAN.md`: intentionally advance STATE to seq 3 / E2E-004 while leaving control on seq 2, then prove the next automatic execution reconciles only the missing control handoff without repeating E2E-003.
+Pause the old dogfood automation, reload the local unpacked extension to the current `agent/mvp-autoresume` v0.2 head, then begin `docs/V02_E2E_TEST_PLAN.md` from V02-001.
 
 ## Completed in This Task
 
-- E2E-001 is fully verified.
-- E2E-002 first pass left control on seq 1 and STATE phase `awaiting_same_sequence_retry`.
-- The extension automatically re-entered the same seq 1 at 22:34 KST without manual `진행`.
-- `docs/E2E_RESULT.md` records same-sequence retry evidence.
-- PLAN marks E2E-002 verified.
+- Repository tree and existing runtime/UI/session code were re-read before the refactor.
+- Global single-session storage was replaced with tab-specific config/runtime/draft storage keys.
+- Side Panel opening was changed to tab-specific `chrome.sidePanel.setOptions({ tabId, ... })` + `open({ tabId })` behavior.
+- Start/Stop and runtime polling now operate on the sender/current Chrome tab only.
+- Same GitHub control stream collision guard was added to prevent duplicate sequence execution across tabs.
+- `Continue in new chat` was added to open a fresh ChatGPT tab and transfer the GitHub-backed workflow.
+- Handoff prompt includes owner/repo, branch, control path, run_id, and sequence, and instructs the new chat to recover from GitHub rather than prior conversation text.
+- Handoff now pauses the old tab immediately with `handoffPending` to prevent duplicate sends during transfer.
+- `docs/TAB_SESSIONS_AND_HANDOFF.md` and `docs/V02_E2E_TEST_PLAN.md` were added.
 
 ## Verification
 
 | Check | Command | Result | Evidence / note |
 |---|---|---|---|
-| Unit tests | `node --test control.test.mjs` | PASS | Previously verified after the startup fix; no code change in this sequence. |
-| Startup script syntax | `node --check background.js`, `content.js`, `popup.js` | PASS | Previously verified; no code change. |
-| Manifest JSON | JSON parse | PASS | Previously verified after the Side Panel/scripting change. |
-| E2E-001 next-sequence dispatch | Chrome runtime observation | PASS | Seq 1 arrived automatically at 22:32 KST. |
-| E2E-002 same-sequence retry | Chrome runtime observation | PASS | Same seq 1 arrived automatically again at 22:34 KST while control was unchanged. |
-| E2E-003 pending handoff recovery | Chrome runtime observation | NOT_RUN | Must be exercised by the next seq 2 execution. |
+| Syntax | `npm run check` | PASS | `background.js`, `content.js`, `control.js`, `popup.js` parse successfully. |
+| Unit tests | `npm test` | PASS | 20/20 tests passed, including tab-key isolation and new-chat handoff prompt contents. |
+| Manifest JSON | JSON parse | PASS | v0.2 manifest parsed successfully. |
+| Real tab isolation | Chrome runtime observation | NOT_RUN | Requires extension Reload and two ChatGPT tabs. |
+| Same-stream collision | Chrome runtime observation | NOT_RUN | Requires v0.2 live E2E. |
+| New-chat handoff | Chrome runtime observation | NOT_RUN | Requires v0.2 live E2E. |
 
 ## Pending / Failed
 
-- Publish seq 2 / continue / E2E-003 to control.json.
-- On the next automatic seq 2 execution, follow the E2E-003 first-pass probe exactly.
-- That first pass must mark E2E-003 verified in PLAN, write STATE seq 3 / E2E-004, intentionally leave control on seq 2, and end the response.
-- The subsequent automatic retry must detect STATE one ahead of control and publish only the missing seq 3 handoff.
+- Local Chrome still needs to Reload the unpacked extension from the latest branch head.
+- v0.1 dogfood run `...-02` was interrupted after E2E-002 because the runtime architecture changed; its unfinished E2E-003/004 are not valid v0.2 evidence.
+- V02-001 through V02-006 have not yet been observed in the browser.
 
 ## Files / Areas Touched
 
-- `docs/E2E_RESULT.md`: E2E-002 final PASS evidence.
-- `.chatgpt-rerun/PLAN.md`: E2E-002 marked verified.
-- `.chatgpt-rerun/STATE.md`: advanced to seq 2 / E2E-003.
+- `control.js`: split config/runtime defaults, tab storage keys, new-chat handoff prompt builder.
+- `background.js`: tab-scoped sessions, stream collision guard, tab-specific Side Panel, ownership handoff.
+- `content.js`: idempotent injection, tab registration, direct handoff prompt send.
+- `popup.js`: per-tab settings/draft/runtime and handoff action.
+- `popup.html`, `popup.css`: tab identity and new-chat handoff UI.
+- `manifest.json`, `package.json`: v0.2 / Chrome 116 minimum.
+- `tests/control.test.mjs`: 20 tests.
+- `docs/TAB_SESSIONS_AND_HANDOFF.md`, `docs/V02_E2E_TEST_PLAN.md`: v0.2 behavior and E2E plan.
 
 ## Next Exact Action
 
-When the extension automatically sends the next resume prompt for seq 2 / E2E-003, read the mandatory documents, confirm Normal preflight, record E2E-003 first-pass evidence, mark E2E-003 verified in PLAN, update STATE to seq 3 / desired `continue` / E2E-004 with explicit handoff evidence, do **not** update control.json, and intentionally end the response.
+User reloads the unpacked extension in `chrome://extensions` from the latest `agent/mvp-autoresume` checkout and confirms Reload is complete. Then update PLAN/STATE/control from `needs_user` to `continue` for V02-001 and run the two-tab isolation probe.
 
 ## Do Not Repeat
 
-- Do not rerun E2E-001 or E2E-002.
-- Do not rerun static validation unless code changes.
-- Do not manually send `진행` during the automated sequence.
-- During the E2E-003 first pass, do not update control after STATE advances to seq 3.
+- Do not continue the old `chatgpt-rerun-dogfood-20260816-02` E2E-003 state.
+- Do not treat v0.1 E2E-003/004 as verified after this architecture refactor.
+- Do not set control to `continue` before the user reloads the local v0.2 extension, or the old extension build may consume the new run.
 
 ## Blockers / User Decisions
 
-- None. The next event should be the extension-generated seq 2 execution.
+- User action required: Reload the unpacked extension to the latest v0.2 code.

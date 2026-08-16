@@ -6,10 +6,10 @@ Runbook: `docs/V02_E2E_TEST_PLAN.md`
 
 - Run ID: `chatgpt-rerun-v02-20260816-01`
 - Branch: `agent/mvp-autoresume`
-- Status: `WAITING_FOR_EXTENSION_RELOAD`
-- Control: seq 5 / `needs_user` / V02-007
+- Status: `AUTO_RESUME_PROBE`
+- Control: transitioning same seq 5 from `needs_user` to `continue` / V02-007
 - Initial v0.2 Reload confirmed: `2026-08-16T13:55:00Z` (22:55 KST)
-- Required next Reload: **v0.2.4 persistent tab-watcher build**
+- Current browser build observed: v0.2.4 persistent tab-watcher UI
 
 ## Static / source validation
 
@@ -36,11 +36,20 @@ Runbook: `docs/V02_E2E_TEST_PLAN.md`
 | V02-003 core dispatch/retry regression | PASS | New-sequence dispatch and same-sequence retry occurred in owning tab A; rejected tab B remained at zero counters. |
 | V02-004 Continue in new chat | PASS | User ran `Continue in new chat` and confirmed the fresh-chat handoff worked. |
 | V02-005 handoff race/failure safeguards | PAUSED | Successful single handoff path is observed. Remaining safeguards resume after current browser gates. |
-| V02-006 persistent watcher across terminal GitHub states | WAITING_RELOAD | New v0.2.4 semantics require browser proof: watcher stays Watching on terminal, polling continues, later continue auto-resumes without another Start. |
-| V02-007 unified Start/Stop watcher toggle | WAITING_RELOAD | Browser verification requires Reloading v0.2.4. |
+| V02-006 persistent watcher across terminal GitHub states | IN_PROGRESS | With seq 5 / `needs_user`, user observed the tab watcher still showed `Watching`; same-sequence `continue` auto-resume probe is now armed. |
+| V02-007 unified Start/Stop watcher toggle | IN_PROGRESS | User observation of `Watching` under terminal GitHub state proves Start enabled the v0.2.4 watcher; explicit Stop -> Start round-trip is still not fully recorded. |
 | V02-008 explicit Rerun connection prompt onboarding | PARTIAL | Current-project active-run preservation/reconciliation path was exercised successfully; separate new-project five-file creation path remains. |
 
 ## Event log
+
+### V02-006 terminal watcher persistence observed; same-sequence resume probe armed
+
+- Time: `2026-08-16T15:15:00Z` (00:15 KST, Aug 17)
+- GitHub control was seq 5 / `needs_user` / V02-007.
+- The user reported `워칭으로 나와.` after starting the v0.2.4 tab watcher.
+- Result: terminal GitHub work state did not disable the Chrome watcher. The Side Panel remained in its Watching state while GitHub was `needs_user`.
+- This is direct browser evidence for V02-006 steps 1-3 and partial V02-007 evidence that Start enables the persistent watcher independently of GitHub work status.
+- Next probe: keep the tab watcher untouched and change the same seq 5 control from `needs_user` to `continue`. Expected: the owning tab automatically receives the resume prompt without another Start and without waiting for the same-sequence retry delay.
 
 ### v0.2.4 watcher state decoupled from GitHub work state; Reload required
 
@@ -55,7 +64,6 @@ Runbook: `docs/V02_E2E_TEST_PLAN.md`
 - Side Panel adds `Tab watcher` and `GitHub work status` as separate rows and renders enabled state as `Watching GitHub`.
 - `tests/watcher-flow.test.mjs` was added and `tests/popup-ui.test.mjs` was updated, but the complete current suite was not executed in this environment.
 - Extension/package version bumped to 0.2.4.
-- Result: implementation/source inspection complete; V02-006/V02-007 browser evidence waits for Reload.
 
 ### v0.2.3 explicit connection prompt exercised on current project
 
@@ -118,4 +126,4 @@ The previous run `chatgpt-rerun-dogfood-20260816-02` verified initial dispatch, 
 
 ## Next event
 
-Reload the unpacked extension from latest `agent/mvp-autoresume` (**v0.2.4**). Keep the current GitHub control at seq 5 / `needs_user` and press Start in the current tab. Expected: `Tab watcher = Watching`, `GitHub work status = needs_user`, button = Stop, no resume prompt, and watcher remains Watching after at least one configured poll interval. After this observation, change the same seq 5 control to `continue` and verify the tab auto-resumes without another Start and without waiting for retry delay.
+Do not press Start again. The watcher is already Watching. Publish the same seq 5 as `continue` and observe whether the current owning ChatGPT tab receives the standard resume prompt automatically. A prompt arriving without another Start closes the key terminal -> continue portion of V02-006; explicit Stop -> Start still remains for full V02-007 acceptance.

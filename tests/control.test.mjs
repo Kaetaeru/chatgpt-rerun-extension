@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildNewChatHandoffPrompt,
+  buildRepositoryBootstrapPrompt,
   continuationDisposition,
   effectivePollInterval,
   effectiveRetryDelay,
+  isAutoBootstrapPath,
   normalizeMaxRetries,
   normalizeMaxRuns,
   parseControlPayload,
@@ -184,6 +186,32 @@ test("runtime storage key parses its tab ID", () => {
 test("invalid tab IDs are rejected", () => {
   assert.throws(() => tabConfigKey(-1), /valid Chrome tab ID/);
   assert.throws(() => tabRuntimeKey("x"), /valid Chrome tab ID/);
+});
+
+test("auto-bootstrap only applies to the standard control path", () => {
+  assert.equal(isAutoBootstrapPath({ path: ".chatgpt-rerun/control.json" }), true);
+  assert.equal(isAutoBootstrapPath({ path: "/.chatgpt-rerun/control.json" }), true);
+  assert.equal(isAutoBootstrapPath({ path: "automation/control.json" }), false);
+});
+
+test("repository bootstrap prompt creates the five-file protocol before work", () => {
+  const prompt = buildRepositoryBootstrapPrompt({
+    owner: "example",
+    repo: "project",
+    branch: "dev",
+    path: ".chatgpt-rerun/control.json"
+  });
+
+  assert.match(prompt, /example\/project/);
+  assert.match(prompt, /branch dev/);
+  assert.match(prompt, /README\.md/);
+  assert.match(prompt, /PLAN\.md/);
+  assert.match(prompt, /STATE\.md/);
+  assert.match(prompt, /STATUS\.md/);
+  assert.match(prompt, /control\.json/);
+  assert.match(prompt, /마지막으로만 control\.json/);
+  assert.match(prompt, /첫 구현 task를 시작하지 말고 종료/);
+  assert.match(prompt, /약 5분 freshness/);
 });
 
 test("new-chat handoff prompt contains durable GitHub coordinates", () => {

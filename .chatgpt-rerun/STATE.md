@@ -3,76 +3,75 @@
 ## Identity
 
 - Run ID: `chatgpt-rerun-v02-20260816-01`
-- Sequence: `5`
-- Desired control status: `continue`
+- Sequence: `6`
+- Desired control status: `needs_user`
 - Current task: `V02-007`
-- Control reason: `v0.2.4 watcher stayed Watching under needs_user; switch the same seq 5 to continue to verify automatic resume without another Start.`
-- Phase: `awaiting_same_sequence_terminal_to_continue_autoresume`
-- Last checkpoint (UTC): `2026-08-16T15:15:00Z`
-- Current execution started (UTC): `2026-08-16T15:15:00Z`
-- Current execution hard stop (UTC): `2026-08-16T15:35:00Z`
+- Control reason: `V02-006 persistent watcher auto-resume verified; complete the explicit Stop -> Start watcher round-trip for V02-007.`
+- Phase: `awaiting_manual_stop_start_round_trip`
+- Last checkpoint (UTC): `2026-08-16T15:18:00Z`
+- Current execution started (UTC): `2026-08-16T15:18:00Z`
+- Current execution hard stop (UTC): `2026-08-16T15:38:00Z`
 
 ## Current Objective
 
-Verify the v0.2.4 separation between persistent Chrome watcher state and GitHub work state using the already-running watcher. The user has observed `Tab watcher = Watching` while GitHub control was seq 5 / `needs_user`. Keep the watcher untouched and publish the same seq 5 as `continue`. The acceptance signal is an automatic standard resume prompt in the owning tab without another Start and without waiting for the ordinary same-sequence retry delay.
-
-The authoritative task remains V02-007 at seq 5 so the existing task/run identity is not changed merely for this cross-cutting V02-006 probe. The resulting browser observation is also evidence for V02-006.
+Finish V02-007 without repeating the already-verified V02-006 watcher/work-state probe. GitHub work dispatch should remain at `needs_user` while the user manually tests the single watcher control: current Watching/Stop -> click Stop -> Stopped/Start -> click Start -> Watching/Stop. `GitHub work status` must remain a separate `needs_user` row and no implementation resume prompt should be sent during this manual toggle check.
 
 ## Completed in This Task
 
 - V02-001 through V02-004 remain verified and were not repeated.
-- v0.2.4 watcher/work-state separation remains implemented.
-- The user is running the v0.2.4 watcher UI and reported `워칭으로 나와.` while GitHub control remained seq 5 / `needs_user`.
-- This proves the terminal GitHub state did not automatically disable the Chrome watcher.
-- `docs/V02_E2E_RESULT.md` now records this as direct V02-006 terminal-watcher persistence evidence and partial V02-007 Start/watcher evidence.
-- PLAN now marks V02-006 `in_progress` while preserving V02-007 `in_progress`.
-- No Start action is required or allowed for the next probe; the watcher is already enabled.
-- The intended next authoritative control is the same run, same seq 5, same task V02-007, with status `continue`.
+- V02-006 is now verified.
+- User previously observed `Tab watcher = Watching` while GitHub control was same seq 5 / `needs_user`.
+- GitHub alone was then changed to same seq 5 / `continue`; the user did not press Start again.
+- The configured standard resume prompt arrived automatically in the owning tab and created this execution.
+- This proves the persistent watcher kept polling under the terminal work state and automatically resumed when GitHub returned to `continue` without another Start.
+- v0.2.4 source inspection also confirms terminal observation re-arms the handled sequence so the same-sequence `continue` is treated as fresh work authorization.
+- `docs/V02_E2E_RESULT.md` records V02-006 PASS.
+- PLAN marks V02-006 verified and leaves V02-007 in progress.
+- V02-007 already has partial browser evidence: Start produced Watching and GitHub work status is shown separately.
 
 ## Verification
 
 | Check | Command / observation | Result | Evidence / note |
 |---|---|---|---|
 | Existing v0.2 core browser evidence | prior dogfood | PASS | V02-001~004 remain verified. |
-| v0.2.4 terminal wait code | GitHub remote source | PASS | Terminal statuses return wait rather than disabling watcher. |
-| v0.2.4 same-sequence re-arm code | GitHub remote source | PASS | Terminal observation arms same-sequence continue as fresh work authorization. |
-| Browser watcher remains enabled under `needs_user` | User Side Panel observation | PASS | User reported `워칭으로 나와.` with control still seq 5 / needs_user. |
-| Same-sequence terminal -> continue automatic resume | Chrome + GitHub control | IN_PROGRESS | Control will be changed to same seq 5 / continue now; expected automatic prompt without Start. |
-| Explicit Stop -> Start round-trip for V02-007 | Chrome Side Panel | NOT_RUN | Still required for full V02-007 acceptance. |
+| Browser watcher remains enabled under `needs_user` | User Side Panel observation | PASS | User reported `워칭으로 나와.` while seq 5 / needs_user was authoritative. |
+| Same-sequence terminal -> continue automatic resume | Current automatic execution | PASS | Same seq 5 was changed to continue; this resume prompt arrived with no additional Start. |
+| V02-006 overall | browser + source evidence | PASS | Persistent watcher and automatic resume acceptance path verified. |
+| V02-007 Start -> Watching | User Side Panel observation | PASS | Current watcher reached Watching from Start and remained independent of GitHub work status. |
+| V02-007 Stop -> Stopped/Start -> Watching round-trip | Chrome Side Panel | NOT_RUN | This is the remaining manual acceptance step. |
 | Full current `npm run check` | local checkout | NOT_RUN | Environment cannot reconstruct latest remote checkout. |
 | Full current `npm test` | local checkout | NOT_RUN | Same environment limitation. |
 
 ## Pending / Failed
 
-- Publish control LAST as seq 5 / `continue` / V02-007.
-- Do not press Start, Stop, Save, or change repository coordinates during the auto-resume observation.
-- Confirm whether the standard resume prompt arrives automatically in this already-Watching tab.
-- If it arrives, record V02-006 terminal -> continue auto-resume PASS evidence.
-- V02-006 still needs any remaining polling/other-stream evidence required by the runbook before final verification.
-- V02-007 still needs the explicit Stop -> Start round-trip before final verification.
-- V02-008 new-project onboarding and remaining V02-005 safeguards remain later work.
+- Publish control LAST as seq 6 / `needs_user` / V02-007 so no new implementation prompt is dispatched during the manual UI probe.
+- In the current tab, click the single **Stop** button.
+- Confirm `Tab watcher = Stopped` and the same button becomes **Start**.
+- Click **Start** again.
+- Confirm `Tab watcher = Watching` and the same button becomes **Stop**.
+- Confirm `GitHub work status = needs_user` remains separate throughout and no resume prompt is sent merely because the watcher was restarted.
+- Report the observed result so V02-007 can be closed.
+- V02-008 separate-new-project onboarding and remaining V02-005 safeguards remain later work.
 
 ## Files / Areas Touched
 
-- `docs/V02_E2E_RESULT.md`: recorded user-observed Watching state under needs_user and armed same-seq auto-resume probe.
-- `.chatgpt-rerun/PLAN.md`: V02-006 moved to in_progress and current probe recorded.
-- `.chatgpt-rerun/STATE.md`: same seq 5 now intends `continue` for the auto-resume probe.
+- `docs/V02_E2E_RESULT.md`: V02-006 PASS and automatic same-sequence resume evidence.
+- `.chatgpt-rerun/PLAN.md`: V02-006 verified.
+- `.chatgpt-rerun/STATE.md`: advanced to seq 6 / needs_user for the remaining V02-007 manual toggle probe.
 
 ## Next Exact Action
 
-Publish `.chatgpt-rerun/control.json` LAST with the same run ID, same sequence 5, same task V02-007, and status `continue`. Then make no browser action and observe whether the owning tab automatically receives the standard resume prompt.
+After control seq 6 / `needs_user` is published, user clicks **Stop**, confirms `Stopped` + button `Start`, then clicks **Start** and confirms `Watching` + button `Stop`. GitHub work status must stay `needs_user` as a separate row and no resume prompt should be sent.
 
 ## Do Not Repeat
 
-- Do not repeat V02-001 through V02-004.
-- Do not press Start again for this probe.
-- Do not increment sequence merely to test watcher resumption; this test specifically requires same-sequence terminal -> continue.
-- Do not change task_id for the cross-cutting V02-006 observation; keep seq 5 / V02-007 authoritative identity stable.
-- Do not interpret GitHub terminal states as watcher Stop.
+- Do not repeat V02-001 through V02-006.
+- Do not change GitHub to `continue` during the V02-007 manual toggle probe.
 - Do not create separate Start/Stop buttons again.
+- Do not interpret GitHub `needs_user` as watcher Stop.
 - Do not reset the active run.
 - Do not use STATUS for reconciliation.
 
 ## Blockers / User Decisions
 
-- No current blocker. The watcher is already Watching; only the GitHub control transition and browser observation remain for this probe.
+- User action required: perform the short Stop -> Start watcher round-trip and report the observed labels/states.

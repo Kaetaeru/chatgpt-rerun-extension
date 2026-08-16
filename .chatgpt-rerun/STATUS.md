@@ -6,46 +6,56 @@
 
 | Item | Current |
 |---|---|
-| Last updated | `2026-08-16T23:25:00Z` (08:25 KST, Aug 17) |
+| Last updated | `2026-08-16T23:51:00Z` (08:51 KST, Aug 17) |
 | Run | `chatgpt-rerun-v02-20260816-01` |
 | Sequence | `9` |
 | GitHub work status | `needs_user` |
 | Current task | `V02-009` |
-| Extension version to verify | `0.2.12` |
-| Actual failing project | `Kaetaeru/SimpleVTT @ main` |
+| Extension version to verify | `0.2.13` |
+| Live project | `Kaetaeru/SimpleVTT @ main` |
 | SimpleVTT control | `sequence 1 · continue` |
-| Browser verification | PENDING v0.2.12 RELOAD |
+| Browser verification | PENDING v0.2.13 RELOAD |
 
-## 이번에 확인된 실제 원인
+## v0.2.13 — GitHub 승인 후 자동 계속
 
-SimpleVTT는 정상적으로 `continue`였지만 Rerun의 별도 lifetime `Max sends=20` 안전장치가 먼저 실행을 막고 있었습니다. Phase 14처럼 하나의 run에서 20회 이상 deliberate continuation을 수행하면 watcher는 계속 `Watching` / `Public · rate-safe`로 보이면서 내부적으로 `max_runs` 대기 상태가 될 수 있었습니다.
+Side Panel에 **GitHub 승인 후 자동 계속** 체크박스를 추가했습니다.
 
-## v0.2.12 수정
+이 옵션은 승인 자체를 자동화하지 않습니다.
 
-- workflow 전체의 lifetime `Max sends` 제한 제거
-- normal dispatch의 `max_runs` 차단 제거
-- `CLAIM_SEQUENCE`의 `max_runs` 차단 제거
-- fresh-chat handoff의 `Max sends` 거부 제거
-- Side Panel에서 `Max sends` 설정 제거
-- `Sent` 숫자는 진단 통계로만 유지
-- 동일한 control generation 반복은 기존 `Retries / sequence`로 계속 제한
-- 기존 저장소에 남은 `maxRuns=20/100` 값은 실행을 막지 않음
+- GitHub action-confirmation 카드가 보이면 Rerun `POLL`/retry를 잠시 멈춤
+- `허용하기`, `대화에서 허용하기`, `Allow` 버튼이나 드롭다운은 자동 클릭하지 않음
+- 사용자가 직접 승인하면 ChatGPT action이 계속됨
+- 승인 카드가 사라진 뒤 다음 기본 2초 content tick부터 Rerun polling을 자동 재개
+- 승인 대기가 retry delay보다 길어져도 같은 control의 resume prompt를 중복 전송하지 않도록 보호
+- 설정은 tab-scoped config에 저장되므로 fresh-chat handoff 시 함께 이전
+
+## 기존 수정 유지
+
+- same-sequence의 새 `updated_at`은 fresh authorization
+- lifetime `Max sends` 제한 없음
+- `Sent`는 진단 통계만
+- unchanged control generation만 `Retries / sequence`로 제한
+- public GitHub REST rate limit은 watcher Stop이 아니라 pause/resume
 
 ## 다음 확인
 
-1. `chrome://extensions`에서 ChatGPT Rerun **v0.2.12 Reload**
+1. `chrome://extensions`에서 ChatGPT Rerun **v0.2.13 Reload**
 2. 기존 SimpleVTT ChatGPT 탭으로 돌아감
-3. 연결이 `Kaetaeru/SimpleVTT @ main`인지 확인
-4. watcher를 Watching으로 유지/Start
-5. SimpleVTT의 sequence 1은 변경하지 않음
-6. 다음 successful poll에서 resume prompt가 자동 제출되는지 확인
-7. `Sent`가 20 이상이어도 실행되어야 함
-8. 현재 대화가 exhausted라면 fresh-chat handoff도 `Sent` 수와 무관하게 진행되어야 함
+3. **GitHub 승인 후 자동 계속** 체크
+4. **Save connection** 클릭
+5. watcher를 Watching으로 유지/Start
+6. GitHub write action 승인 카드가 뜰 때까지 진행
+7. 승인하지 않고 retry delay보다 오래 기다려도 duplicate Rerun prompt가 없는지 확인
+8. Rerun이 승인 버튼을 자동 클릭하지 않는지 확인
+9. 직접 `허용하기` 또는 `대화에서 허용하기` 선택
+10. 카드가 사라진 뒤 Start 재클릭 없이 ChatGPT 작업/Rerun polling이 이어지는지 확인
 
-## 검증 한계
+## 검증 상태
 
-- v0.2.12 remote source/regression assertions는 커밋됨
-- container는 github.com DNS를 resolve하지 못해 exact latest checkout의 전체 `npm test` / `npm run check`는 실행하지 못함
-- 실제 SimpleVTT browser dispatch는 v0.2.12 Reload 후 사용자 관찰 필요
+- v0.2.13 remote source: COMMITTED / SOURCE-VERIFIED
+- approval detector phrase probe: PASS TARGETED
+- source regression assertions: COMMITTED
+- exact latest full npm suite: NOT_RUN — 이 runtime에 exact GitHub checkout이 없음
+- live approval-card browser behavior: PENDING
 
 STATUS는 presentation-only이며 자동화 판단에는 사용하지 않습니다.

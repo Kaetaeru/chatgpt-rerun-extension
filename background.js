@@ -445,83 +445,95 @@ async function handoffToNewChat(oldTabId) {
     throw new Error("Max sends 한도에 도달했습니다. 설정을 늘린 뒤 handoff를 다시 실행하세요.");
   }
 
-  const newTab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: true });
-  const newTabId = newTab.id;
-  if (!Number.isSafeInteger(newTabId)) {
-    throw new Error("새 ChatGPT 탭을 만들지 못했습니다.");
-  }
+  await updateRuntime(oldTabId, { handoffPending: true, lastError: null });
+  let oldSessionTransferred = false;
 
-  await waitForTabComplete(newTabId, 20_000);
-  await configureTabSidePanel(newTabId);
-  await ensureContentScript(newTabId);
+  try {
+    const newTab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: true });
+    const newTabId = newTab.id;
+    if (!Number.isSafeInteger(newTabId)) {
+      throw new Error("새 ChatGPT 탭을 만들지 못했습니다.");
+    }
 
-  const newRuntime = {
-    ...oldRuntime,
-    enabled: true,
-    pendingSequence: null,
-    pendingRunId: null,
-    pendingIsRetry: false,
-    stopReason: null,
-    lastError: null,
-    handoffPending: true,
-    handoffFromTabId: oldTabId,
-    handoffToTabId: null
-  };
+    await waitForTabComplete(newTabId, 20_000);
+    await configureTabSidePanel(newTabId);
+    await ensureContentScript(newTabId);
 
-  await chrome.storage.local.set({
-    [tabConfigKey(newTabId)]: config,
-    [tabDraftKey(newTabId)]: config,
-    [tabRuntimeKey(newTabId)]: newRuntime
-  });
+    const newRuntime = {
+      ...oldRuntime,
+      enabled: true,
+      pendingSequence: null,
+      pendingRunId: null,
+      pendingIsRetry: false,
+      stopReason: null,
+      lastError: null,
+      handoffPending: true,
+      handoffFromTabId: oldTabId,
+      handoffToTabId: null
+    };
 
-  await updateRuntime(oldTabId, {
-    enabled: false,
-    pendingSequence: null,
-    pendingRunId: null,
-    pendingIsRetry: false,
-    stopReason: `handed_off_to_tab_${newTabId}`,
-    handoffToTabId: newTabId
-  });
+    await chrome.storage.local.set({
+      [tabConfigKey(newTabId)]: config,
+      [tabDraftKey(newTabId)]: config,
+      [tabRuntimeKey(newTabId)]: newRuntime
+    });
 
-  const prompt = buildNewChatHandoffPrompt(config, control);
-  const response = await chrome.tabs.sendMessage(newTabId, {
-    type: "RERUN_HANDOFF",
-    prompt
-  });
-
-  if (!response?.sent) {
-    const detail = response?.error || "새 ChatGPT 탭에 handoff 프롬프트를 보내지 못했습니다.";
-    await updateRuntime(newTabId, {
+    await updateRuntime(oldTabId, {
       enabled: false,
       handoffPending: false,
-      stopReason: "handoff_send_failed",
-      lastError: detail
+      pendingSequence: null,
+      pendingRunId: null,
+      pendingIsRetry: false,
+      stopReason: `handed_off_to_tab_${newTabId}`,
+      handoffToTabId: newTabId
     });
-    throw new Error(detail);
+    oldSessionTransferred = true;
+
+    const prompt = buildNewChatHandoffPrompt(config, control);
+    const response = await chrome.tabs.sendMessage(newTabId, {
+      type: "RERUN_HANDOFF",
+      prompt
+    });
+
+    if (!response?.sent) {
+      const detail = response?.error || "새 ChatGPT 탭에 handoff 프롬프트를 보내지 못했습니다.";
+      await updateRuntime(newTabId, {
+        enabled: false,
+        handoffPending: false,
+        stopReason: "handoff_send_failed",
+        lastError: detail
+      });
+      throw new Error(detail);
+    }
+
+    const isRetry = control.sequence === Number(oldRuntime.lastHandledSequence);
+    await updateRuntime(newTabId, {
+      enabled: true,
+      handoffPending: false,
+      lastRunId: control.runId,
+      lastHandledSequence: control.sequence,
+      lastSentAt: new Date().toISOString(),
+      sameSequenceRetryCount: isRetry ? Number(oldRuntime.sameSequenceRetryCount || 0) + 1 : 0,
+      runCount: Number(oldRuntime.runCount || 0) + 1,
+      lastStatus: control.status,
+      lastSequence: control.sequence,
+      stopReason: null,
+      lastError: null
+    });
+
+    return {
+      action: "handed_off",
+      oldTabId,
+      newTabId,
+      runId: control.runId,
+      sequence: control.sequence
+    };
+  } catch (error) {
+    if (!oldSessionTransferred) {
+      await updateRuntime(oldTabId, { handoffPending: false });
+    }
+    throw error;
   }
-
-  const isRetry = control.sequence === Number(oldRuntime.lastHandledSequence);
-  await updateRuntime(newTabId, {
-    enabled: true,
-    handoffPending: false,
-    lastRunId: control.runId,
-    lastHandledSequence: control.sequence,
-    lastSentAt: new Date().toISOString(),
-    sameSequenceRetryCount: isRetry ? Number(oldRuntime.sameSequenceRetryCount || 0) + 1 : 0,
-    runCount: Number(oldRuntime.runCount || 0) + 1,
-    lastStatus: control.status,
-    lastSequence: control.sequence,
-    stopReason: null,
-    lastError: null
-  });
-
-  return {
-    action: "handed_off",
-    oldTabId,
-    newTabId,
-    runId: control.runId,
-    sequence: control.sequence
-  };
 }
 
 async function stopSession(tabId, reason) {

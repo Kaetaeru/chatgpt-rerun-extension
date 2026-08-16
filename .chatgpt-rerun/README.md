@@ -36,6 +36,7 @@ v0.2.4부터 Chrome 탭의 Start/Stop과 GitHub control 상태를 서로 다른 
 - terminal 상태 뒤 GitHub가 다시 `continue`가 되면, 같은 sequence라도 terminal -> continue 전환을 새로운 실행 허가로 보고 즉시 재개할 수 있어야 한다.
 - retry limit, sequence regression 같은 dispatch guard도 watcher 자체를 끄지 않고 계속 관찰한다. 새 run/새 유효 상태가 오면 다시 평가한다.
 - **workflow 전체의 lifetime send 횟수에는 상한을 두지 않는다.** `Sent`/`runCount`는 진단용 누적 통계일 뿐 dispatch 또는 fresh-chat handoff를 차단하지 않는다. 동일한 control generation의 반복만 per-sequence retry 안전장치로 제한한다.
+- `GitHub 승인 후 자동 계속`이 켜진 탭에서는 ChatGPT의 GitHub action-confirmation 카드가 보이는 동안 content script가 Rerun polling/retry를 잠시 멈춘다. **승인 버튼은 자동 클릭하지 않는다.** 사용자가 직접 승인해서 카드가 사라지면 다음 content tick부터 polling과 continuation을 자동 재개한다.
 - 사용자 composer draft 보호, prompt 전송 실패, bootstrap/handoff 실패처럼 브라우저 안전을 위해 명시적 중지가 필요한 경우는 예외다.
 - 탭이 닫히면 그 tab ID의 watcher/config/runtime은 제거된다. 확장프로그램이 꺼져 있으면 polling도 없다.
 
@@ -108,6 +109,7 @@ STATUS에는 최소한 다음 정보를 유지한다.
 11. 새 채팅 handoff는 이전 대화 본문이 아니라 GitHub README/control/STATE/PLAN을 기준으로 복구한다.
 12. assistant output을 파싱해 token/context-limit 문구를 감지하지 않는다.
 13. terminal GitHub status를 Chrome watcher Stop으로 해석하지 않는다.
+14. GitHub action-confirmation UI의 존재 여부는 승인 대기 보호를 위해 감지할 수 있지만, 앱 승인 카드나 OAuth/관리자 승인 버튼을 자동 클릭하지 않는다.
 
 ## Per-tab and new-chat invariants
 

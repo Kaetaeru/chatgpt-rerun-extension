@@ -2,67 +2,74 @@
 
 Runbook: `docs/V02_E2E_TEST_PLAN.md`
 
-## Final run
+## Current run
 
 - Run ID: `chatgpt-rerun-v02-20260816-01`
 - Branch: `agent/mvp-autoresume`
-- Extension: `0.2.5`
-- Status: `PASS`
-- Completed at: `2026-08-16T16:05:00Z` (01:05 KST, Aug 17)
+- Extension to verify: `0.2.7`
+- Status: `WAITING_FOR_V02_009_BROWSER_VERIFY`
+- Current task: `V02-009`
 
-## Final validation
-
-| Check | Result | Evidence |
-|---|---|---|
-| `npm run check` | PASS | Latest v0.2.5 branch source reconstructed from exact GitHub blobs; `node --check` passed for background/content/control/popup. |
-| `npm test` | PASS | 38/38 tests passed, 0 failed. |
-| Manifest/package JSON parse | PASS | Latest `manifest.json` and `package.json` parsed successfully. |
-| Extension version | PASS | manifest/package are `0.2.5`. |
-
-The first full v0.2.5 test run found one **stale regression assertion**, not a product-code failure: `tests/bootstrap-flow.test.mjs` still expected the old `RERUN_HANDOFF || RERUN_BOOTSTRAP` conditional while current `content.js` correctly uses an `includes(...)` direct-prompt set containing `RERUN_HANDOFF`, `RERUN_BOOTSTRAP`, and `RERUN_CONNECT`. The test was updated to the current contract in commit `4fa941663bbc5b35cf8b240c0acd18f95511d4fe`, then the entire suite passed 38/38.
-
-## Browser E2E
+## Stable verified baseline
 
 | Task | Result | Evidence |
 |---|---|---|
-| V02-001 tab-scoped panel/storage | PASS | User confirmed two ChatGPT tabs remained separated. |
-| V02-002 same-stream collision guard | PASS | Duplicate watcher Start on the same GitHub stream was rejected. |
-| V02-003 core dispatch/retry regression | PASS | New-sequence dispatch and same-sequence retry occurred only on the owning tab; other-tab counters remained isolated. |
-| V02-004 Continue in new chat | PASS | User confirmed fresh-chat GitHub-backed handoff worked. |
-| V02-005 handoff race/failure safeguards | PASS | Live successful handoff plus source-verified `handoffPending` suppression, pre-transfer cleanup, post-transfer `handoff_send_failed`, and terminal refusal without watcher shutdown. |
-| V02-006 persistent watcher across terminal GitHub states | PASS | Watcher stayed Watching under `needs_user`; same-sequence `needs_user -> continue` caused automatic resume with no additional Start. |
-| V02-007 unified Start/Stop watcher toggle | PASS | User confirmed explicit `Stop -> Stopped/Start -> Start -> Watching/Stop` round trip. |
-| V02-008 unconnected-first onboarding | PASS | User reported the complete requested v0.2.5 new-project probe succeeded: true Unconnected start, safe pre-GitHub connection behavior, actual-repo connection flow, Rerun setup, connection confirmation, and Start-driven first-task flow. |
+| V02-001 tab-scoped panel/storage | PASS | User-confirmed tab isolation. |
+| V02-002 same-stream collision guard | PASS | Duplicate watcher Start rejected. |
+| V02-003 dispatch/retry regression | PASS | New/same-sequence dispatch worked on owning tab only. |
+| V02-004 fresh-chat handoff baseline | PASS | Earlier live ownership transfer succeeded. |
+| V02-005 handoff race/failure safeguards | PASS | Live success + source-verified suppression/cleanup paths. |
+| V02-006 persistent watcher | PASS | `needs_user` kept watcher Watching; later same-seq `continue` auto-resumed. |
+| V02-007 Start/Stop watcher | PASS | User-confirmed Stop -> Start round trip. |
+| V02-008 unconnected-first onboarding | PASS | User completed the separate-project onboarding probe. |
 
-## V02-008 final acceptance
+## V02-009 regression 1 — prompt inserted but not submitted
 
-The final v0.2.5 onboarding contract was tested on a separate new-project path. The requested probe covered:
+The user observed that Start could place the resume prompt in the composer without actually sending it. This is a product failure because automatic dispatch includes both prompt insertion and submission.
 
-1. a new ChatGPT tab beginning with repository connection `Unconnected` rather than inheriting another tab's coordinates;
-2. connection discovery being based on actual current-conversation GitHub usage rather than Side Panel hints;
-3. safe no-write behavior before an actual project repository is connected;
-4. connection after actual GitHub project use, including installation/repair of `.chatgpt-rerun/README.md`, `PLAN.md`, `STATE.md`, `STATUS.md`, and `control.json`;
-5. connection turn ending before implementation work;
-6. user-confirmable connection coordinates followed by Side Panel Save/Start;
-7. watcher-driven first task execution from GitHub control.
+v0.2.6 changed `content.js` to synchronize input state, wait longer for Send, use Enter fallback, and require observable dispatch evidence before ACK. Targeted auto-submit tests passed 4/4, but live browser verification remained pending.
 
-The user reported `다 됐어.` after running the requested final sequence. This is the browser acceptance evidence for V02-008.
+## V02-009 regression 2 — new chat did not auto-restart
 
-## Key design evidence retained from the run
+The user then reported that automatic restart in a new chat was not working. Source inspection found a separate stale architectural rule in `background.js`:
 
-- Per-tab config/runtime/draft isolation is browser-verified.
-- Same GitHub stream cannot be watched by two tabs at once.
-- GitHub work state and Chrome watcher state are independent.
-- `complete`, `needs_user`, and `blocked` pause dispatch but do not stop a watcher.
-- A later `continue`, including same-sequence terminal -> continue, can auto-resume without a second Start.
-- One state-driven watcher control renders Start or Stop from the current tab runtime.
-- `Rerun 연결 프롬프트` uses actual conversation GitHub usage and supports `UNCONNECTED`, `AMBIGUOUS`, and `CONNECTED` outcomes.
-- The extension does not scrape assistant output to infer repo coordinates or token-limit text.
-- New-chat handoff restores from GitHub state rather than copying conversation history.
-- Human-readable `.chatgpt-rerun/STATUS.md` remains presentation-only and is not used for reconciliation.
+- `Continue in new chat` fetched control and rejected handoff whenever `control.status !== "continue"`.
+
+This conflicted with the v0.2.4 watcher model, where watcher ownership is independent of GitHub work status.
+
+### v0.2.7 fix
+
+- Removed the terminal-status handoff rejection.
+- `Continue in new chat` now transfers watcher ownership under `continue`, `complete`, `needs_user`, and `blocked`.
+- The handoff prompt now contains owner/repo, branch, control path, run_id, sequence, status, and task_id.
+- `continue`: new chat reconciles GitHub and resumes unfinished work.
+- terminal status: new chat restores repo/run context only, starts no implementation, and leaves its watcher polling.
+- A later valid `continue` is expected to auto-resume in the new chat without another Start.
+- v0.2.6 robust direct-prompt submission is used by `RERUN_HANDOFF` as well.
+
+## v0.2.7 validation so far
+
+| Check | Result | Evidence |
+|---|---|---|
+| Remote `background.js` terminal handoff gate removed | PASS | Current branch proceeds from `fetchControl` to ownership transfer without `status !== continue` rejection. |
+| Status-aware handoff prompt | PASS | Targeted local function check: `continue` resumes, terminal restores context/waits. |
+| `tests/watcher-flow.test.mjs` updated | COMMITTED | Expects status-independent watcher handoff. |
+| `tests/handoff-status.test.mjs` | COMMITTED | Covers continue/needs_user/complete/blocked prompt behavior. |
+| v0.2.7 full npm suite | NOT_RUN | Container cannot resolve github.com for a complete branch checkout. |
+| Browser current-tab auto-submit | NOT_RUN | Requires v0.2.7 Reload. |
+| Browser fresh-chat `continue` handoff | NOT_RUN | Requires v0.2.7 Reload. |
+| Browser terminal handoff + later `continue` | NOT_RUN | Requires v0.2.7 Reload. |
+
+## Next browser probe
+
+1. Reload unpacked ChatGPT Rerun v0.2.7.
+2. Confirm the connected tab watcher can be Watching while GitHub work state is `needs_user`.
+3. Use **Continue in new chat** while status is terminal.
+4. Expected: handoff is not rejected; a fresh tab opens; handoff prompt is automatically submitted; context is restored but implementation does not start; new tab watcher remains Watching.
+5. Change GitHub to a valid `continue` without pressing Start again.
+6. Expected: the new tab automatically submits the standard resume prompt and begins work.
+7. Also verify a direct current-tab `continue` dispatch auto-submits rather than merely pasting text.
 
 ## Completion assessment
 
-All V02-001 through V02-008 acceptance items are verified, latest v0.2.5 syntax checks pass, the complete test suite passes 38/38, JSON validation passes, and no unresolved blocker remains.
-
-**Dogfood result: PASS.**
+V02-001~008 remain verified. V02-009 is **not yet PASS** until the v0.2.7 browser probes demonstrate actual prompt submission and fresh-chat automatic restart behavior.

@@ -2,7 +2,7 @@
 
 ## Scope
 
-v0.2는 구조 변경을 단계적으로 dogfood한다. v0.2.1은 단일 Start/Stop watcher 토글, v0.2.2는 missing-control bootstrap fallback, v0.2.3은 명시적 Rerun 연결 프롬프트, v0.2.4는 Chrome watcher와 GitHub work state 분리, v0.2.5는 unconnected-first onboarding, v0.2.6은 자동 prompt submission 보강, v0.2.7은 fresh-chat handoff를 GitHub work status와 분리, v0.2.8~0.2.9는 exhausted-chat 자동 handoff를 보강했고, v0.2.10은 GitHub REST rate limit을 watcher Stop이 아닌 자동 polling pause로 처리한다.
+v0.2는 구조 변경을 단계적으로 dogfood한다. v0.2.1은 단일 Start/Stop watcher 토글, v0.2.2는 missing-control bootstrap fallback, v0.2.3은 명시적 Rerun 연결 프롬프트, v0.2.4는 Chrome watcher와 GitHub work state 분리, v0.2.5는 unconnected-first onboarding, v0.2.6은 자동 prompt submission 보강, v0.2.7은 fresh-chat handoff를 GitHub work status와 분리, v0.2.8~0.2.9는 exhausted-chat 자동 handoff를 보강했고, v0.2.10은 GitHub REST rate limit을 watcher Stop이 아닌 자동 polling pause로 처리한다. v0.2.11은 fresh same-sequence authorization을 복구하고, v0.2.12는 lifetime `Max sends` cap을 제거하며, v0.2.13은 GitHub action-confirmation 대기 중 retry를 억제하고 수동 승인 후 자동 재개한다.
 
 검증 대상:
 
@@ -17,6 +17,8 @@ v0.2는 구조 변경을 단계적으로 dogfood한다. v0.2.1은 단일 Start/S
 9. 자동 dispatch가 prompt 삽입뿐 아니라 실제 제출까지 완료하는가.
 10. fresh-chat handoff가 `continue/complete/needs_user/blocked` 어느 상태에서도 watcher ownership을 이관하고 상태에 맞는 동작을 하는가.
 11. GitHub REST rate limit이 watcher를 끄거나 Start를 실패시키지 않고, 안전한 pause/resume으로 처리되는가.
+12. deliberate fresh authorizations가 lifetime send 횟수에 막히지 않는가.
+13. GitHub action confirmation이 대기 중일 때 Rerun이 중복 retry하지 않고, 사용자가 승인한 뒤 자동 재개하는가.
 
 ## Run gate
 
@@ -119,16 +121,30 @@ PASS-C: fresh-chat watcher ownership은 GitHub work status와 독립적이다.
 
 ### D. GitHub REST rate-limit resilience
 
-1. 최신 v0.2.10을 Reload한다.
-2. GitHub API quota가 이미 exhausted된 상태에서 Start할 수 있으면 그 상태로 Start한다.
+1. 최신 extension을 Reload한다.
+2. GitHub API quota가 exhausted된 상태에서 Start할 수 있으면 그 상태로 Start한다.
 3. expected: watcher가 `Watching`을 유지하고 버튼이 `Stop`이며 `API polling = Paused until ...`로 표시된다.
-4. red error `GitHub API rate limit reached; wait for reset or use a token` 때문에 Start로 되돌아가면 FAIL이다.
+4. red fatal rate-limit error 때문에 Start로 되돌아가면 FAIL이다.
 5. reset/retry 시각이 지나면 watcher를 다시 Start하지 않아도 polling을 자동 재개하는지 확인한다.
-6. quota가 이미 reset되어 재현이 어렵다면 token 없는 상태에서 `API polling = Public · rate-safe`를 확인한다.
+6. quota가 reset되어 재현이 어렵다면 token 없는 상태에서 `API polling = Public · rate-safe`를 확인한다.
 7. GitHub token을 사용하는 경우 `API polling = Authenticated · conditional`을 확인하고 Poll seconds 5~10 설정이 허용되는지 확인한다.
 8. 여러 unauthenticated watcher가 있으면 effective polling이 watcher 수에 따라 보수적으로 느려져 aggregate public request budget을 보호해야 한다.
 
 PASS-D: GitHub API의 서버-side rate limit은 준수하지만, 그 제한 때문에 Rerun watcher가 꺼지거나 사용자가 Start를 반복해야 하지 않는다.
+
+### E. GitHub action-confirmation wait and manual-approval resume
+
+1. v0.2.13을 Reload한다.
+2. Side Panel에서 **GitHub 승인 후 자동 계속**을 체크하고 `Save connection`을 누른다.
+3. GitHub write action이 `ChatGPT가 GitHub을(를) 사용하도록 허용할까요?` 형태의 action-confirmation 카드를 띄우게 한다.
+4. 카드를 승인하지 않은 채 retry delay보다 오래 기다린다.
+5. expected: Rerun은 승인 카드가 보이는 동안 `POLL`을 보내지 않아 동일 control의 resume prompt를 중복 전송하지 않는다.
+6. expected: Rerun은 `허용하기`, `대화에서 허용하기`, `Allow` 버튼/드롭다운을 자동 클릭하지 않는다.
+7. 사용자가 직접 승인한다.
+8. 카드가 사라지면 기본 2초 content tick 안팎에서 Rerun polling이 자동 재개되고, watcher를 다시 Start할 필요가 없어야 한다.
+9. 새 채팅 handoff 뒤에도 config가 복사되므로 같은 옵션이 유지되는지 확인한다.
+
+PASS-E: 승인 결정은 사용자에게 남아 있고, 승인 대기 때문에 Rerun이 중복 retry하거나 수동 Start를 요구하지 않는다.
 
 ## Start fallback regression
 
@@ -137,12 +153,14 @@ PASS-D: GitHub API의 서버-side rate limit은 준수하지만, 그 제한 때�
 ## Pass criteria
 
 - 기존 V02-001~008 verified evidence는 영향 없는 한 유지한다.
-- V02-009 A/B/C/D의 실행 가능한 실제 browser evidence가 기록된다.
+- V02-009 A/B/C/D/E의 실행 가능한 실제 browser evidence가 기록된다.
 - 자동 dispatch는 prompt paste가 아니라 실제 submission까지 포함한다.
 - exhausted chat은 사용자 draft를 훼손하지 않으면서 한 번의 fresh-chat handoff로 복구한다.
 - new-chat handoff는 terminal GitHub status 때문에 거부되지 않는다.
 - terminal handoff는 구현을 시작하지 않고 watcher를 유지한다.
 - GitHub rate limit은 watcher Stop이 아니라 pause/resume으로 처리한다.
+- lifetime send count는 valid authorization을 막지 않는다.
+- GitHub action confirmation은 자동 클릭하지 않고, 승인 대기 중 duplicate retry를 억제하며 수동 승인 후 자동 재개한다.
 - 이후 `continue`는 새 채팅에서 Start 재클릭 없이 자동 재개된다.
 - handoff 실패/중복 race guard는 유지된다.
 - 각 ChatGPT 실행은 20분 hard stop 정책을 따른다.

@@ -23,6 +23,7 @@ Dogfood the Chrome extension against this repository itself and produce real E2E
 - Do not mark an E2E task PASS without observed evidence.
 - Do not merge PR #1 as part of this automated run.
 - State writes must use PLAN -> STATE -> control.json ordering.
+- 한 번의 ChatGPT 실행(turn)은 시작부터 종료까지 20분 hard stop을 넘기지 않는다. 약 18분부터 체크포인트를 우선하고, 미완료면 같은 sequence에서 다음 실행으로 재개한다.
 
 ## Validation Baseline
 

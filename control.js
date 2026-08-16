@@ -1,5 +1,4 @@
 export const CONTROL_STATUSES = new Set([
-  "working",
   "continue",
   "complete",
   "needs_user",
@@ -13,15 +12,20 @@ export const DEFAULT_SETTINGS = Object.freeze({
   branch: "main",
   path: ".chatgpt-rerun/control.json",
   githubToken: "",
-  resumePrompt: "진행",
+  resumePrompt: "Proceed. First read .chatgpt-rerun/README.md in the configured GitHub repository, follow its read order, and resume the current sequence from GitHub state without repeating verified work.",
   pollIntervalSeconds: 60,
+  retryDelaySeconds: 120,
+  maxRetriesPerSequence: 2,
   maxRuns: 20,
   targetTabId: null,
   runCount: 0,
   lastRunId: null,
   lastHandledSequence: -1,
+  lastSentAt: null,
+  sameSequenceRetryCount: 0,
   pendingSequence: null,
   pendingRunId: null,
+  pendingIsRetry: false,
   stopReason: null,
   lastError: null,
   lastStatus: null,
@@ -43,6 +47,20 @@ export function parseControlPayload(text) {
     throw new Error("control.json must contain a JSON object");
   }
 
+  const allowedKeys = new Set([
+    "version",
+    "run_id",
+    "sequence",
+    "status",
+    "reason",
+    "updated_at",
+    "task_id"
+  ]);
+  const unknownKeys = Object.keys(value).filter((key) => !allowedKeys.has(key));
+  if (unknownKeys.length) {
+    throw new Error(`control.json contains unsupported fields: ${unknownKeys.join(", ")}`);
+  }
+
   if (value.version !== 1) {
     throw new Error("control.json version must be 1");
   }
@@ -59,12 +77,26 @@ export function parseControlPayload(text) {
     throw new Error(`Unsupported control status: ${String(value.status)}`);
   }
 
+  if (typeof value.updated_at !== "string" || !Number.isFinite(Date.parse(value.updated_at))) {
+    throw new Error("control.json updated_at must be an ISO-8601 date-time string");
+  }
+
+  if (value.reason !== undefined && typeof value.reason !== "string") {
+    throw new Error("control.json reason must be a string when present");
+  }
+
+  if (value.task_id !== undefined && (typeof value.task_id !== "string" || value.task_id.trim() === "")) {
+    throw new Error("control.json task_id must be a non-empty string when present");
+  }
+
   return {
     version: 1,
     runId: value.run_id,
     sequence: value.sequence,
     status: value.status,
-    reason: typeof value.reason === "string" ? value.reason : ""
+    reason: typeof value.reason === "string" ? value.reason : "",
+    updatedAt: value.updated_at,
+    taskId: typeof value.task_id === "string" ? value.task_id : ""
   };
 }
 
@@ -74,6 +106,20 @@ export function effectivePollInterval(seconds, hasToken) {
   if (!Number.isFinite(parsed)) return fallback;
   const minimum = hasToken ? 5 : 60;
   return Math.max(minimum, Math.floor(parsed));
+}
+
+export function effectiveRetryDelay(seconds, pollIntervalSeconds) {
+  const poll = Math.max(1, Math.floor(Number(pollIntervalSeconds) || 60));
+  const parsed = Number(seconds);
+  const fallback = Math.max(120, poll + 5);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(poll + 5, Math.floor(parsed));
+}
+
+export function normalizeMaxRetries(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 2;
+  return Math.min(10, Math.max(0, Math.floor(parsed)));
 }
 
 export function normalizeMaxRuns(value) {

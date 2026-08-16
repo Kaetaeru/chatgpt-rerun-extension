@@ -29,6 +29,14 @@ test("side panel shows repository connection separately from watcher and GitHub 
   assert.match(script, /"continue · start"/);
 });
 
+test("rate-limit UI shows polling mode instead of raw quota counters", () => {
+  assert.match(html, /API polling/);
+  assert.doesNotMatch(html, /Rate remaining/);
+  assert.match(script, /Authenticated · conditional/);
+  assert.match(script, /Public · rate-safe/);
+  assert.match(script, /API pause until/);
+});
+
 test("new tabs do not inherit an unrelated legacy repository connection", () => {
   assert.match(script, /const ownsLegacySession = Number\(legacy\.targetTabId\) === tabId/);
   assert.match(script, /if \(ownsLegacySession\) \{[\s\S]*legacy\[key\]/);

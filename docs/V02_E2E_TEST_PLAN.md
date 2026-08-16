@@ -2,7 +2,7 @@
 
 ## Scope
 
-v0.2는 v0.1 dogfood 중간에 구조가 바뀌었으므로 이전 run의 남은 E2E-003/004를 그대로 이어서 PASS 처리하지 않는다. v0.1에서 관찰된 evidence는 보존하되, 현재 head는 새 run으로 다시 검증한다. v0.2.1은 같은 run에서 Side Panel Start/Stop UX를 단일 상태 기반 토글로 단순화했고, v0.2.2는 Rerun 상태가 없는 접근 가능한 GitHub 저장소를 Start 시 자동 bootstrap한다.
+v0.2는 v0.1 dogfood 중간에 구조가 바뀌었으므로 이전 run의 남은 E2E-003/004를 그대로 이어서 PASS 처리하지 않는다. v0.1에서 관찰된 evidence는 보존하되, 현재 head는 새 run으로 다시 검증한다. v0.2.1은 Side Panel Start/Stop UX를 단일 상태 기반 토글로 단순화했고, v0.2.2는 표준 control이 없는 저장소의 안전한 Start fallback bootstrap을 추가했다. v0.2.3은 프로젝트 시작 시 ChatGPT가 이미 알고 있는 GitHub 저장소에 Rerun 문서를 먼저 설치하는 명시적 **Rerun 연결 프롬프트**를 기본 온보딩으로 추가한다.
 
 검증 대상:
 
@@ -14,7 +14,7 @@ v0.2는 v0.1 dogfood 중간에 구조가 바뀌었으므로 이전 run의 남은
 6. 새 채팅이 이전 대화 본문 없이 GitHub STATE에서 재개하는가.
 7. terminal `complete`가 해당 탭 세션만 중지하는가.
 8. 실행 상태에 따라 하나의 session control이 `Start`와 `Stop` 사이에서 정확히 전환되는가.
-9. 기본 control이 없는 새 저장소에서 Start가 표준 5파일을 먼저 만들고 일반 Rerun으로 자동 전환하는가.
+9. 새 프로젝트에서 `Rerun 연결 프롬프트`가 현재 대화가 이미 알고 있는 GitHub repo를 사용해 표준 5파일을 생성/보완하고, 그 뒤 Start가 정상 첫 task를 실행하는가.
 
 ## Run gate
 
@@ -78,7 +78,7 @@ PASS: 동일 GitHub workflow의 소유권이 A에서 C로 한 번만 이동하�
 
 ## V02-007 — unified Start/Stop session toggle
 
-1. 최신 v0.2.2 unpacked extension을 Reload한다.
+1. 최신 v0.2.3 unpacked extension을 Reload한다.
 2. 현재 ChatGPT 탭이 Stopped인 상태에서 Side Panel footer를 확인한다.
 3. session control이 정확히 하나이고 텍스트가 `Start`인지 확인한다. 별도 `Stop` 버튼은 없어야 한다.
 4. `Start`를 누른다.
@@ -89,24 +89,25 @@ PASS: 동일 GitHub workflow의 소유권이 A에서 C로 한 번만 이동하�
 
 PASS: `runtime.enabled`를 기준으로 단일 session control이 `Start -> Stop -> Start`로 전환되고 실제 현재-tab Start/Stop 동작과 일치한다.
 
-## V02-008 — automatic repository bootstrap
+## V02-008 — explicit Rerun connection prompt onboarding
 
-준비: 테스트용 GitHub 저장소/branch는 확장프로그램의 현재 read 인증으로 접근 가능해야 하고 `.chatgpt-rerun/control.json`이 없어야 한다. 기존 실제 프로젝트의 상태 파일을 삭제해서 테스트하지 말고 별도 빈/테스트 저장소를 사용한다.
+준비: ChatGPT 대화가 이미 하나의 GitHub 프로젝트 repo/branch를 실제로 사용하고 있어 어느 저장소인지 대화 맥락에서 명확해야 한다. 테스트는 별도 안전한 프로젝트에서 수행하고 기존 active Rerun run을 파괴하지 않는다.
 
-1. Side Panel에서 Owner/Repository/Branch를 테스트 저장소로 설정하고 Control file은 기본 `.chatgpt-rerun/control.json`으로 둔다.
-2. `Start`를 누른다.
-3. Side Panel이 `Initializing repository` 상태를 보여주고 같은 버튼은 Running semantics의 `Stop`으로 바뀌는지 확인한다.
-4. ChatGPT에 repository bootstrap 프롬프트가 한 번 자동 전송되는지 확인한다.
-5. prompt가 대상 repo/branch를 명시하고 README / PLAN / STATE / STATUS / control 다섯 파일, 20분 policy, STATUS freshness, control-last 규칙을 요구하는지 확인한다.
-6. ChatGPT가 대상 저장소에 표준 `.chatgpt-rerun` 파일을 생성/보완하는지 확인한다.
-7. `control.json`이 마지막 authoritative write이며 version 1 / sequence 0 / `continue` / 실제 first task로 생성되는지 확인한다.
-8. bootstrap turn 자체는 첫 구현 task를 수행하지 않고 끝나는지 확인한다.
-9. control 생성 후 확장프로그램이 일반 resume prompt를 자동 전송하고 첫 task execution을 시작하는지 확인한다.
-10. `.chatgpt-rerun/STATUS.md`가 사람이 읽을 수 있는 초기 현황을 보여주는지 확인한다.
-11. 같은 테스트에서 custom missing control path는 자동 bootstrap되지 않고 오류가 나는지 확인한다.
-12. 존재하지 않거나 현재 GitHub read 인증으로 접근 불가능한 repo/branch의 404를 bootstrap 대상으로 오인하지 않는지 확인한다.
+1. Rerun runtime이 Stopped인 상태에서 Side Panel의 **Rerun 연결 프롬프트**를 누른다.
+2. Owner/Repository 입력이 비어 있어도 현재 대화가 이미 알고 있는 GitHub repo를 먼저 식별하라는 프롬프트가 전송되는지 확인한다.
+3. repo 후보가 둘 이상이거나 불명확하면 파일을 쓰지 않고 사용자에게 확인하도록 하는지 확인한다.
+4. 대상 repo가 확정되면 README / PLAN / STATE / STATUS / control 다섯 문서를 생성하거나 안전하게 보완하도록 요구하는지 확인한다.
+5. 기존 `.chatgpt-rerun` active run이 있으면 run_id/sequence/task/검증 기록을 초기화하거나 덮어쓰지 않도록 하는지 확인한다.
+6. 새 프로젝트에서는 실제 프로젝트 목표 기반 PLAN, 새 run_id/sequence 0 STATE, human-readable STATUS를 만들고 control을 마지막 authoritative write로 `continue` 게시하는지 확인한다.
+7. 연결 프롬프트 turn 자체는 실제 구현 task를 시작하지 않고 종료하는지 확인한다.
+8. 그 뒤 Side Panel에 실제 owner/repo/branch를 확인하고 `Start`를 누르면 표준 resume prompt가 첫 task execution을 시작하는지 확인한다.
+9. Rerun 실행 중에는 연결 프롬프트 버튼이 비활성화되어 active run 중간에 재초기화를 시도하지 못하는지 확인한다.
 
-PASS: 사용자가 미리 Rerun 파일을 만들지 않아도 기본 Start 한 번으로 안전한 bootstrap이 먼저 수행되고, 그 결과 control이 생긴 뒤 정상 자동 실행으로 전환된다. custom path/접근 오류는 자동 생성하지 않는다.
+PASS: 프로젝트 시작 시 별도 scaffold 수작업 없이 한 번의 명시적 연결 프롬프트로 현재 대화의 GitHub 프로젝트에 Rerun 표준 문서를 설치/보완하고, 그 후 Start가 정상 실행을 시작한다.
+
+### Start fallback regression
+
+v0.2.2의 안전한 자동 bootstrap은 보조 경로로 유지한다. 사용자가 연결 프롬프트를 건너뛰고 기본 `.chatgpt-rerun/control.json`이 없는 접근 가능한 repo에서 Start한 경우에만 기존 bootstrap이 동작한다. custom missing control path와 접근 불가능한 repo/branch는 자동 생성하지 않는다는 기존 안전장치를 유지한다.
 
 ## Pass criteria
 
@@ -117,6 +118,8 @@ PASS: 사용자가 미리 Rerun 파일을 만들지 않아도 기본 Start 한 �
 - handoff 동안 중복 자동 전송이 없다.
 - 기존 dispatch/retry/terminal 동작에 regression이 없다.
 - 단일 Start/Stop session toggle의 표시 상태와 실제 runtime 상태가 일치한다.
-- 새 저장소 bootstrap은 기본 control path + 접근 가능한 repo/branch에서만 실행된다.
-- bootstrap은 README / PLAN / STATE / STATUS / control을 만들고 control을 마지막에 게시한다.
+- 새 프로젝트의 기본 온보딩은 `Rerun 연결 프롬프트 -> 문서 설치/보완 -> Start`다.
+- 연결 프롬프트는 현재 대화의 GitHub repo 맥락을 우선하며 불명확한 대상을 추측하지 않는다.
+- README / PLAN / STATE / STATUS / control을 만들고 control을 마지막 authoritative write로 게시한다.
+- Start fallback bootstrap은 표준 path + 접근 가능한 repo/branch에서만 실행된다.
 - 각 ChatGPT 실행은 20분 hard stop 정책을 따른다.

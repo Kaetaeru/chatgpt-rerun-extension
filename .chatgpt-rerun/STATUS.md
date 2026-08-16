@@ -6,37 +6,36 @@
 
 | Item | Current |
 |---|---|
-| Last updated | `2026-08-16T14:39:00Z` (23:39 KST) |
+| Last updated | `2026-08-16T14:51:00Z` (23:51 KST) |
 | Run | `chatgpt-rerun-v02-20260816-01` |
 | Sequence | `5` |
 | Control status | `needs_user` |
 | Current task | `V02-007` |
 | Activity | Waiting for user Reload |
-| Extension version to verify | `0.2.2` |
+| Extension version to verify | `0.2.3` |
 | Overall dogfood | IN_PROGRESS |
 
 ## 지금 무슨 일이 진행 중인가
 
-최신 v0.2.2에는 두 가지 새 동작이 함께 들어가 있습니다.
+v0.2.3에서 새 프로젝트 온보딩을 더 명시적으로 바꿨습니다.
 
-1. Side Panel의 실행 제어는 별도 Start/Stop 버튼이 아니라 하나의 상태 기반 버튼입니다: `Stopped -> Start`, `Running -> Stop`, Stop 후 다시 `Start`.
-2. 다른 GitHub 저장소에서 기본 `.chatgpt-rerun/control.json`이 없더라도 사용자가 미리 상태 파일을 만들 필요가 없습니다. Start가 먼저 안전한 repository bootstrap을 실행하고, 표준 상태가 준비되면 일반 Rerun을 자동 시작합니다.
+프로젝트를 처음 시작할 때 GitHub 저장소는 이미 있고, 현재 ChatGPT 대화도 어떤 repo에서 작업 중인지 알고 있다는 전제를 사용합니다. Side Panel의 **Rerun 연결 프롬프트**를 누르면 현재 채팅에 setup prompt가 전송되고, ChatGPT가 그 repo에 Rerun 표준 문서를 먼저 설치/보완합니다.
 
-현재 코드는 반영됐지만 로컬 Chrome은 새 build를 Reload해야 하므로 자동 실행은 `needs_user`로 정지되어 있습니다.
+권장 흐름:
 
-## 새 저장소에서 Start하면
+`프로젝트 repo가 이미 연결된 ChatGPT 대화` → `Rerun 연결 프롬프트` → `.chatgpt-rerun/README.md / PLAN.md / STATE.md / STATUS.md / control.json` 생성·보완 → 연결 prompt 종료 → Side Panel repo 좌표 확인 → `Start` → 첫 task 실행
 
-대상 repo/branch가 현재 확장프로그램 GitHub read 인증으로 실제 접근 가능하고 control path가 기본값일 때만:
+## 연결 프롬프트 안전장치
 
-`Start` → `Initializing repository` → ChatGPT bootstrap prompt 1회 → `.chatgpt-rerun/README.md` / `PLAN.md` / `STATE.md` / `STATUS.md` 생성·보완 → `control.json` 마지막 게시 → bootstrap turn 종료 → 확장프로그램이 control 감지 → 일반 resume prompt → 첫 task 시작
-
-안전 경계:
-
-- custom missing control path는 자동 생성하지 않음.
-- 접근할 수 없거나 존재하지 않는 repo/branch를 빈 프로젝트로 오인하지 않음.
-- 일부 Rerun 파일이 이미 있으면 무조건 덮어쓰지 않고 호환 가능한 누락 부분만 보완하도록 ChatGPT에 지시함.
-- Chrome extension token은 계속 read 용도이며, 실제 파일 쓰기는 연결된 ChatGPT GitHub 앱이 수행함.
-- bootstrap 중 normal sequence claim과 new-chat handoff를 억제함.
+- Owner/Repository 입력칸은 repo 식별의 필수 조건이 아니라 선택적 힌트입니다.
+- 현재 대화의 GitHub 맥락에서 repo/branch가 명확하면 그 대상을 사용합니다.
+- repo 후보가 둘 이상이거나 확신이 없으면 아무 파일도 쓰지 않고 사용자에게 확인합니다.
+- 기존 `.chatgpt-rerun` active run이 있으면 run_id / sequence / task / verification 기록을 초기화하거나 덮어쓰지 않습니다.
+- 새 프로젝트에서는 실제 프로젝트 목표를 PLAN/STATE에 반영하고 control을 마지막 authoritative write로 sequence 0 / `continue` 게시합니다.
+- STATUS는 사람용 projection으로 유지합니다.
+- 연결 프롬프트 자체에서는 실제 구현 task를 시작하지 않습니다. 실제 Rerun은 이후 Start가 시작합니다.
+- Rerun이 Running인 동안에는 연결 프롬프트 버튼이 비활성화됩니다.
+- v0.2.2의 Start 자동 bootstrap은 연결 프롬프트를 건너뛴 경우의 fallback으로만 유지됩니다.
 
 ## Progress
 
@@ -48,22 +47,22 @@
 | V02-004 새 채팅 이어가기 | PASS | `Continue in new chat`으로 GitHub 상태 기반 handoff 성공 |
 | V02-005 handoff race/failure 보호 | PAUSED | 최신 browser gates 이후 재개 |
 | V02-006 terminal isolation | PENDING | terminal 상태가 owning tab만 멈추는지 남음 |
-| V02-007 단일 Start/Stop 토글 | IN_PROGRESS | 코드/기존 정적 검증 있음, v0.2.2 Reload 후 실제 Chrome 확인 필요 |
-| V02-008 새 저장소 자동 bootstrap | PENDING | v0.2.2 Reload 후 별도 안전한 테스트 repo에서 확인 필요 |
+| V02-007 단일 Start/Stop 토글 | IN_PROGRESS | v0.2.3 Reload 후 실제 Chrome 확인 필요 |
+| V02-008 Rerun 연결 프롬프트 | PENDING | v0.2.3 Reload 후 별도 안전한 프로젝트에서 확인 필요 |
 
 ## 최근 확인된 것
 
-- manifest/package 버전이 `0.2.2`로 올라감.
-- `control.js`의 실제 업데이트된 bootstrap helper를 Node로 검사: 기본 control path 허용, custom path 거부, README/PLAN/STATE/STATUS/control 5파일 요구, control-last, bootstrap turn 종료 규칙 PASS.
-- Start 경로는 missing control을 곧바로 초기화하지 않고 repo/branch 접근 가능성을 별도로 확인함.
-- `bootstrapPending` 동안 동일 stream ownership을 유지하고 normal sequence claim을 막음.
-- `content.js`는 assistant 출력 내용을 읽지 않고 직접 bootstrap prompt만 전송함.
-- `tests/control.test.mjs`, `tests/bootstrap-flow.test.mjs`가 새 bootstrap 회귀 조건을 포함함.
-- 전체 최신 checkout `npm run check` / `npm test`는 현재 container가 github.com을 resolve하지 못해 아직 실행하지 못했으며 PASS로 기록하지 않음.
+- `manifest.json` / `package.json` 버전이 `0.2.3`으로 올라갔습니다.
+- `control.js`에 `buildRerunConnectionPrompt()`가 추가됐고 원격 소스를 다시 읽어 repo-context 식별, ambiguity refusal, 5-file setup, active-run preservation, control-last, stop-before-implementation 규칙을 확인했습니다.
+- Side Panel에 `Rerun 연결 프롬프트` 버튼이 추가됐습니다.
+- `popup.js`는 Stopped 상태에서만 `RERUN_CONNECT`를 보내며 필요하면 content script를 먼저 주입합니다.
+- `content.js`는 handoff/bootstrap과 같은 idle + empty-composer 안전 경로로 `RERUN_CONNECT`를 전송합니다.
+- control/popup UI 자동 회귀 테스트에 연결 프롬프트 contract와 wiring 검사가 추가됐습니다.
+- 전체 최신 checkout `npm run check` / `npm test`는 현재 container가 github.com/raw.githubusercontent.com을 resolve하지 못해 실행하지 못했으며 PASS로 기록하지 않습니다.
 
 ## 지금 사용자가 해야 할 것
 
-`chrome://extensions`에서 ChatGPT Rerun unpacked extension을 최신 `agent/mvp-autoresume`의 **v0.2.2**로 Reload합니다.
+`chrome://extensions`에서 ChatGPT Rerun unpacked extension을 최신 `agent/mvp-autoresume`의 **v0.2.3**으로 Reload합니다.
 
 Reload 후 먼저 현재 탭에서:
 
@@ -71,7 +70,7 @@ Reload 후 먼저 현재 탭에서:
 
 을 확인하면 V02-007을 닫을 수 있습니다.
 
-그 다음 V02-008은 **별도 안전한 GitHub 테스트 저장소/branch**에서 확인합니다. 그 저장소에는 `.chatgpt-rerun/control.json`이 없어야 하지만 저장소 자체를 확장프로그램이 읽을 수 있어야 합니다. 실제 프로젝트의 상태 파일을 삭제해서 테스트하지 않습니다.
+그 다음 별도 안전한 프로젝트 대화에서, 그 대화가 이미 GitHub repo를 알고 있는 상태로 `Rerun 연결 프롬프트`를 누릅니다. ChatGPT가 올바른 repo를 식별하고 5개 Rerun 문서를 생성/보완한 뒤 구현을 시작하지 않고 끝나는지 확인하면 V02-008을 검증할 수 있습니다.
 
 ## 그 다음 자동 작업
 
@@ -79,9 +78,9 @@ V02-007과 V02-008이 확인되면 현재 `needs_user` gate를 해제하고, 미
 
 ## Blockers / risks
 
-- 현재 blocker는 코드 문제가 아니라 **로컬 Chrome의 unpacked extension v0.2.2 Reload 필요**입니다.
-- V02-008에는 별도 안전한 테스트 repo/branch가 필요합니다.
-- ChatGPT GitHub 앱에 대상 저장소 쓰기 권한이 없다면 bootstrap은 파일을 게시할 수 없습니다. 확장프로그램이 승인 UI를 대신 누르거나 권한을 우회하지 않습니다.
+- 현재 blocker는 코드 문제가 아니라 **로컬 Chrome의 unpacked extension v0.2.3 Reload 필요**입니다.
+- V02-008에는 repo가 명확히 연결된 별도 안전한 프로젝트 대화가 필요합니다.
+- ChatGPT GitHub 앱에 대상 저장소 쓰기 권한이 없다면 연결 프롬프트는 파일을 게시할 수 없습니다. 확장프로그램이 승인 UI를 대신 누르거나 권한을 우회하지 않습니다.
 - `STATUS.md` 자체는 표시용 projection이므로 stale할 수 있으며 자동화 판단에는 사용하지 않습니다.
 
 ## Freshness policy

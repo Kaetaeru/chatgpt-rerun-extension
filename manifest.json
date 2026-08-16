@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Rerun",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "minimum_chrome_version": "116",
   "description": "Continue GitHub-backed ChatGPT workflows independently per tab and hand them off to a fresh chat when needed.",
   "permissions": ["storage", "activeTab", "sidePanel", "scripting"],

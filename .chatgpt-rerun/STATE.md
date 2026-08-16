@@ -6,33 +6,35 @@
 - Sequence: `9`
 - Desired control status: `needs_user`
 - Current task: `V02-009`
-- Control reason: `v0.2.9 fixes the stale Rerun prompt being mistaken for a user draft before automatic exhausted-chat handoff; reload before browser verification.`
-- Phase: `awaiting_v029_reload_and_stale_prompt_handoff_probe`
-- Last checkpoint (UTC): `2026-08-16T18:20:00Z`
-- Current execution started (UTC): `2026-08-16T18:20:00Z`
-- Current execution hard stop (UTC): `2026-08-16T18:40:00Z`
+- Control reason: `v0.2.10 keeps the watcher alive across GitHub REST rate limits with rate-safe polling and automatic reset/resume; reload before browser verification.`
+- Phase: `awaiting_v0210_reload_and_rate_limit_probe`
+- Last checkpoint (UTC): `2026-08-16T18:40:00Z`
+- Current execution started (UTC): `2026-08-16T18:40:00Z`
+- Current execution hard stop (UTC): `2026-08-16T19:00:00Z`
 
 ## Current Objective
 
-Verify V02-009 on v0.2.9. On an exhausted ChatGPT conversation, Start must not immediately fall back to Stopped merely because a previous Rerun resume prompt is still visible in the composer. If that composer text exactly matches the current Rerun resume prompt, the extension must treat it as extension-owned stale state and transfer the watcher to one fresh ChatGPT tab.
+Verify V02-009 on v0.2.10. GitHub REST rate limiting must no longer make Start fail or turn the watcher back off. The watcher must remain enabled, expose a temporary API polling pause, and resume automatically after the server-provided reset/retry deadline. After that gate, continue the exhausted-chat fresh-handoff probe from v0.2.9.
 
 ## Latest browser evidence
 
-The user re-tested v0.2.8 and reported: `다시 돌아왔어. 탭이 새로 안열렸어` — the control returned to Start again and no new tab opened.
+The user reported the exact Side Panel error: `GitHub API rate limit reached; wait for reset or use a token` and asked for Rerun to keep running without manual intervention.
 
-Inspection found a pre-handoff guard that explains this exact behavior. Before a sequence is claimed, `content.js` previously stopped on any non-empty composer with `composer_not_empty`. A resume prompt left behind by an earlier failed Rerun dispatch therefore looked indistinguishable from a user draft, so the watcher stopped before the v0.2.8 automatic handoff catch path could run.
+GitHub's unauthenticated REST budget is only 60 requests/hour. The previous unauthenticated minimum interval was exactly 60 seconds, so a single long-running watcher could consume the entire nominal budget before Start-time fetches, repository probes, multiple control streams, or any other traffic from the same public IP were counted.
 
-## v0.2.9 fix completed
+## v0.2.10 fix completed
 
-- `content.js` now reads existing composer text and compares normalized text with the current Rerun resume prompt.
-- Different non-empty text remains protected and triggers `composer_not_empty` exactly as before.
-- An exact Rerun-owned stale prompt no longer triggers the user-draft guard.
-- A stale Rerun-owned prompt immediately attempts the existing `HANDOFF_NEW_CHAT` path instead of retrying the exhausted chat.
-- If that handoff fails, the watcher safe-stops with `auto_handoff_failed` and the background error remains visible in the Side Panel.
-- Prompt/editor synchronization failure is also eligible for the one-shot fresh-chat fallback.
-- Fresh-chat direct handoff submission is still non-recursive, preventing runaway new-tab loops.
-- `tests/content-send.test.mjs` now asserts stale Rerun prompt vs user-draft separation and the direct stale-prompt handoff path.
-- Extension/package version bumped to `0.2.9`.
+- `control.js` changes the unauthenticated effective polling minimum to 90 seconds for one watcher and scales it by enabled unauthenticated watcher count (`90 * count`).
+- Authenticated polling retains a 5-second minimum.
+- `background.js` converts GitHub `403/429` rate-limit responses into a stored `rateLimitPausedUntil` deadline based on `Retry-After`, `X-RateLimit-Reset`, or the secondary-rate-limit fallback.
+- `poll()` returns `wait / rate_limit` while that deadline is active instead of throwing an ordinary watcher failure.
+- `startTabSession()` catches the rate-limit pause, leaves `runtime.enabled=true`, wakes the content script, and returns `rate_limited_wait`.
+- Once the deadline expires, the next normal poll clears the pause and retries automatically; the user does not need to press Start again.
+- Multiple unauthenticated watchers share a conservative aggregate request budget through dynamic interval scaling.
+- Fresh-chat handoff can fall back to cached control or runtime run/sequence/status while extension REST polling is paused, so API quota does not unnecessarily block context transfer.
+- Side Panel removes raw `Rate remaining` and shows `API polling`: `Public · rate-safe`, `Authenticated · conditional`, or `Paused until ...`.
+- New `tests/rate-limit-flow.test.mjs` plus control/popup regression updates are committed.
+- Manifest/package bumped to `0.2.10`.
 
 ## Verification
 
@@ -40,19 +42,23 @@ Inspection found a pre-handoff guard that explains this exact behavior. Before a
 |---|---|---|
 | V02-001~008 prior browser evidence | PASS | Retained. |
 | v0.2.8 exhausted-chat browser probe | FAIL | Start returned to Start; no fresh tab opened. |
-| Root cause source inspection | PASS | Pre-claim `composer_not_empty` guard ran before v0.2.8 auto-handoff. |
-| v0.2.9 remote source inspection | PASS | Exact current Rerun prompt is distinguished from other non-empty composer text and routed to handoff. |
-| v0.2.9 regression assertions | COMMITTED | `tests/content-send.test.mjs` covers stale prompt ownership and handoff. |
-| v0.2.9 exact latest full npm suite | NOT_RUN | No mounted latest checkout / GitHub clone access in this environment; do not claim full-suite PASS. |
-| v0.2.9 exhausted-chat browser handoff | NOT_RUN | Requires extension Reload and the user's same test case. |
+| v0.2.9 stale-prompt source/regression fix | COMMITTED | Browser probe was blocked by GitHub API rate limit. |
+| GitHub official rate-limit behavior | VERIFIED | Public REST 60/hour; authenticated user 5,000/hour; authorized conditional 304 does not consume primary quota. |
+| v0.2.10 remote source inspection | PASS | Rate-limit pause state, rate-safe interval scaling, and Start-wait path are committed. |
+| v0.2.10 regression tests | COMMITTED | control polling + popup UI + new rate-limit-flow assertions. |
+| v0.2.10 exact latest full npm suite | NOT_RUN | No GitHub Actions workflow; this runtime could not materialize the latest checkout for execution. |
+| v0.2.10 live browser rate-limit behavior | NOT_RUN | Requires extension Reload. |
+| v0.2.10 exhausted-chat fresh handoff | NOT_RUN | Continue after rate-limit gate. |
 
 ## Next Exact Action
 
-Reload the unpacked extension at v0.2.9. On the same exhausted chat, leave the stale Rerun resume prompt in the composer if it is still present and press Start with a valid `continue` work signal. Expected: one fresh ChatGPT tab opens, watcher ownership transfers, and the fresh-chat handoff prompt is submitted. If the composer contains different user-authored text, expected behavior remains a safe Stop.
+Reload unpacked ChatGPT Rerun v0.2.10. On the same connected test tab press Start. If GitHub quota is still exhausted, expected: `Tab watcher = Watching`, button = `Stop`, and `API polling = Paused until ...` with no red rate-limit error. If the quota has already reset, expected: `API polling = Public · rate-safe` without a token or `Authenticated · conditional` with a token. Then continue the exhausted-chat Start/handoff test; a stale Rerun-owned prompt should route to one fresh ChatGPT tab.
 
 ## Do Not Repeat
 
 - Do not repeat V02-001 through V02-008.
+- Do not claim the GitHub server API is literally unlimited; respect its reset/retry contract.
+- Do not turn GitHub rate limiting into watcher Stop or require repeated Start clicks.
 - Do not parse assistant output or limit-warning text.
 - Do not overwrite a non-empty composer unless its normalized text exactly equals the configured Rerun resume prompt.
 - Do not recursively open fresh chats if the direct handoff prompt fails in the fresh tab.
@@ -61,4 +67,5 @@ Reload the unpacked extension at v0.2.9. On the same exhausted chat, leave the s
 
 ## Blockers / User Decisions
 
-- User action required: Reload unpacked extension to v0.2.9 and repeat the exhausted-chat Start probe.
+- User action required: Reload unpacked extension to v0.2.10 and repeat Start on the connected test tab.
+- Optional for uninterrupted fast polling: enter a GitHub token and use Poll seconds 5–10.

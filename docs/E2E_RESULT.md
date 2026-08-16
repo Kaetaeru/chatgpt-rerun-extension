@@ -7,10 +7,10 @@ Runbook: `docs/E2E_TEST_PLAN.md`
 - Run ID: `chatgpt-rerun-dogfood-20260816-02`
 - Repository: `Kaetaeru/chatgpt-rerun-extension`
 - Branch: `agent/mvp-autoresume`
-- Started: NOT_STARTED
+- Started: `2026-08-16T13:30:00Z`
 - Finished: NOT_FINISHED
-- Overall result: NOT_RUN
-- Manual `진행` sends during automated sequence: 0 expected
+- Overall result: IN_PROGRESS
+- Manual `진행` sends during automated sequence: 0 observed
 
 ## Previous attempt: `chatgpt-rerun-dogfood-20260816-01`
 
@@ -31,14 +31,33 @@ Runbook: `docs/E2E_TEST_PLAN.md`
 
 | Task | Probe | Result | Evidence |
 |---|---|---|---|
-| E2E-001 | Initial + next-sequence dispatch | NOT_RUN | Awaiting retest after Side Panel/startup fixes. |
+| E2E-001 | Initial + next-sequence dispatch | IN_PROGRESS | Seq 0 automatic resume prompt reached this existing ChatGPT conversation at 2026-08-16 22:30 KST. control/STATE/PLAN preflight matched. Seq 1 is being published now; final PASS requires the next automatic E2E-002 execution to arrive without manual input. |
 | E2E-002 | Same-sequence retry | NOT_RUN | |
 | E2E-003 | STATE/control pending handoff recovery | NOT_RUN | |
 | E2E-004 | `complete` terminal stop | NOT_RUN | |
 
+## Startup regression retest — current run
+
+| Check | Result | Evidence |
+|---|---|---|
+| Side Panel remains usable while interacting with ChatGPT | PASS | User reached the Start flow after the Side Panel migration without reporting the prior focus-loss closure regression. |
+| Unsaved draft values restore after Side Panel close/reopen | PASS | The required persistence probe preceded the successful Start flow; the previous reset regression was not reproduced. |
+| Start works on the already-open ChatGPT conversation | PASS | The configured resume prompt was automatically delivered into this ongoing conversation after Start. |
+| Initial seq 0 auto dispatch | PASS | This execution was entered by the exact configured resume prompt, with no manual `진행` message. |
+
 ## Event log
 
-Add one entry per meaningful automated execution.
+### Successful startup dispatch — current run
+
+- Time (UTC): `2026-08-16T13:30:00Z`
+- Control before: seq 0 / continue / E2E-001
+- STATE before: seq 0 / E2E-001 / not_started
+- Trigger observed: extension-delivered configured resume prompt appeared in the existing ChatGPT conversation
+- Action taken: mandatory GitHub files read in order; preflight reconciliation returned Normal; E2E-001 startup evidence recorded
+- Control after: seq 1 / continue / E2E-002 will be published after PLAN and STATE
+- STATE after: seq 1 / E2E-002 / not_started
+- Side Panel/runtime evidence: initial Start/bootstrap/dispatch path is functional; old `Start does nothing` regression is not reproduced
+- Result: startup half of E2E-001 PASS; awaiting automatic seq 1 dispatch to close the next-sequence half
 
 ### Startup failure — previous run
 
@@ -83,4 +102,4 @@ Run only after the main dogfood sequence passes.
 
 ## Final assessment
 
-Current run NOT_RUN. Do not mark PR #1 ready or merge until the new run records E2E-001 through E2E-004 as verified with real Chrome/ChatGPT evidence.
+Current run IN_PROGRESS. Initial startup/dispatch is now observed working. Do not mark PR #1 ready or merge until E2E-001 next-sequence dispatch and E2E-002 through E2E-004 are verified with live evidence.

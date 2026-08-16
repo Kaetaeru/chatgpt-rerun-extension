@@ -298,12 +298,6 @@ async function assertRepositoryBranchAccessible(config, tabId) {
 }
 
 async function actionForControl(tabId, config, runtime, control, intervalSeconds, now) {
-  runtime = await updateRuntime(tabId, {
-    lastError: null,
-    lastStatus: control.status,
-    lastSequence: control.sequence
-  });
-
   if (control.runId !== runtime.lastRunId) {
     runtime = await updateRuntime(tabId, {
       lastRunId: control.runId,
@@ -317,9 +311,24 @@ async function actionForControl(tabId, config, runtime, control, intervalSeconds
     });
   }
 
+  runtime = await updateRuntime(tabId, {
+    lastError: null,
+    lastStatus: control.status,
+    lastSequence: control.sequence
+  });
+
   if (["complete", "needs_user", "blocked"].includes(control.status)) {
-    await stopSession(tabId, control.status);
-    return { action: "stop", reason: control.status, control };
+    const lastHandled = Number(runtime.lastHandledSequence ?? -1);
+    if (control.sequence >= lastHandled) {
+      const armedLastHandled = Math.min(lastHandled, control.sequence - 1);
+      if (armedLastHandled !== lastHandled) {
+        runtime = await updateRuntime(tabId, {
+          lastHandledSequence: armedLastHandled,
+          sameSequenceRetryCount: 0
+        });
+      }
+    }
+    return { action: "wait", reason: control.status, control };
   }
 
   if (runtime.pendingSequence !== null) {
@@ -328,7 +337,7 @@ async function actionForControl(tabId, config, runtime, control, intervalSeconds
 
   const maxRuns = normalizeMaxRuns(config.maxRuns);
   if (Number(runtime.runCount || 0) >= maxRuns) {
-    return { action: "stop_when_idle", reason: "max_runs", control };
+    return { action: "wait", reason: "max_runs", control };
   }
 
   const disposition = continuationDisposition(
@@ -340,12 +349,11 @@ async function actionForControl(tabId, config, runtime, control, intervalSeconds
   if (disposition.action === "stale") {
     const detail = `Control sequence regressed from ${runtime.lastHandledSequence} to ${control.sequence}`;
     await updateRuntime(tabId, { lastError: detail });
-    await stopSession(tabId, "sequence_regressed");
-    return { action: "stop", reason: "sequence_regressed", control };
+    return { action: "wait", reason: "sequence_regressed", control };
   }
 
   if (disposition.action === "retry_limit") {
-    return { action: "stop_when_idle", reason: "retry_limit", control };
+    return { action: "wait", reason: "retry_limit", control };
   }
 
   if (disposition.action !== "send") {
@@ -555,8 +563,7 @@ async function handoffToNewChat(oldTabId) {
 
   const control = await fetchControl(config, oldTabId);
   if (control.status !== "continue") {
-    await stopSession(oldTabId, control.status);
-    throw new Error(`현재 control 상태가 ${control.status}라 새 채팅으로 이어갈 수 없습니다.`);
+    throw new Error(`현재 GitHub control 상태가 ${control.status}라 새 채팅 handoff는 대기합니다. 현재 탭 watcher는 계속 실행됩니다.`);
   }
 
   if (Number(oldRuntime.runCount || 0) >= normalizeMaxRuns(config.maxRuns)) {

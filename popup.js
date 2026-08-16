@@ -23,6 +23,7 @@ const ids = [
   "retryDelaySeconds",
   "maxRetriesPerSequence",
   "githubToken",
+  "approvalAwareResume",
   "maxRuns"
 ];
 
@@ -204,12 +205,20 @@ async function loadForm() {
     : {};
 
   for (const id of ids) {
-    elements[id].value = draft[id] ?? config[id] ?? "";
+    const value = draft[id] ?? config[id] ?? "";
+    if (elements[id].type === "checkbox") {
+      elements[id].checked = value === true || value === "true";
+    } else {
+      elements[id].value = value;
+    }
   }
 }
 
 function collectFormDraft() {
-  return Object.fromEntries(ids.map((id) => [id, elements[id].value]));
+  return Object.fromEntries(ids.map((id) => [
+    id,
+    elements[id].type === "checkbox" ? elements[id].checked : elements[id].value
+  ]));
 }
 
 async function persistFormDraft() {
@@ -240,6 +249,7 @@ async function saveSettings({ requireTarget }) {
     pollIntervalSeconds,
     retryDelaySeconds: effectiveRetryDelay(elements.retryDelaySeconds.value, pollIntervalSeconds),
     maxRetriesPerSequence: normalizeMaxRetries(elements.maxRetriesPerSequence.value),
+    approvalAwareResume: Boolean(elements.approvalAwareResume.checked),
     maxRuns: normalizeMaxRuns(elements.maxRuns.value)
   };
 
@@ -287,6 +297,7 @@ async function saveSettings({ requireTarget }) {
   elements.pollIntervalSeconds.value = String(next.pollIntervalSeconds);
   elements.retryDelaySeconds.value = String(next.retryDelaySeconds);
   elements.maxRetriesPerSequence.value = String(next.maxRetriesPerSequence);
+  elements.approvalAwareResume.checked = next.approvalAwareResume;
   elements.maxRuns.value = String(next.maxRuns);
   await persistFormDraft();
 }
@@ -350,6 +361,9 @@ async function refreshRuntime(transientMessage) {
   document.getElementById("githubStatus").textContent = runtime.lastStatus === "continue"
     ? "continue · start"
     : runtime.lastStatus || "-";
+  document.getElementById("approvalMode").textContent = config.approvalAwareResume
+    ? "Manual · auto-resume"
+    : "Manual";
   document.getElementById("runCount").textContent = String(runtime.runCount || 0);
   document.getElementById("retryCount").textContent = `${runtime.sameSequenceRetryCount || 0}/${elements.maxRetriesPerSequence.value || DEFAULT_CONFIG.maxRetriesPerSequence}`;
   document.getElementById("lastSentAt").textContent = formatTime(runtime.lastSentAt);

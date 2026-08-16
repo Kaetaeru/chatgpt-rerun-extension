@@ -12,7 +12,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   path: ".chatgpt-rerun/control.json",
   githubToken: "",
   resumePrompt: "진행. 먼저 이 대화에서 연결된 GitHub 저장소의 .chatgpt-rerun/README.md, control.json, STATE.md, PLAN.md를 안내된 순서대로 읽고 저장소 상태를 확인한 뒤, 현재 sequence의 미완료 지점부터 재개해. 검증된 작업은 반복하지 말고 프로토콜에 따라 GitHub 상태를 갱신해.",
-  pollIntervalSeconds: 60,
+  pollIntervalSeconds: 90,
   retryDelaySeconds: 120,
   maxRetriesPerSequence: 2,
   maxRuns: 20
@@ -35,6 +35,8 @@ export const DEFAULT_RUNTIME = Object.freeze({
   lastCheckedAt: null,
   rateLimitRemaining: null,
   rateLimitResetAt: null,
+  rateLimitPausedUntil: null,
+  rateLimitPauseReason: null,
   handoffPending: false,
   handoffFromTabId: null,
   handoffToTabId: null,
@@ -145,11 +147,14 @@ export function parseControlPayload(text) {
   };
 }
 
-export function effectivePollInterval(seconds, hasToken) {
+export function effectivePollInterval(seconds, hasToken, unauthenticatedWatcherCount = 1) {
   const parsed = Number(seconds);
-  const fallback = hasToken ? 10 : 60;
+  const watcherCount = hasToken
+    ? 1
+    : Math.max(1, Math.floor(Number(unauthenticatedWatcherCount) || 1));
+  const minimum = hasToken ? 5 : 90 * watcherCount;
+  const fallback = hasToken ? 10 : minimum;
   if (!Number.isFinite(parsed)) return fallback;
-  const minimum = hasToken ? 5 : 60;
   return Math.max(minimum, Math.floor(parsed));
 }
 

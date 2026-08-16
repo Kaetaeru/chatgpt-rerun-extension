@@ -28,3 +28,16 @@ test("submission is acknowledged only after visible dispatch evidence", () => {
   assert.match(content, /if \(!isChatIdle\(\)\) return true/);
   assert.match(content, /prompt inserted but send button click did not start sending/);
 });
+
+test("confirmed dispatch failure attempts fresh-chat handoff instead of immediately stopping", () => {
+  assert.match(content, /function isConfirmedDispatchFailure\(detail\)/);
+  assert.match(content, /startsWith\("prompt inserted but "\)/);
+  assert.match(content, /const handoff = await handoffAfterDispatchFailure\(\)/);
+  assert.match(content, /type: "HANDOFF_NEW_CHAT"/);
+  assert.match(content, /if \(handoff\?\.ok\) return/);
+});
+
+test("automatic handoff failure still falls back to a safe watcher stop", () => {
+  assert.match(content, /reason: `auto_handoff_failed: \$\{handoff\?\.error \|\| detail\}`/);
+  assert.match(content, /type: "STOP_SESSION"/);
+});

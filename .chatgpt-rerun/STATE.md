@@ -7,58 +7,58 @@
 - Desired control status: `continue`
 - Current task: `E2E-002`
 - Control reason: `E2E-001 seq 0 startup completed; start the same-sequence retry probe.`
-- Phase: `not_started`
-- Last checkpoint (UTC): `2026-08-16T13:31:00Z`
+- Phase: `awaiting_same_sequence_retry`
+- Last checkpoint (UTC): `2026-08-16T13:32:00Z`
 
 ## Current Objective
 
-Execute E2E-002 from `docs/E2E_TEST_PLAN.md`: first confirm that this seq 1 execution itself arrived automatically, thereby closing the next-sequence half of E2E-001, then perform the intentional E2E-002 first pass that leaves control on seq 1 and waits for a same-sequence retry.
+Wait for the extension to automatically re-run the same seq 1 / E2E-002 after the configured retry delay, proving same-sequence recovery works without any manual `진행` input.
 
 ## Completed in This Task
 
-- Run `...-02` seq 0 configured resume prompt was automatically delivered into the existing ChatGPT conversation.
-- control/STATE/PLAN preflight for seq 0 returned Normal.
-- E2E-001 startup evidence was recorded in `docs/E2E_RESULT.md`.
-- Side Panel/startup regressions from run `...-01` were not reproduced in the successful Start flow.
-- E2E-001 was marked verified on the PLAN side so the state machine can publish seq 1.
+- Seq 1 / E2E-002 automatic execution arrived without manual input at 22:32 KST.
+- E2E-001 next-sequence dispatch acceptance criterion is now observed and fully PASS.
+- `docs/E2E_RESULT.md` records the seq 1 automatic dispatch and E2E-002 first-pass evidence.
+- E2E-002 first pass intentionally leaves GitHub control on seq 1 / continue / E2E-002.
 
 ## Verification
 
 | Check | Command | Result | Evidence / note |
 |---|---|---|---|
-| Unit tests | `node --test control.test.mjs` | PASS | 16/16 protocol tests were already verified after the startup fix; do not repeat without a code change. |
-| Startup script syntax | `node --check background.js`, `content.js`, `popup.js` | PASS | Already verified after the startup fix; do not repeat without a code change. |
-| Manifest JSON | JSON parse | PASS | Already verified after the Side Panel/scripting change. |
-| Side Panel persistence | Chrome runtime observation | PASS | Successful retest proceeded through the persistent Side Panel Start flow without the previous focus-loss regression. |
-| Draft restore after panel close/reopen | Chrome runtime observation | PASS | Persistence probe completed before the successful Start flow; reset regression was not reproduced. |
-| Start on already-open ChatGPT tab | Chrome runtime observation | PASS | Seq 0 configured prompt was delivered into the ongoing conversation. |
-| Initial seq 0 auto dispatch | Extension runtime observation | PASS | Exact configured resume prompt initiated the 22:30 KST execution without manual `진행`. |
-| Seq 1 auto dispatch | Extension runtime observation | NOT_RUN | Must be confirmed by the next automatically delivered execution. |
-| Same-sequence retry for seq 1 | Extension runtime observation | NOT_RUN | E2E-002 probe begins after seq 1 arrives. |
+| Unit tests | `node --test control.test.mjs` | PASS | Previously verified after the startup fix; no code change in this sequence. |
+| Startup script syntax | `node --check background.js`, `content.js`, `popup.js` | PASS | Previously verified; do not repeat without code changes. |
+| Manifest JSON | JSON parse | PASS | Previously verified after the Side Panel/scripting change. |
+| Side Panel persistence | Chrome runtime observation | PASS | Verified during run ...-02 startup. |
+| Draft restore after panel close/reopen | Chrome runtime observation | PASS | Verified during run ...-02 startup. |
+| Start on already-open ChatGPT tab | Chrome runtime observation | PASS | Seq 0 prompt was delivered automatically. |
+| Initial seq 0 auto dispatch | Extension runtime observation | PASS | 22:30 KST automatic execution. |
+| Seq 1 next-sequence auto dispatch | Extension runtime observation | PASS | 22:32 KST automatic execution with no manual `진행`. |
+| Same-sequence retry for seq 1 | Extension runtime observation | NOT_RUN | This first pass ends intentionally with control unchanged; the next automatic seq 1 execution is the required evidence. |
 
 ## Pending / Failed
 
-- Publish seq 1 / continue / E2E-002 in control.json.
-- On the next automatic execution, confirm seq 1 arrived without manual input.
-- Then perform E2E-002 first pass: record evidence, keep sequence 1, set phase to `awaiting_same_sequence_retry`, leave PLAN task/control unchanged, and intentionally end the response.
+- Wait for retry delay to elapse while control remains seq 1 / continue / E2E-002.
+- On the next automatically delivered seq 1 resume prompt, confirm this phase is `awaiting_same_sequence_retry`.
+- Then mark E2E-002 verified and advance PLAN -> STATE -> control to seq 2 / continue / E2E-003.
 
 ## Files / Areas Touched
 
-- `docs/E2E_RESULT.md`: live E2E startup evidence.
-- `.chatgpt-rerun/PLAN.md`: E2E-001 sequence-side completion and E2E-002 pending state.
-- `.chatgpt-rerun/STATE.md`: current checkpoint advanced to seq 1 / E2E-002.
+- `docs/E2E_RESULT.md`: E2E-001 final PASS and E2E-002 first-pass evidence.
+- `.chatgpt-rerun/PLAN.md`: E2E-001 fully closed as verified; E2E-002 remains pending.
+- `.chatgpt-rerun/STATE.md`: phase changed to `awaiting_same_sequence_retry` while sequence remains 1.
 
 ## Next Exact Action
 
-When the extension automatically sends the next resume prompt for sequence 1, first update `docs/E2E_RESULT.md` to mark E2E-001 PASS because next-sequence dispatch is now observed. Then execute E2E-002 first-pass rules exactly: record the first pass, keep sequence 1 and control unchanged, set STATE phase to `awaiting_same_sequence_retry`, write the next exact retry action, and intentionally end the response so the extension must re-run the same sequence after the configured retry delay.
+When the extension automatically sends the same configured resume prompt again while control is still seq 1 / continue / E2E-002, read the mandatory documents, confirm STATE phase is `awaiting_same_sequence_retry`, record that same-sequence retry evidence in `docs/E2E_RESULT.md`, mark E2E-002 verified, then publish seq 2 / continue / E2E-003 using PLAN -> STATE -> control ordering.
 
 ## Do Not Repeat
 
+- Do not rerun E2E-001.
 - Do not rerun startup implementation/static validation unless code changes.
-- Do not recreate dogfood files.
 - Do not manually send `진행` during the automated sequence.
-- Do not advance control beyond seq 1 during the E2E-002 first pass.
+- Do not change control.json during this first E2E-002 pass.
+- Do not advance sequence before an automatic same-sequence retry is actually observed.
 
 ## Blockers / User Decisions
 
-- None. The next event should be generated by the extension from the newly published seq 1 control state.
+- None. The extension must now generate the next event from the unchanged seq 1 control state after the retry delay.

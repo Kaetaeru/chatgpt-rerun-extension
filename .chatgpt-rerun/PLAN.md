@@ -7,7 +7,7 @@ Dogfood the Chrome extension against this repository itself and produce real E2E
 ## Definition of Done
 
 - [x] E2E-001 initial/next-sequence dispatch verified.
-- [ ] E2E-002 same-sequence retry verified.
+- [x] E2E-002 same-sequence retry verified.
 - [ ] E2E-003 STATE/control pending handoff reconciliation verified without repeating the prior task.
 - [ ] E2E-004 terminal `complete` stop verified.
 - [x] Side Panel remains usable while interacting with the ChatGPT page and restores unsaved draft values after reopen.
@@ -36,7 +36,7 @@ Dogfood the Chrome extension against this repository itself and produce real E2E
 | ID | Status | Depends on | Task | Acceptance criteria |
 |---|---|---|---|---|
 | E2E-001 | verified | - | Verify Side Panel persistence, initial automatic dispatch, and transition to a new sequence | Seq 0 startup/dispatch and automatic seq 1 next-sequence dispatch both observed without manual input |
-| E2E-002 | pending | E2E-001 | Verify same-sequence retry after an intentional first-pass stop | First pass leaves seq 1 unchanged; retry fires automatically; second pass records evidence and advances to seq 2 |
+| E2E-002 | verified | E2E-001 | Verify same-sequence retry after an intentional first-pass stop | First pass left seq 1 unchanged; the same seq 1 was automatically retried at 22:34 KST without manual input |
 | E2E-003 | pending | E2E-002 | Verify crash-safe STATE/control handoff reconciliation | First pass writes STATE seq 3 while control remains seq 2; retry publishes only missing control handoff; E2E-003 is not repeated |
 | E2E-004 | pending | E2E-003 | Verify terminal completion | Evidence is finalized, control becomes seq 4/complete, and extension stops with `complete` |
 
@@ -49,6 +49,7 @@ Status vocabulary: `pending`, `in_progress`, `verified`, `blocked`.
 - Run `...-01` failed at startup and is preserved in `docs/E2E_RESULT.md`.
 - Run `...-02` received the configured seq 0 resume prompt automatically at 22:30 KST and the seq 1 resume prompt automatically at 22:32 KST.
 - E2E-001 is fully verified.
-- E2E-002 first pass intentionally leaves control on seq 1 so a same-sequence retry can be observed.
+- E2E-002 same-sequence retry was automatically observed at 22:34 KST while control remained seq 1.
+- Next task is E2E-003 on seq 2; its first pass must intentionally leave control on seq 2 after STATE advances to seq 3.
 - Main automated flow intentionally tests recovery behavior rather than only the happy path.
 - Additional safety-stop scenarios are manual post-E2E checks and are not prerequisites for the main automated sequence unless a discovered bug requires them.

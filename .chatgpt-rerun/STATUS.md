@@ -6,22 +6,24 @@
 
 | Item | Current |
 |---|---|
-| Last updated | `2026-08-16T14:51:00Z` (23:51 KST) |
+| Last updated | `2026-08-16T14:59:00Z` (23:59 KST) |
 | Run | `chatgpt-rerun-v02-20260816-01` |
 | Sequence | `5` |
 | Control status | `needs_user` |
 | Current task | `V02-007` |
-| Activity | Waiting for user Reload |
+| Activity | Rerun connection reconciled; waiting for user Reload |
 | Extension version to verify | `0.2.3` |
 | Overall dogfood | IN_PROGRESS |
 
 ## 지금 무슨 일이 진행 중인가
 
-v0.2.3에서 새 프로젝트 온보딩을 더 명시적으로 바꿨습니다.
+v0.2.3의 **Rerun 연결 프롬프트**가 현재 프로젝트 대화에서 실제로 전송됐고, 연결 대상은 이 대화에서 계속 작업해 온 `Kaetaeru/chatgpt-rerun-extension` / `agent/mvp-autoresume`로 확인됐습니다.
 
-프로젝트를 처음 시작할 때 GitHub 저장소는 이미 있고, 현재 ChatGPT 대화도 어떤 repo에서 작업 중인지 알고 있다는 전제를 사용합니다. Side Panel의 **Rerun 연결 프롬프트**를 누르면 현재 채팅에 setup prompt가 전송되고, ChatGPT가 그 repo에 Rerun 표준 문서를 먼저 설치/보완합니다.
+저장소에는 이미 `.chatgpt-rerun/README.md`, `PLAN.md`, `STATE.md`, `STATUS.md`, `control.json`이 있고 active run도 존재했습니다. 따라서 새 run을 만들거나 기존 `run_id`, sequence, task, 검증 기록을 초기화하지 않았습니다. control과 STATE를 reconcile한 결과 `chatgpt-rerun-v02-20260816-01 / seq 5 / needs_user / V02-007`로 Normal 상태였습니다.
 
-권장 흐름:
+현재 Rerun 5문서는 필요한 핵심 규칙을 이미 갖추고 있어 authoritative 문서 재작성이나 control 재게시가 필요하지 않았습니다. 이번 연결 실행은 실제 구현 task를 시작하지 않고 여기서 종료합니다.
+
+권장 새 프로젝트 흐름은 그대로입니다:
 
 `프로젝트 repo가 이미 연결된 ChatGPT 대화` → `Rerun 연결 프롬프트` → `.chatgpt-rerun/README.md / PLAN.md / STATE.md / STATUS.md / control.json` 생성·보완 → 연결 prompt 종료 → Side Panel repo 좌표 확인 → `Start` → 첫 task 실행
 
@@ -48,17 +50,20 @@ v0.2.3에서 새 프로젝트 온보딩을 더 명시적으로 바꿨습니다.
 | V02-005 handoff race/failure 보호 | PAUSED | 최신 browser gates 이후 재개 |
 | V02-006 terminal isolation | PENDING | terminal 상태가 owning tab만 멈추는지 남음 |
 | V02-007 단일 Start/Stop 토글 | IN_PROGRESS | v0.2.3 Reload 후 실제 Chrome 확인 필요 |
-| V02-008 Rerun 연결 프롬프트 | PENDING | v0.2.3 Reload 후 별도 안전한 프로젝트에서 확인 필요 |
+| V02-008 Rerun 연결 프롬프트 | PENDING | 현재 프로젝트에서 active-run 보존/reconciliation 경로는 확인; 새 프로젝트 5파일 생성 경로는 별도 안전한 프로젝트에서 검증 필요 |
 
 ## 최근 확인된 것
 
-- `manifest.json` / `package.json` 버전이 `0.2.3`으로 올라갔습니다.
-- `control.js`에 `buildRerunConnectionPrompt()`가 추가됐고 원격 소스를 다시 읽어 repo-context 식별, ambiguity refusal, 5-file setup, active-run preservation, control-last, stop-before-implementation 규칙을 확인했습니다.
+- 현재 연결 프롬프트의 Side Panel 좌표와 실제 작업 저장소가 `Kaetaeru/chatgpt-rerun-extension` / `agent/mvp-autoresume`로 일치했습니다.
+- 루트 `AGENTS.md`와 `CONTRIBUTING.md`는 존재하지 않고, 프로젝트 `README.md`를 지침으로 확인했습니다.
+- `.chatgpt-rerun/README.md -> control.json -> STATE.md -> PLAN.md -> STATUS.md` 순서로 다시 읽었습니다.
+- control과 STATE의 run/sequence/status/task가 모두 일치하여 preflight는 Normal입니다.
+- 기존 active run을 보존했으며 새 run_id/sequence/task를 만들거나 초기화하지 않았습니다.
+- `manifest.json` / `package.json` 버전은 `0.2.3`입니다.
+- `control.js`에 `buildRerunConnectionPrompt()`가 추가됐고 repo-context 식별, ambiguity refusal, 5-file setup, active-run preservation, control-last, stop-before-implementation 규칙이 들어 있습니다.
 - Side Panel에 `Rerun 연결 프롬프트` 버튼이 추가됐습니다.
 - `popup.js`는 Stopped 상태에서만 `RERUN_CONNECT`를 보내며 필요하면 content script를 먼저 주입합니다.
 - `content.js`는 handoff/bootstrap과 같은 idle + empty-composer 안전 경로로 `RERUN_CONNECT`를 전송합니다.
-- control/popup UI 자동 회귀 테스트에 연결 프롬프트 contract와 wiring 검사가 추가됐습니다.
-- 전체 최신 checkout `npm run check` / `npm test`는 현재 container가 github.com/raw.githubusercontent.com을 resolve하지 못해 실행하지 못했으며 PASS로 기록하지 않습니다.
 
 ## 지금 사용자가 해야 할 것
 
@@ -70,7 +75,7 @@ Reload 후 먼저 현재 탭에서:
 
 을 확인하면 V02-007을 닫을 수 있습니다.
 
-그 다음 별도 안전한 프로젝트 대화에서, 그 대화가 이미 GitHub repo를 알고 있는 상태로 `Rerun 연결 프롬프트`를 누릅니다. ChatGPT가 올바른 repo를 식별하고 5개 Rerun 문서를 생성/보완한 뒤 구현을 시작하지 않고 끝나는지 확인하면 V02-008을 검증할 수 있습니다.
+그 다음 별도 안전한 새 프로젝트 대화에서, 그 대화가 이미 GitHub repo를 알고 있는 상태로 `Rerun 연결 프롬프트`를 누릅니다. ChatGPT가 올바른 repo를 식별하고 5개 Rerun 문서를 생성/보완한 뒤 구현을 시작하지 않고 끝나는지 확인하면 V02-008의 신규 프로젝트 경로를 검증할 수 있습니다.
 
 ## 그 다음 자동 작업
 
@@ -79,7 +84,7 @@ V02-007과 V02-008이 확인되면 현재 `needs_user` gate를 해제하고, 미
 ## Blockers / risks
 
 - 현재 blocker는 코드 문제가 아니라 **로컬 Chrome의 unpacked extension v0.2.3 Reload 필요**입니다.
-- V02-008에는 repo가 명확히 연결된 별도 안전한 프로젝트 대화가 필요합니다.
+- V02-008의 신규 프로젝트 생성 경로에는 repo가 명확히 연결된 별도 안전한 프로젝트 대화가 필요합니다.
 - ChatGPT GitHub 앱에 대상 저장소 쓰기 권한이 없다면 연결 프롬프트는 파일을 게시할 수 없습니다. 확장프로그램이 승인 UI를 대신 누르거나 권한을 우회하지 않습니다.
 - `STATUS.md` 자체는 표시용 projection이므로 stale할 수 있으며 자동화 판단에는 사용하지 않습니다.
 

@@ -1,9 +1,9 @@
 {
   "version": 1,
   "run_id": "chatgpt-rerun-v02-20260816-01",
-  "sequence": 3,
+  "sequence": 4,
   "status": "continue",
-  "reason": "V02-003 per-tab dispatch/retry regression verified; execute the fresh-chat ownership handoff probe.",
-  "updated_at": "2026-08-16T14:09:00Z",
-  "task_id": "V02-004"
+  "reason": "V02-004 fresh-chat handoff verified; verify new-owner continuity and handoff race/failure safeguards.",
+  "updated_at": "2026-08-16T14:17:00Z",
+  "task_id": "V02-005"
 }

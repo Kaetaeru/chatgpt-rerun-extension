@@ -3,7 +3,7 @@
   "run_id": "chatgpt-rerun-v02-20260816-01",
   "sequence": 5,
   "status": "needs_user",
-  "reason": "v0.2.2 includes the unified Start/Stop toggle and safe automatic repository bootstrap; reload the unpacked extension before browser verification.",
-  "updated_at": "2026-08-16T14:39:00Z",
+  "reason": "v0.2.3 adds explicit Rerun connection-prompt onboarding plus the unified Start/Stop toggle; reload the unpacked extension before browser verification.",
+  "updated_at": "2026-08-16T14:51:00Z",
   "task_id": "V02-007"
 }

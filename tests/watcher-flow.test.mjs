@@ -26,7 +26,10 @@ test("watcher safeguards wait instead of disabling polling", () => {
   assert.match(background, /return \{ action: "wait", reason: "sequence_regressed", control \};/);
 });
 
-test("terminal GitHub status blocks handoff without stopping the existing watcher", () => {
-  assert.match(background, /현재 GitHub control 상태가 \$\{control\.status\}라 새 채팅 handoff는 대기합니다/);
-  assert.doesNotMatch(background, /await stopSession\(oldTabId, control\.status\)/);
+test("fresh-chat handoff transfers watcher ownership regardless of GitHub work status", () => {
+  assert.doesNotMatch(background, /if \(control\.status !== "continue"\)/);
+  assert.doesNotMatch(background, /현재 GitHub control 상태가 \$\{control\.status\}라 새 채팅 handoff는 대기합니다/);
+  assert.match(background, /const prompt = buildNewChatHandoffPrompt\(config, control\)/);
+  assert.match(background, /type: "RERUN_HANDOFF"/);
+  assert.match(background, /status: control\.status/);
 });

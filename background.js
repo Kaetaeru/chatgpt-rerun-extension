@@ -17,6 +17,14 @@ import {
 
 const fetchCaches = new Map();
 
+class GitHubRateLimitPause extends Error {
+  constructor(untilMs) {
+    super("GitHub API polling is temporarily paused for rate limiting");
+    this.name = "GitHubRateLimitPause";
+    this.untilMs = untilMs;
+  }
+}
+
 void configureGlobalSidePanel();
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -55,8 +63,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function configureGlobalSidePanel() {
   if (!chrome.sidePanel?.setOptions) return;
-  // Keep the manifest default path only as a packaged resource. The actual UI
-  // is enabled as a tab-specific side panel when a ChatGPT tab requests it.
   await chrome.sidePanel.setOptions({ enabled: false });
 }
 
@@ -137,33 +143,67 @@ async function poll(sender) {
   let runtime = await loadRuntime(tabId);
   if (!runtime.enabled || runtime.handoffPending) return { action: "none" };
 
-  const token = String(config.githubToken || "").trim();
-  const intervalSeconds = effectivePollInterval(config.pollIntervalSeconds, Boolean(token));
   const now = Date.now();
+  const pausedUntilMs = Date.parse(String(runtime.rateLimitPausedUntil || ""));
+  if (Number.isFinite(pausedUntilMs) && pausedUntilMs > now) {
+    return {
+      action: "wait",
+      reason: "rate_limit",
+      retryAt: runtime.rateLimitPausedUntil
+    };
+  }
+  if (runtime.rateLimitPausedUntil) {
+    runtime = await updateRuntime(tabId, {
+      rateLimitPausedUntil: null,
+      rateLimitPauseReason: null,
+      lastError: null
+    });
+  }
+
+  const token = String(config.githubToken || "").trim();
+  const unauthenticatedWatcherCount = token
+    ? 1
+    : await countEnabledUnauthenticatedWatchers();
+  const intervalSeconds = effectivePollInterval(
+    config.pollIntervalSeconds,
+    Boolean(token),
+    unauthenticatedWatcherCount
+  );
   const cache = cacheFor(config);
 
   let control;
-  if (runtime.bootstrapPending) {
-    if (now - cache.lastFetchAt < intervalSeconds * 1000) {
-      if (cache.cachedControl) {
-        control = cache.cachedControl;
+  try {
+    if (runtime.bootstrapPending) {
+      if (now - cache.lastFetchAt < intervalSeconds * 1000) {
+        if (cache.cachedControl) {
+          control = cache.cachedControl;
+        } else {
+          return { action: "none", phase: "bootstrap_wait" };
+        }
       } else {
-        return { action: "none", phase: "bootstrap_wait" };
+        control = await fetchControl(config, tabId, { allowMissing: true });
+        if (!control) return { action: "none", phase: "bootstrap_wait" };
       }
-    } else {
-      control = await fetchControl(config, tabId, { allowMissing: true });
-      if (!control) return { action: "none", phase: "bootstrap_wait" };
-    }
 
-    runtime = await updateRuntime(tabId, {
-      bootstrapPending: false,
-      bootstrapCompletedAt: new Date().toISOString(),
-      lastError: null
-    });
-  } else if (now - cache.lastFetchAt < intervalSeconds * 1000 && cache.cachedControl) {
-    control = cache.cachedControl;
-  } else {
-    control = await fetchControl(config, tabId);
+      runtime = await updateRuntime(tabId, {
+        bootstrapPending: false,
+        bootstrapCompletedAt: new Date().toISOString(),
+        lastError: null
+      });
+    } else if (now - cache.lastFetchAt < intervalSeconds * 1000 && cache.cachedControl) {
+      control = cache.cachedControl;
+    } else {
+      control = await fetchControl(config, tabId);
+    }
+  } catch (error) {
+    if (isRateLimitPause(error)) {
+      return {
+        action: "wait",
+        reason: "rate_limit",
+        retryAt: new Date(error.untilMs).toISOString()
+      };
+    }
+    throw error;
   }
 
   runtime = await loadRuntime(tabId);
@@ -214,6 +254,7 @@ async function fetchControl(config, tabId, { allowMissing = false } = {}) {
   });
   cache.lastFetchAt = Date.now();
   await recordRateLimit(tabId, response);
+  await pauseForRateLimitIfNeeded(tabId, response);
 
   if (response.status === 304 && cache.cachedControl) {
     return cache.cachedControl;
@@ -227,15 +268,11 @@ async function fetchControl(config, tabId, { allowMissing = false } = {}) {
   }
 
   if (!response.ok) {
-    const remaining = response.headers.get("x-ratelimit-remaining");
     if (response.status === 404) {
       throw new Error("GitHub control file was not found");
     }
     if (response.status === 401) {
       throw new Error("GitHub authentication failed");
-    }
-    if (response.status === 403 && remaining === "0") {
-      throw new Error("GitHub API rate limit reached; wait for reset or use a token");
     }
     throw new Error(`GitHub request failed with HTTP ${response.status}`);
   }
@@ -257,13 +294,75 @@ function githubHeaders(config, accept) {
 }
 
 async function recordRateLimit(tabId, response) {
-  const remaining = response.headers.get("x-ratelimit-remaining");
-  const reset = response.headers.get("x-ratelimit-reset");
+  const remainingRaw = response.headers.get("x-ratelimit-remaining");
+  const resetRaw = response.headers.get("x-ratelimit-reset");
+  const remaining = remainingRaw === null ? null : Number(remainingRaw);
+  const resetSeconds = resetRaw === null ? NaN : Number(resetRaw);
   await updateRuntime(tabId, {
     lastCheckedAt: new Date().toISOString(),
-    rateLimitRemaining: remaining === null ? null : Number(remaining),
-    rateLimitResetAt: reset === null ? null : new Date(Number(reset) * 1000).toISOString()
+    rateLimitRemaining: Number.isFinite(remaining) ? remaining : null,
+    rateLimitResetAt: Number.isFinite(resetSeconds)
+      ? new Date(resetSeconds * 1000).toISOString()
+      : null
   });
+}
+
+async function pauseForRateLimitIfNeeded(tabId, response) {
+  const untilMs = await rateLimitPauseUntil(response);
+  if (untilMs === null) return;
+
+  const until = new Date(untilMs).toISOString();
+  await updateRuntime(tabId, {
+    rateLimitPausedUntil: until,
+    rateLimitPauseReason: "github_rate_limit",
+    lastError: null
+  });
+  throw new GitHubRateLimitPause(untilMs);
+}
+
+async function rateLimitPauseUntil(response, nowMs = Date.now()) {
+  if (![403, 429].includes(response.status)) return null;
+
+  const retryAfterSeconds = Number(response.headers.get("retry-after"));
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+    return nowMs + retryAfterSeconds * 1000;
+  }
+
+  const remaining = response.headers.get("x-ratelimit-remaining");
+  const resetSeconds = Number(response.headers.get("x-ratelimit-reset"));
+  if (remaining === "0" && Number.isFinite(resetSeconds)) {
+    return Math.max(nowMs + 1000, resetSeconds * 1000);
+  }
+
+  if (response.status === 429) return nowMs + 60_000;
+
+  let detail = "";
+  try {
+    detail = await response.clone().text();
+  } catch {
+    detail = "";
+  }
+  if (/secondary rate limit|abuse detection/i.test(detail)) {
+    return nowMs + 60_000;
+  }
+
+  return null;
+}
+
+function isRateLimitPause(error) {
+  return error?.name === "GitHubRateLimitPause" && Number.isFinite(error?.untilMs);
+}
+
+async function countEnabledUnauthenticatedWatchers() {
+  const all = await chrome.storage.local.get(null);
+  let count = 0;
+  for (const [key, runtime] of Object.entries(all)) {
+    const tabId = tabIdFromRuntimeKey(key);
+    if (tabId === null || !runtime?.enabled) continue;
+    const config = { ...DEFAULT_CONFIG, ...(all[tabConfigKey(tabId)] || {}) };
+    if (!String(config.githubToken || "").trim()) count += 1;
+  }
+  return Math.max(1, count);
 }
 
 async function assertRepositoryBranchAccessible(config, tabId) {
@@ -281,15 +380,12 @@ async function assertRepositoryBranchAccessible(config, tabId) {
     cache: "no-store"
   });
   await recordRateLimit(tabId, response);
+  await pauseForRateLimitIfNeeded(tabId, response);
 
   if (response.ok) return;
 
-  const remaining = response.headers.get("x-ratelimit-remaining");
   if (response.status === 401) {
     throw new Error("GitHub authentication failed");
-  }
-  if (response.status === 403 && remaining === "0") {
-    throw new Error("GitHub API rate limit reached; wait for reset or use a token");
   }
   if (response.status === 404) {
     throw new Error("설정한 GitHub 저장소/branch를 읽을 수 없습니다. Owner, Repository, Branch 또는 token 권한을 확인해주세요.");
@@ -389,7 +485,14 @@ async function claimSequence(sender, message) {
   }
 
   const token = String(config.githubToken || "").trim();
-  const intervalSeconds = effectivePollInterval(config.pollIntervalSeconds, Boolean(token));
+  const unauthenticatedWatcherCount = token
+    ? 1
+    : await countEnabledUnauthenticatedWatchers();
+  const intervalSeconds = effectivePollInterval(
+    config.pollIntervalSeconds,
+    Boolean(token),
+    unauthenticatedWatcherCount
+  );
   const disposition = continuationDisposition(
     control,
     { ...config, ...runtime, pollIntervalSeconds: intervalSeconds },
@@ -469,7 +572,38 @@ async function startTabSession(tabId) {
   await configureTabSidePanel(tabId);
   await ensureContentScript(tabId);
 
-  const control = await fetchControl(config, tabId, { allowMissing: true });
+  let control;
+  try {
+    control = await fetchControl(config, tabId, { allowMissing: true });
+  } catch (error) {
+    if (!isRateLimitPause(error)) throw error;
+
+    await updateRuntime(tabId, {
+      enabled: true,
+      stopReason: null,
+      lastError: null,
+      pendingSequence: null,
+      pendingRunId: null,
+      pendingIsRetry: false,
+      handoffPending: false,
+      handoffToTabId: null,
+      bootstrapPending: false,
+      bootstrapCompletedAt: null
+    });
+
+    const wake = await chrome.tabs.sendMessage(tabId, { type: "RERUN_WAKE" });
+    if (!wake?.ready) {
+      await stopSession(tabId, "start_failed");
+      throw new Error("ChatGPT 탭의 rerun content script가 응답하지 않습니다.");
+    }
+
+    return {
+      action: "rate_limited_wait",
+      tabId,
+      retryAt: new Date(error.untilMs).toISOString()
+    };
+  }
+
   if (!control) {
     if (!isAutoBootstrapPath(config)) {
       throw new Error("Custom control file이 존재하지 않습니다. 자동 초기화는 기본 .chatgpt-rerun/control.json 경로에서만 동작합니다.");
@@ -546,6 +680,33 @@ async function findConflictingTab(tabId, config) {
   return null;
 }
 
+async function controlForHandoff(config, tabId, runtime) {
+  try {
+    return await fetchControl(config, tabId);
+  } catch (error) {
+    if (!isRateLimitPause(error)) throw error;
+
+    const cached = cacheFor(config).cachedControl;
+    if (cached) return cached;
+
+    const sequence = Number(runtime.lastSequence);
+    if (String(runtime.lastRunId || "").trim() && Number.isSafeInteger(sequence) && sequence >= 0) {
+      return {
+        runId: runtime.lastRunId,
+        sequence,
+        status: ["continue", "complete", "needs_user", "blocked"].includes(runtime.lastStatus)
+          ? runtime.lastStatus
+          : "unknown",
+        reason: "",
+        updatedAt: "",
+        taskId: ""
+      };
+    }
+
+    throw error;
+  }
+}
+
 async function handoffToNewChat(oldTabId) {
   const config = await loadConfig(oldTabId);
   const oldRuntime = await loadRuntime(oldTabId);
@@ -561,7 +722,7 @@ async function handoffToNewChat(oldTabId) {
     throw new Error(`같은 GitHub control stream이 이미 tab ${conflictTabId}에서 실행 중입니다.`);
   }
 
-  const control = await fetchControl(config, oldTabId);
+  const control = await controlForHandoff(config, oldTabId, oldRuntime);
 
   if (Number(oldRuntime.runCount || 0) >= normalizeMaxRuns(config.maxRuns)) {
     throw new Error("Max sends 한도에 도달했습니다. 설정을 늘린 뒤 handoff를 다시 실행하세요.");

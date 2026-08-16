@@ -11,7 +11,7 @@ Validate ChatGPT Rerun v0.2.x after the session architecture changed from one br
 - [x] V02-003 new-sequence dispatch and same-sequence retry regression verified after the refactor.
 - [x] V02-004 `Continue in new chat` ownership transfer verified.
 - [ ] V02-005 handoff race/failure behavior verified to the extent safely reproducible.
-- [ ] V02-006 persistent watcher across terminal GitHub work states verified.
+- [x] V02-006 persistent watcher across terminal GitHub work states verified.
 - [ ] V02-007 single state-driven Start/Stop watcher toggle verified.
 - [ ] V02-008 explicit Rerun connection-prompt onboarding verified on a separate safe project.
 - [ ] `docs/V02_E2E_TEST_PLAN.md` evidence is complete.
@@ -55,7 +55,7 @@ Validate ChatGPT Rerun v0.2.x after the session architecture changed from one br
 | V02-003 | verified | V02-001 | Regression-test dispatch/retry under per-tab runtime | New sequence and same-sequence retry auto-send on the owning tab only; retry/run counters remain scoped to that tab |
 | V02-004 | verified | V02-003 | Verify fresh-chat handoff | User-confirmed successful watcher ownership transfer to a fresh ChatGPT conversation using the GitHub-backed handoff path |
 | V02-005 | in_progress | V02-004 | Verify handoff race/failure safeguards | New owner receives the next sequence; successful handoff has no duplicate transfer; terminal handoff refusal does not stop the existing watcher; failure cleanup remains deterministic |
-| V02-006 | in_progress | V02-003 | Verify persistent watcher across GitHub work states | complete/needs_user/blocked pauses dispatch but watcher stays Watching and polls; later continue, including same sequence, auto-resumes without another Start |
+| V02-006 | verified | V02-003 | Verify persistent watcher across GitHub work states | needs_user paused dispatch while watcher stayed Watching and kept polling; changing the same seq 5 back to continue auto-resumed the owning tab without another Start, with source-confirmed terminal re-arm semantics |
 | V02-007 | in_progress | V02-003 | Verify unified Start/Stop watcher control | Stopped shows only `Start`; clicking it turns on current-tab watcher and changes the same button to `Stop`; clicking `Stop` disables only the current-tab watcher and changes the same button back to `Start`; GitHub work status is shown separately |
 | V02-008 | pending | V02-007 | Verify explicit Rerun connection prompt onboarding | While watcher is Stopped, one `Rerun 연결 프롬프트` sends a direct setup prompt that identifies the repository from current conversation GitHub context, refuses ambiguity, creates/repairs README/PLAN/STATE/STATUS/control without resetting an active run, publishes new-project control last, stops before implementation, and leaves Start to enable the watcher and begin the first task |
 
@@ -83,6 +83,6 @@ Status vocabulary: `pending`, `in_progress`, `verified`, `blocked`.
 - At 00:02 KST the watcher model changed: Chrome Start/Stop now controls only whether the current tab keeps polling GitHub. GitHub `continue/complete/needs_user/blocked` controls work dispatch independently.
 - v0.2.4 keeps the watcher enabled on terminal GitHub statuses, arms a terminal sequence so a later same-sequence `continue` is treated as a fresh work authorization, and changes max-runs/retry-limit/sequence-regression handling from watcher Stop to watcher Wait.
 - The Side Panel now displays `Tab watcher` separately from `GitHub work status`; `continue` is shown as `continue · start`.
-- At 00:15 KST on Aug 17, while control remained seq 5 / `needs_user`, the user reported `워칭으로 나와.`. This confirms the v0.2.4 watcher remained enabled under a terminal GitHub work state.
-- The next probe intentionally changes the same seq 5 from `needs_user` to `continue` without another Start. Automatic resume in the already-Watching tab is required for the key V02-006 acceptance path.
+- At 00:15 KST on Aug 17, while control remained seq 5 / `needs_user`, the user reported `워칭으로 나와.`. This confirmed the v0.2.4 watcher remained enabled under a terminal GitHub work state.
+- At 00:18 KST on Aug 17, after only GitHub was changed to the same seq 5 / `continue`, the standard resume prompt arrived automatically in the already-Watching tab with no additional Start. V02-006 is verified.
 - Extension/package version is now `0.2.4`.

@@ -38,26 +38,62 @@ Chrome Extension
 
 상세 규칙은 `.chatgpt-rerun/README.md`와 `docs/PROJECT_PROTOCOL.md`에 있다.
 
-## Persistent Side Panel
+## Per-tab persistent Side Panel
 
-설정 UI는 작은 toolbar popup이 아니라 Chrome **Side Panel**에서 열린다.
+설정 UI는 작은 toolbar popup이 아니라 Chrome **Side Panel**에서 열린다. v0.2부터 설정과 runtime은 Chrome tab ID별로 분리되어 각 ChatGPT 탭이 독립적인 Rerun 세션을 가질 수 있다.
 
-- 확장 아이콘을 클릭하면 Side Panel이 열린다.
+- 확장 아이콘을 클릭하면 현재 ChatGPT 탭 전용 Side Panel이 열린다.
 - ChatGPT 페이지를 클릭하거나 복사/붙여넣기를 해도 Side Panel은 유지된다.
-- Owner, Repository, Branch, token 등 입력값은 입력 즉시 draft로 `chrome.storage.local`에 저장된다.
-- 사용자가 Side Panel을 직접 닫았다가 다시 열어도 입력 중이던 값이 복원된다.
-- **Start on active ChatGPT tab**을 누르면 해당 활성 ChatGPT 탭 하나에 세션을 묶는다.
+- Owner, Repository, Branch, token 등 입력값은 입력 즉시 해당 tab의 draft로 `chrome.storage.local`에 저장된다.
+- Side Panel을 닫았다 다시 열어도 해당 tab의 입력 중이던 값이 복원된다.
+- 서로 다른 GitHub stream은 여러 ChatGPT 탭에서 독립적으로 실행할 수 있다.
+- 동일 owner/repo/branch/control path를 두 탭에서 동시에 실행하려 하면 두 번째 Start를 거부한다.
+
+## One Start/Stop control
+
+v0.2.1부터 Start와 Stop은 별도 버튼이 아니라 **하나의 session control**이다.
+
+```text
+Stopped  → [ Start ]
+               │ click
+               ▼
+Running  → [ Stop  ]
+               │ click
+               ▼
+Stopped  → [ Start ]
+```
+
+표시 상태와 실제 동작은 현재 탭의 `runtime.enabled`를 기준으로 한다.
+
+- Stopped이면 버튼은 `Start`다.
+- `Start`를 누르면 현재 탭만 활성화하고 같은 버튼이 `Stop`으로 바뀐다.
+- Running이면 버튼은 `Stop`이다.
+- `Stop`을 누르면 현재 탭만 `manual` stop 상태로 바꾸고 같은 버튼이 다시 `Start`로 바뀐다.
+- 다른 ChatGPT 탭의 Start/Stop 상태에는 영향을 주지 않는다.
 
 ## Start bootstrap
 
 Start는 ChatGPT 탭이 확장프로그램보다 먼저 열려 있었어도 동작하도록 설계되어 있다.
 
-1. 활성 ChatGPT 탭에 `RERUN_PING`을 보낸다.
+1. 현재 ChatGPT 탭에 content script가 있는지 확인한다.
 2. content script가 없으면 `chrome.scripting.executeScript()`로 `content.js`를 주입한다.
-3. 세션을 활성화하고 target tab ID를 저장한다.
+3. 해당 tab ID의 runtime을 활성화한다.
 4. `RERUN_WAKE`를 보내 첫 GitHub poll을 즉시 시작한다.
 
 따라서 unpacked extension을 Reload한 뒤 기존 ChatGPT 탭을 반드시 새로고침할 필요는 없다.
+
+## Continue in new chat
+
+현재 대화가 너무 길어졌거나 새 컨텍스트에서 이어가고 싶으면 Side Panel의 **Continue in new chat**을 사용한다.
+
+- 새 ChatGPT 탭을 연다.
+- 기존 탭은 handoff 중 polling을 멈춘다.
+- 같은 GitHub config/runtime ownership을 새 tab ID로 이관한다.
+- 새 채팅에는 owner/repo, branch, control path, run_id, sequence가 포함된 handoff prompt를 자동 전송한다.
+- 새 채팅은 이전 대화 본문을 복사하지 않고 `.chatgpt-rerun` 문서와 `STATE.md`에서 재개한다.
+- 채팅이 바뀌었다는 이유만으로 GitHub sequence를 증가시키지 않는다.
+
+확장프로그램은 ChatGPT의 GitHub 앱 승인/OAuth/관리자 승인 UI를 자동 클릭하지 않는다. 반복되는 이미 연결된 앱의 사용 승인은 ChatGPT 앱 권한 설정으로 관리하고, 실제 GitHub OAuth/저장소 접근 범위는 GitHub/워크스페이스 정책을 따른다.
 
 ## 대상 저장소 표준
 
@@ -121,11 +157,11 @@ STATE가 control보다 정확히 1 sequence 앞선 채 중단된 경우 다음 �
 2. Chrome에서 `chrome://extensions`를 연다.
 3. **Developer mode**를 켠다.
 4. 처음이면 **Load unpacked**, 이미 로드했다면 **Reload**를 누른다.
-5. 확장 아이콘을 클릭해 ChatGPT Rerun Side Panel을 연다.
+5. 확장 아이콘을 클릭해 현재 ChatGPT 탭의 Rerun Side Panel을 연다.
 6. 자동화할 프로젝트에 `.chatgpt-rerun/` 문서를 준비한다.
 7. Side Panel에 Owner, Repository, Branch, Control file을 입력한다.
-8. 자동화할 ChatGPT 탭을 활성화한다.
-9. **Start on active ChatGPT tab**을 누른다.
+8. 중지 상태의 단일 session control에서 **Start**를 누른다.
+9. 실행 중에는 같은 control이 **Stop**으로 표시되며, 누르면 해당 탭 Rerun만 중지한다.
 
 ## GitHub 접근
 
@@ -149,9 +185,9 @@ ChatGPT 또는 GitHub의 rate/service limit을 우회하도록 재시도하지 �
 
 ## E2E dogfood
 
-실제 Chrome 검증은 `docs/E2E_TEST_PLAN.md`를 따른다. 결과는 `docs/E2E_RESULT.md`에 누적한다.
+현재 v0.2/v0.2.1 실제 Chrome 검증은 `docs/V02_E2E_TEST_PLAN.md`를 따른다. 결과는 `docs/V02_E2E_RESULT.md`에 누적한다.
 
-현재 dogfood는 Side Panel persistence, 이미 열린 ChatGPT 탭 bootstrap, 새 sequence dispatch, same-sequence retry, STATE/control handoff recovery, terminal `complete`를 검증한다.
+검증 범위에는 per-tab isolation, 동일 stream collision guard, new-sequence/same-sequence retry, fresh-chat handoff, handoff race protection, terminal isolation, 그리고 v0.2.1 단일 Start/Stop session toggle이 포함된다.
 
 ## 개발
 
@@ -162,4 +198,4 @@ npm run check
 npm test
 ```
 
-`npm test`는 control parser/schema helper, polling/retry clamp, sequence retry/회귀 처리 등 프로토콜 핵심 불변식을 검증한다.
+`npm test`는 control parser/schema helper, polling/retry clamp, sequence retry/회귀 처리와 Side Panel의 단일 Start/Stop toggle 회귀를 검증한다.

@@ -6,88 +6,90 @@
 - Sequence: `5`
 - Desired control status: `needs_user`
 - Current task: `V02-007`
-- Control reason: `v0.2.1 replaces separate Start/Stop controls with one state-driven toggle; reload the unpacked extension before browser verification.`
-- Phase: `awaiting_extension_reload_for_toggle_ux`
-- Last checkpoint (UTC): `2026-08-16T14:30:00Z`
-- Current execution started (UTC): `2026-08-16T14:30:00Z`
-- Current execution hard stop (UTC): `2026-08-16T14:50:00Z`
+- Control reason: `v0.2.2 includes the unified Start/Stop toggle and safe automatic repository bootstrap; reload the unpacked extension before browser verification.`
+- Phase: `awaiting_extension_reload_for_v022`
+- Last checkpoint (UTC): `2026-08-16T14:39:00Z`
+- Current execution started (UTC): `2026-08-16T14:39:00Z`
+- Current execution hard stop (UTC): `2026-08-16T14:59:00Z`
 
 ## Current Objective
 
-Verify V02-007: after Reloading the unpacked extension at v0.2.1, the Side Panel must expose exactly one session control. When the current tab is stopped it says `Start`; clicking it starts only that tab and changes the same button to `Stop`; clicking `Stop` disables the current-tab Rerun and changes the same button back to `Start`.
+Keep the browser run safely stopped until the unpacked extension is Reloaded at v0.2.2. First verify V02-007: one runtime-driven session button transitions `Start -> Stop -> Start`. Then verify V02-008 on a separate safe GitHub test repository that has no `.chatgpt-rerun/control.json`: one Start should bootstrap the standard five files through ChatGPT and automatically transition to the normal first-task Rerun.
 
-The user also requested a GitHub-readable live progress view. That protocol-level feature is now implemented without changing the current browser gate: `.chatgpt-rerun/STATUS.md` is a human-readable presentation-only dashboard refreshed on meaningful changes and at roughly five-minute safe checkpoints during long active executions.
+The current machine task remains V02-007 because the local Chrome build must be Reloaded before either new v0.2.1/v0.2.2 behavior is valid browser evidence. V02-008 is queued immediately after V02-007.
 
 ## Completed in This Task
 
 - V02-001 through V02-004 remain verified.
-- V02-005 had begun after successful fresh-chat handoff but is temporarily paused for the user-requested UX change.
-- Separate footer buttons `Start this tab` and `Stop this tab` were removed from `popup.html`.
-- A single `sessionToggle` button was added; its visible label is `Start` while stopped and `Stop` while running.
-- `popup.js` now reads the latest tab runtime at click time and sends `START_TAB_SESSION` or `STOP_TAB_SESSION` from the same control.
-- Runtime/storage refresh updates the same button label, primary/danger styling, `aria-pressed`, and `aria-label` from `runtime.enabled`.
-- Footer layout was simplified to Save + session toggle.
-- Extension and package version were bumped from `0.2.0` to `0.2.1`.
-- `tests/popup-ui.test.mjs` was added to ensure there is exactly one session-toggle control and both Start/Stop message paths remain present.
-- The actual remote `popup.js`, `popup.html`, and new test were copied into the local validation container after GitHub clone was unavailable in that environment.
-- `.chatgpt-rerun/STATUS.md` was added for the current run with a user-readable summary of run/task/progress/recent verification/user action/next action/blockers.
-- `templates/repository/.chatgpt-rerun/STATUS.md` was added so new Rerun-enabled repositories get the same dashboard.
-- Active and template `.chatgpt-rerun/README.md` contracts now require STATUS freshness while explicitly forbidding its use for reconciliation.
-- `docs/PROJECT_PROTOCOL.md` was upgraded to the five-file standard and documents presentation-only STATUS writes after the last authoritative `control.json` write.
+- V02-005 remains paused after the successful fresh-chat handoff while newer browser UX/bootstrap changes are gated behind Reload.
+- v0.2.1 unified Start/Stop control remains implemented and covered by the previously executed UI-specific static test.
+- `.chatgpt-rerun/STATUS.md` remains the human-readable presentation-only live dashboard; the five-file protocol and template are already documented.
+- v0.2.2 automatic repository bootstrap was implemented without adding GitHub contents-write permission to the Chrome extension.
+- `control.js` now exposes `isAutoBootstrapPath()` and `buildRepositoryBootstrapPrompt()` and runtime fields `bootstrapPending`, `bootstrapRequestedAt`, `bootstrapCompletedAt`.
+- Start now probes the configured control. If the standard `.chatgpt-rerun/control.json` is missing, it independently verifies that the configured repo/branch is readable before treating the target as a bootstrap candidate.
+- A missing custom control path is not auto-created. An inaccessible repo/branch 404/auth failure is not treated as an empty Rerun project.
+- During bootstrap, runtime remains enabled but `bootstrapPending=true`; the same stream stays owned by the tab and normal sequence claims are suppressed.
+- `content.js` accepts `RERUN_BOOTSTRAP` as a direct prompt path using the same safe composer-idle checks as new-chat handoff; it still does not inspect assistant response content.
+- The bootstrap prompt instructs ChatGPT to inspect repository/project instructions and the current conversation goal, create or compatibly repair README/PLAN/STATE/STATUS/control, keep STATUS presentation-only with about five-minute active freshness, use 20-minute execution rules, and publish control last.
+- Bootstrap explicitly ends before the first implementation task. Once control appears, the background polling path clears `bootstrapPending` and the normal configured resume prompt starts the first task.
+- The Side Panel shows `Initializing repository` during bootstrap, keeps the single session button in running/Stop semantics, and disables new-chat handoff until bootstrap completes.
+- `tests/control.test.mjs` adds bootstrap path/prompt invariants; `tests/bootstrap-flow.test.mjs` adds static wiring regressions.
+- Extension/package version is now `0.2.2`; README and `docs/V02_E2E_TEST_PLAN.md` document the safe automatic-bootstrap behavior and V02-008.
 
 ## Verification
 
 | Check | Command / observation | Result | Evidence / note |
 |---|---|---|---|
-| New popup JS syntax | `node --check popup.js` against remote file contents | PASS | v0.2.1 `popup.js` parsed successfully. |
-| Single-toggle regression test | `node --test tests/popup-ui.test.mjs` against remote file contents | PASS | 1/1; asserts `sessionToggle`, no separate `start`/`stop` IDs, and both START/STOP message paths. |
-| Existing v0.2 protocol/static baseline | prior validation | PASS | Core background/content/control code was not changed by this UX patch. |
-| Live STATUS current-run file | GitHub file creation/read contract | PASS | `.chatgpt-rerun/STATUS.md` exists and describes the current needs_user/V02-007 gate. |
-| Reusable STATUS template | GitHub template file | PASS | `templates/repository/.chatgpt-rerun/STATUS.md` exists. |
-| STATUS protocol rules | active/template README + `docs/PROJECT_PROTOCOL.md` | PASS | Human-only role, ~5-minute active freshness target, state-change refresh, no reconciliation, control-last-authoritative semantics documented. |
-| Browser V02-007 stopped state | Chrome Side Panel observation | NOT_RUN | Requires unpacked-extension Reload to v0.2.1. |
-| Browser V02-007 Start -> Stop | Chrome Side Panel observation | NOT_RUN | Reload, click Start, verify Running and same button becomes Stop. |
-| Browser V02-007 Stop -> Start | Chrome Side Panel observation | NOT_RUN | Click Stop, verify Stopped/manual and same button becomes Start. |
-| V02-005 new-owner continuity/race safeguards | Chrome/runtime evidence | IN_PROGRESS | Resume after V02-007 browser verification. |
+| Existing v0.2 core browser evidence | prior dogfood | PASS | V02-001~004 verified before current Reload gate. |
+| v0.2.1 single-toggle static verification | prior direct Node checks | PASS | popup syntax and single-toggle regression test previously passed. |
+| v0.2.2 bootstrap helper syntax/behavior | `node --check` + direct assertions against actual updated `control.js` helper content | PASS | Standard path accepted, custom path rejected, bootstrap prompt contains all five files/control-last/stop-before-first-task rules, bootstrap runtime default is false. |
+| v0.2.2 background/content/popup full `npm run check` | local full checkout | NOT_RUN | Container cannot resolve github.com, so a full current checkout is unavailable; browser Reload/E2E remains required. Remote source was re-read after writes and the bootstrap state transitions were inspected. |
+| v0.2.2 full `npm test` | local full checkout | NOT_RUN | New tests are committed but full suite cannot be run from a network checkout in this container. |
+| Browser V02-007 stopped state | Chrome Side Panel | NOT_RUN | Requires v0.2.2 Reload. |
+| Browser V02-007 Start -> Stop -> Start | Chrome Side Panel | NOT_RUN | Requires v0.2.2 Reload. |
+| Browser V02-008 standard missing-control bootstrap | separate safe test repo | NOT_RUN | Must be tested after Reload. |
+| V02-008 custom-path/inaccessible-target safeguards | separate safe test setup | NOT_RUN | Must not mutate an existing real project to create the test. |
 
 ## Pending / Failed
 
-- Reload the unpacked extension in `chrome://extensions` so local Chrome uses v0.2.1.
-- Open the ChatGPT Rerun Side Panel for the current tab and verify there is one session button, not separate Start/Stop buttons.
-- With the session stopped, confirm the button says `Start`.
-- Click `Start`; confirm the tab becomes Running and the same button changes to `Stop`.
-- Click `Stop`; confirm the tab becomes Stopped with manual stop semantics and the same button changes back to `Start`.
-- Record V02-007 evidence, then resume V02-005 and V02-006.
-- On every subsequent execution, keep STATUS current under the new freshness rules without using it as source of truth.
+- Reload the unpacked extension in `chrome://extensions` so local Chrome uses v0.2.2.
+- Verify V02-007 on the current ChatGPT tab: exactly one session button, `Start -> Stop -> Start`, with current-tab-only runtime changes.
+- For V02-008, choose/create a separate safe GitHub test repository or branch that the extension can read and that does not contain `.chatgpt-rerun/control.json`.
+- In that test tab set the default control path and press Start once.
+- Confirm `Initializing repository`, one bootstrap prompt, five-file creation/repair, control-last sequence 0 continue publication, then automatic standard resume/first-task start.
+- Confirm custom missing control path and unreadable repo/branch do not auto-bootstrap.
+- Record V02-008 evidence, then resume V02-005 and V02-006.
 
 ## Files / Areas Touched
 
-- `popup.html`: one `sessionToggle` button replaces separate Start/Stop controls.
-- `popup.js`: state-driven toggle action and rendering.
-- `popup.css`: two-column footer and disabled-button treatment.
-- `tests/popup-ui.test.mjs`: UI regression guard.
-- `manifest.json`, `package.json`: version `0.2.1`.
-- `.chatgpt-rerun/STATUS.md`: current human-readable live dashboard.
-- `.chatgpt-rerun/README.md`: active STATUS freshness/presentation-only contract.
-- `.chatgpt-rerun/PLAN.md`: STATUS maintenance constraint and decision note.
-- `templates/repository/.chatgpt-rerun/STATUS.md`: reusable dashboard template.
-- `templates/repository/.chatgpt-rerun/README.md`: reusable STATUS maintenance contract.
-- `docs/PROJECT_PROTOCOL.md`: standard directory and execution transaction updated for STATUS.
-- `.chatgpt-rerun/STATE.md`: current Reload/browser-verification checkpoint plus dashboard implementation evidence.
+- `control.js`: bootstrap runtime fields, standard-path predicate, bootstrap prompt builder.
+- `background.js`: missing-control probe, repo/branch accessibility check, bootstrap pending monitor, automatic transition to normal control execution, bootstrap/handoff guards.
+- `content.js`: direct `RERUN_BOOTSTRAP` prompt support without assistant-output parsing.
+- `popup.js`: initializing state, bootstrap runtime reset, handoff disable while initializing.
+- `popup.html`: Start auto-initialization disclosure.
+- `tests/control.test.mjs`: bootstrap helper invariants.
+- `tests/bootstrap-flow.test.mjs`: bootstrap wiring regressions.
+- `manifest.json`, `package.json`: v0.2.2.
+- `README.md`: automatic repository bootstrap behavior/safety model.
+- `docs/V02_E2E_TEST_PLAN.md`: V02-008.
+- `.chatgpt-rerun/PLAN.md`: V02-008 acceptance gate and v0.2.2 decisions.
 
 ## Next Exact Action
 
-User Reloads the unpacked extension from the latest `agent/mvp-autoresume` checkout. Then inspect the current tab Side Panel: verify the stopped state shows exactly one `Start` control, click it and verify the same control becomes `Stop` while Running, click `Stop` and verify it becomes `Start` while Stopped. Report the observed result. After V02-007 is verified, restore the active run to `continue` and resume V02-005 from the successful fresh-chat handoff checkpoint. Keep STATUS synchronized with those visible state changes.
+User Reloads the unpacked extension from the latest `agent/mvp-autoresume` checkout (v0.2.2). First perform the short V02-007 `Start -> Stop -> Start` probe in the current tab. After that passes, use a separate safe repository/branch with no standard control file for V02-008 and press Start once; observe repository bootstrap followed by normal automatic first-task resume. Do not use an existing project's state deletion as the bootstrap test.
 
 ## Do Not Repeat
 
 - Do not repeat V02-001 through V02-004.
-- Do not rely on the locally loaded 0.2.0 Side Panel to verify V02-007.
-- Do not create separate Start/Stop controls again; runtime state must drive one control.
-- Do not resume V02-005 automatic progression until the user has Reloaded 0.2.1.
+- Do not rely on the currently loaded pre-v0.2.2 Side Panel for V02-007 or V02-008 evidence.
+- Do not create separate Start/Stop controls again.
+- Do not grant the Chrome extension GitHub write permission for bootstrap; writes belong to the connected ChatGPT GitHub app.
+- Do not auto-bootstrap a custom missing control path or an unreadable repository/branch.
+- Do not delete a real project's `.chatgpt-rerun` state to force V02-008.
+- Do not resume V02-005 automatic progression until v0.2.2 Reload and the new browser gates are addressed.
 - Do not automate ChatGPT app approval, OAuth authorization, or administrator-approval button clicks in the extension.
 - Do not use STATUS to decide recovery, sequence, task, or terminal state.
 
 ## Blockers / User Decisions
 
-- User action required: Reload the unpacked extension to v0.2.1 and perform the short Start -> Stop -> Start UI probe.
+- User action required: Reload the unpacked extension to v0.2.2. V02-008 also needs a separate safe GitHub repository/branch with no standard control file for destructive-free bootstrap verification.

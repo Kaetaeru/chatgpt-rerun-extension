@@ -81,14 +81,8 @@ connectPromptButton.addEventListener("click", async () => {
       throw new Error("GitHub watcher가 켜져 있을 때는 연결 프롬프트를 보낼 수 없습니다. 먼저 Stop을 눌러주세요.");
     }
 
-    await persistFormDraft();
     await ensureContentScript(currentTabId);
-    const prompt = buildRerunConnectionPrompt({
-      owner: elements.owner.value.trim(),
-      repo: elements.repo.value.trim(),
-      branch: elements.branch.value.trim() || "main",
-      path: elements.path.value.trim() || DEFAULT_CONFIG.path
-    });
+    const prompt = buildRerunConnectionPrompt();
     const response = await chrome.tabs.sendMessage(currentTabId, {
       type: "RERUN_CONNECT",
       prompt
@@ -96,7 +90,7 @@ connectPromptButton.addEventListener("click", async () => {
     if (!response?.sent) {
       throw new Error(response?.error || "Rerun 연결 프롬프트를 전송하지 못했습니다.");
     }
-    await refreshRuntime("Rerun 연결 프롬프트 전송됨");
+    await refreshRuntime("연결 프롬프트 전송됨 · 채팅의 RERUN_CONNECTION 결과를 확인하세요");
   } catch (error) {
     showError(error);
   } finally {
@@ -170,19 +164,22 @@ async function migrateLegacySession(tabId) {
   if (existing[configKey] || existing[runtimeKey] || existing[draftKey]) return;
 
   const legacy = await chrome.storage.local.get(null);
+  const ownsLegacySession = Number(legacy.targetTabId) === tabId;
   const config = { ...DEFAULT_CONFIG };
-  for (const key of Object.keys(DEFAULT_CONFIG)) {
-    if (legacy[key] !== undefined) config[key] = legacy[key];
+  if (ownsLegacySession) {
+    for (const key of Object.keys(DEFAULT_CONFIG)) {
+      if (legacy[key] !== undefined) config[key] = legacy[key];
+    }
   }
 
   const runtime = { ...DEFAULT_RUNTIME };
-  if (Number(legacy.targetTabId) === tabId) {
+  if (ownsLegacySession) {
     for (const key of Object.keys(DEFAULT_RUNTIME)) {
       if (legacy[key] !== undefined) runtime[key] = legacy[key];
     }
   }
 
-  const legacyDraft = legacy[LEGACY_DRAFT_KEY] && typeof legacy[LEGACY_DRAFT_KEY] === "object"
+  const legacyDraft = ownsLegacySession && legacy[LEGACY_DRAFT_KEY] && typeof legacy[LEGACY_DRAFT_KEY] === "object"
     ? legacy[LEGACY_DRAFT_KEY]
     : config;
 
@@ -243,7 +240,7 @@ async function saveSettings({ requireTarget }) {
   };
 
   if (requireTarget && (!next.owner || !next.repo)) {
-    throw new Error("Owner와 Repository를 입력해주세요.");
+    throw new Error("아직 repository가 연결되지 않았습니다. 연결 프롬프트의 CONNECTED 결과에서 Owner와 Repository를 확인해 입력해주세요.");
   }
 
   const changedStream = streamKey(before) !== streamKey(next);
@@ -286,6 +283,12 @@ async function saveSettings({ requireTarget }) {
   await persistFormDraft();
 }
 
+async function loadCurrentConfig() {
+  const key = tabConfigKey(currentTabId);
+  const stored = await chrome.storage.local.get(key);
+  return { ...DEFAULT_CONFIG, ...(stored[key] || {}) };
+}
+
 async function loadCurrentRuntime() {
   const key = tabRuntimeKey(currentTabId);
   const stored = await chrome.storage.local.get(key);
@@ -306,8 +309,13 @@ function renderSessionToggle(runtime) {
 
 async function refreshRuntime(transientMessage) {
   if (currentTabId === null) return;
-  const runtime = await loadCurrentRuntime();
+  const [config, runtime] = await Promise.all([
+    loadCurrentConfig(),
+    loadCurrentRuntime()
+  ]);
   const watching = Boolean(runtime.enabled);
+  const connected = Boolean(String(config.owner || "").trim() && String(config.repo || "").trim());
+  const branch = String(config.branch || "").trim() || "main";
 
   statusDot.classList.toggle("running", watching);
   const persistentStatus = runtime.bootstrapPending
@@ -320,6 +328,9 @@ async function refreshRuntime(transientMessage) {
   handoffButton.disabled = Boolean(runtime.bootstrapPending);
   connectPromptButton.disabled = watching || connectPromptBusy;
   document.getElementById("tabId").textContent = String(currentTabId);
+  document.getElementById("connectionState").textContent = connected
+    ? `${config.owner}/${config.repo} @ ${branch}`
+    : "Unconnected";
   document.getElementById("tabWatcher").textContent = watching ? "Watching" : "Stopped";
   document.getElementById("runId").textContent = runtime.lastRunId || "-";
   document.getElementById("sequence").textContent = runtime.lastSequence ?? "-";

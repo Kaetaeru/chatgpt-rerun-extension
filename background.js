@@ -6,7 +6,6 @@ import {
   continuationDisposition,
   effectivePollInterval,
   isAutoBootstrapPath,
-  normalizeMaxRuns,
   parseControlPayload,
   streamKey,
   tabConfigKey,
@@ -431,11 +430,6 @@ async function actionForControl(tabId, config, runtime, control, intervalSeconds
     return { action: "none", control };
   }
 
-  const maxRuns = normalizeMaxRuns(config.maxRuns);
-  if (Number(runtime.runCount || 0) >= maxRuns) {
-    return { action: "wait", reason: "max_runs", control };
-  }
-
   const disposition = continuationDisposition(
     control,
     { ...config, ...runtime, pollIntervalSeconds: intervalSeconds },
@@ -480,9 +474,6 @@ async function claimSequence(sender, message) {
     return { claimed: false, reason: "stale_control" };
   }
   if (runtime.pendingSequence !== null) return { claimed: false, reason: "already_claimed" };
-  if (Number(runtime.runCount || 0) >= normalizeMaxRuns(config.maxRuns)) {
-    return { claimed: false, reason: "max_runs" };
-  }
 
   const token = String(config.githubToken || "").trim();
   const unauthenticatedWatcherCount = token
@@ -723,10 +714,6 @@ async function handoffToNewChat(oldTabId) {
   }
 
   const control = await controlForHandoff(config, oldTabId, oldRuntime);
-
-  if (Number(oldRuntime.runCount || 0) >= normalizeMaxRuns(config.maxRuns)) {
-    throw new Error("Max sends 한도에 도달했습니다. 설정을 늘린 뒤 handoff를 다시 실행하세요.");
-  }
 
   await updateRuntime(oldTabId, { handoffPending: true, lastError: null });
   let oldSessionTransferred = false;

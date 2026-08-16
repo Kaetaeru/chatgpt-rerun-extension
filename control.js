@@ -230,10 +230,11 @@ export function buildRerunConnectionPrompt(config = {}) {
     "그 다음 저장소 루트의 `.chatgpt-rerun/README.md`, `PLAN.md`, `STATE.md`, `STATUS.md`, `control.json` 다섯 문서를 Rerun 표준에 맞게 생성하거나 보완해.",
     "이미 `.chatgpt-rerun`이 존재하고 active run이 있으면 기존 run_id, sequence, task, 검증 기록을 초기화하거나 덮어쓰지 마. README/STATE/PLAN/control을 먼저 reconcile하고 누락되었거나 호환되지 않는 규칙만 안전하게 보완해.",
     "새 프로젝트라면 README.md에는 mandatory read order(README -> control -> STATE -> PLAN), preflight reconciliation, 20분 hard stop/18분 checkpoint, PLAN -> STATE -> control.json authoritative write order를 적어. STATUS.md는 사람용 projection이며 reconciliation source of truth가 아니고, 의미 있는 상태 변화 시 즉시, 긴 active 실행은 약 5분 freshness를 목표로 갱신하도록 해.",
+    "또 README.md에는 Chrome Side Panel의 Start/Stop은 tab watcher on/off이고 GitHub control status와 독립적이라고 명시해. `continue`는 work start/resume 신호이며 `complete`, `needs_user`, `blocked`는 dispatch 대기 상태일 뿐 watcher를 끄지 않고 polling을 계속한다. terminal 뒤 같은 sequence라도 다시 `continue`가 되면 새 work authorization으로 자동 재개할 수 있어야 해.",
     "PLAN.md에는 이 대화와 저장소에서 파악한 실제 프로젝트 목표, task ID, 의존성, acceptance criteria, 검증 방법을 작성해. STATE.md에는 새 고유 run_id, sequence 0, 첫 task, 실제 checkpoint와 Next Exact Action을 기록해.",
     "새 프로젝트의 control.json은 version 1, 같은 run_id, sequence 0, status `continue`, 첫 task_id, 현재 ISO updated_at으로 만들고, 반드시 PLAN과 STATE를 저장한 뒤 마지막 authoritative write로 게시해. `working` 상태는 사용하지 마.",
     "GitHub 쓰기 권한이 없거나 프로젝트 목표가 불명확하면 성공한 척하지 말고 이 대화에서 필요한 권한이나 결정을 요청해.",
-    "Rerun 문서 연결/보완과 control 게시가 끝나면 이번 연결 프롬프트에서는 실제 구현 task를 시작하지 말고 종료해. 사용자가 확장프로그램의 Start를 눌렀을 때 표준 재개 프롬프트가 첫 task를 시작하게 해."
+    "Rerun 문서 연결/보완과 control 게시가 끝나면 이번 연결 프롬프트에서는 실제 구현 task를 시작하지 말고 종료해. 사용자가 확장프로그램의 Start를 눌렀을 때 tab watcher가 켜지고 표준 재개 프롬프트가 첫 task를 시작하게 해."
   ].join(" ");
 }
 
@@ -254,6 +255,7 @@ export function buildRepositoryBootstrapPrompt(config) {
     "먼저 대상 저장소의 README, AGENTS.md, CONTRIBUTING.md 등 프로젝트 지침과 이 대화의 사용자 목표를 확인해 실제 작업 목표를 파악해.",
     "그 다음 `.chatgpt-rerun/README.md`, `PLAN.md`, `STATE.md`, `STATUS.md`, `control.json` 다섯 파일을 생성하거나, 일부가 이미 있으면 내용을 보존하며 호환 가능한 누락 파일만 보완해. 기존 파일을 무조건 덮어쓰지 마.",
     "README.md에는 매 실행 read order(README -> control -> STATE -> PLAN), control/STATE reconciliation, PLAN -> STATE -> control.json authoritative write order, 20분 hard stop/18분 checkpoint, STATUS.md의 사람용 projection 규칙을 포함해.",
+    "README.md에는 Chrome Start/Stop이 tab watcher on/off이고 GitHub `continue/complete/needs_user/blocked`와 독립적이라는 규칙도 포함해. terminal 상태에서도 watcher는 polling을 계속하고, 이후 같은 sequence라도 `continue`가 되면 자동 재개할 수 있어야 해.",
     "PLAN.md에는 이 대화와 저장소에서 파악한 실제 목표, task ID, 의존성, acceptance criteria와 검증 방법을 작성해. STATE.md에는 새 고유 run_id, sequence 0, 첫 task, 실제 checkpoint, 다음 정확한 행동을 작성해.",
     "STATUS.md는 사람이 GitHub에서 바로 이해할 수 있도록 현재 목표, 진행률, 최근 검증, 다음 행동, blocker를 요약하고 상태 변화 시 즉시, 긴 실행 중에는 약 5분 freshness를 목표로 갱신하도록 규칙을 적어. STATUS는 reconciliation source of truth가 아니어야 해.",
     "마지막으로만 control.json을 version 1, 같은 run_id, sequence 0, status `continue`, 첫 task_id와 현재 ISO updated_at으로 게시해. `working` 상태는 사용하지 마.",

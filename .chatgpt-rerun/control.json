@@ -3,7 +3,7 @@
   "run_id": "chatgpt-rerun-v02-20260816-01",
   "sequence": 7,
   "status": "needs_user",
-  "reason": "V02-001 through V02-007 are verified; perform the clean new-project Rerun connection-prompt onboarding probe on a separate safe repository.",
-  "updated_at": "2026-08-16T15:20:00Z",
+  "reason": "v0.2.5 makes new tabs truly Unconnected and requires connection discovery from actual conversation GitHub usage; reload before the final onboarding probe.",
+  "updated_at": "2026-08-16T15:42:00Z",
   "task_id": "V02-008"
 }

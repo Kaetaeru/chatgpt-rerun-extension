@@ -5,8 +5,7 @@ export const CONTROL_STATUSES = new Set([
   "blocked"
 ]);
 
-export const DEFAULT_SETTINGS = Object.freeze({
-  enabled: false,
+export const DEFAULT_CONFIG = Object.freeze({
   owner: "",
   repo: "",
   branch: "main",
@@ -16,8 +15,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
   pollIntervalSeconds: 60,
   retryDelaySeconds: 120,
   maxRetriesPerSequence: 2,
-  maxRuns: 20,
-  targetTabId: null,
+  maxRuns: 20
+});
+
+export const DEFAULT_RUNTIME = Object.freeze({
+  enabled: false,
   runCount: 0,
   lastRunId: null,
   lastHandledSequence: -1,
@@ -32,8 +34,48 @@ export const DEFAULT_SETTINGS = Object.freeze({
   lastSequence: null,
   lastCheckedAt: null,
   rateLimitRemaining: null,
-  rateLimitResetAt: null
+  rateLimitResetAt: null,
+  handoffPending: false,
+  handoffFromTabId: null,
+  handoffToTabId: null
 });
+
+// Compatibility surface for legacy single-session storage migration.
+export const DEFAULT_SETTINGS = Object.freeze({
+  ...DEFAULT_CONFIG,
+  ...DEFAULT_RUNTIME,
+  targetTabId: null
+});
+
+const TAB_CONFIG_PREFIX = "tabConfig:";
+const TAB_RUNTIME_PREFIX = "tabRuntime:";
+const TAB_DRAFT_PREFIX = "tabDraft:";
+
+export function tabConfigKey(tabId) {
+  return `${TAB_CONFIG_PREFIX}${normalizeTabId(tabId)}`;
+}
+
+export function tabRuntimeKey(tabId) {
+  return `${TAB_RUNTIME_PREFIX}${normalizeTabId(tabId)}`;
+}
+
+export function tabDraftKey(tabId) {
+  return `${TAB_DRAFT_PREFIX}${normalizeTabId(tabId)}`;
+}
+
+export function tabIdFromRuntimeKey(key) {
+  if (typeof key !== "string" || !key.startsWith(TAB_RUNTIME_PREFIX)) return null;
+  const value = Number(key.slice(TAB_RUNTIME_PREFIX.length));
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function normalizeTabId(tabId) {
+  const value = Number(tabId);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error("A valid Chrome tab ID is required");
+  }
+  return value;
+}
 
 export function parseControlPayload(text) {
   let value;
@@ -166,4 +208,22 @@ export function streamKey(settings) {
   return [settings.owner, settings.repo, settings.branch, settings.path]
     .map((part) => String(part || "").trim())
     .join("/");
+}
+
+export function buildNewChatHandoffPrompt(config, control) {
+  const owner = String(config.owner || "").trim();
+  const repo = String(config.repo || "").trim();
+  const branch = String(config.branch || "main").trim() || "main";
+  const path = String(config.path || DEFAULT_CONFIG.path).trim() || DEFAULT_CONFIG.path;
+  const runId = String(control?.runId || "unknown");
+  const sequence = Number.isSafeInteger(control?.sequence) ? control.sequence : "unknown";
+
+  return [
+    "새 채팅에서 이전 자동 작업을 이어간다.",
+    `GitHub 저장소 ${owner}/${repo}, branch ${branch}를 먼저 읽어.`,
+    `${path}와 같은 디렉터리의 README.md, STATE.md, PLAN.md를 규정된 순서대로 읽고 preflight reconciliation을 수행해.`,
+    `현재 handoff 기준 run_id=${runId}, sequence=${sequence}다. GitHub의 실제 최신 상태가 다르면 GitHub 상태를 우선해.`,
+    "이전 채팅 내용에 의존하거나 완료된 작업을 반복하지 말고, STATE.md의 미완료 지점과 Next Exact Action부터 재개해.",
+    "20분 실행 제한과 PLAN -> STATE -> control.json 쓰기 순서를 지켜."
+  ].join(" ");
 }

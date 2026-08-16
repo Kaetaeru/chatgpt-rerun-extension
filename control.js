@@ -12,7 +12,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   branch: "main",
   path: ".chatgpt-rerun/control.json",
   githubToken: "",
-  resumePrompt: "Proceed. First read .chatgpt-rerun/README.md in the configured GitHub repository, follow its read order, and resume the current sequence from GitHub state without repeating verified work.",
+  resumePrompt: "진행. 먼저 이 대화에서 연결된 GitHub 저장소의 .chatgpt-rerun/README.md, control.json, STATE.md, PLAN.md를 안내된 순서대로 읽고 저장소 상태를 확인한 뒤, 현재 sequence의 미완료 지점부터 재개해. 검증된 작업은 반복하지 말고 프로토콜에 따라 GitHub 상태를 갱신해.",
   pollIntervalSeconds: 60,
   retryDelaySeconds: 120,
   maxRetriesPerSequence: 2,
@@ -120,6 +120,40 @@ export function normalizeMaxRetries(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 2;
   return Math.min(10, Math.max(0, Math.floor(parsed)));
+}
+
+export function continuationDisposition(control, settings, nowMs = Date.now()) {
+  const lastHandled = Number(settings.lastHandledSequence ?? -1);
+
+  if (control.sequence > lastHandled) {
+    return { action: "send", isRetry: false };
+  }
+
+  if (control.sequence < lastHandled) {
+    return { action: "stale", isRetry: false };
+  }
+
+  const maxRetries = normalizeMaxRetries(settings.maxRetriesPerSequence);
+  const retryCount = Number(settings.sameSequenceRetryCount || 0);
+  if (retryCount >= maxRetries) {
+    return { action: "retry_limit", isRetry: true };
+  }
+
+  const lastSentMs = Date.parse(String(settings.lastSentAt || ""));
+  if (!Number.isFinite(lastSentMs)) {
+    return { action: "send", isRetry: true };
+  }
+
+  const retryDelayMs = effectiveRetryDelay(
+    settings.retryDelaySeconds,
+    settings.pollIntervalSeconds
+  ) * 1000;
+  const retryAfterMs = lastSentMs + retryDelayMs - nowMs;
+  if (retryAfterMs > 0) {
+    return { action: "wait", isRetry: true, retryAfterMs };
+  }
+
+  return { action: "send", isRetry: true };
 }
 
 export function normalizeMaxRuns(value) {

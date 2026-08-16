@@ -1,5 +1,6 @@
 import {
   DEFAULT_SETTINGS,
+  continuationDisposition,
   effectivePollInterval,
   normalizeMaxRuns,
   parseControlPayload
@@ -67,14 +68,14 @@ async function poll(sender) {
   const now = Date.now();
 
   if (now - lastFetchAt < intervalSeconds * 1000 && cachedControl) {
-    return actionForControl(settings, cachedControl);
+    return actionForControl(settings, cachedControl, intervalSeconds, now);
   }
 
   const control = await fetchControl(settings);
   if (!control) return { action: "none" };
 
   settings = await loadSettings();
-  return actionForControl(settings, control);
+  return actionForControl(settings, control, intervalSeconds, now);
 }
 
 async function fetchControl(settings) {
@@ -145,24 +146,38 @@ async function fetchControl(settings) {
 
   lastEtag = response.headers.get("etag");
   cachedControl = parseControlPayload(await response.text());
-  await chrome.storage.local.set({
-    lastError: null,
-    lastStatus: cachedControl.status,
-    lastSequence: cachedControl.sequence
-  });
   return cachedControl;
 }
 
-async function actionForControl(settings, control) {
+async function actionForControl(settings, control, intervalSeconds, now) {
+  await chrome.storage.local.set({
+    lastError: null,
+    lastStatus: control.status,
+    lastSequence: control.sequence
+  });
+
   if (control.runId !== settings.lastRunId) {
     await chrome.storage.local.set({
       lastRunId: control.runId,
       lastHandledSequence: -1,
+      lastSentAt: null,
+      sameSequenceRetryCount: 0,
       pendingSequence: null,
       pendingRunId: null,
+      pendingIsRetry: false,
       runCount: 0
     });
-    settings = { ...settings, lastRunId: control.runId, lastHandledSequence: -1, pendingSequence: null, pendingRunId: null, runCount: 0 };
+    settings = {
+      ...settings,
+      lastRunId: control.runId,
+      lastHandledSequence: -1,
+      lastSentAt: null,
+      sameSequenceRetryCount: 0,
+      pendingSequence: null,
+      pendingRunId: null,
+      pendingIsRetry: false,
+      runCount: 0
+    };
   }
 
   if (["complete", "needs_user", "blocked"].includes(control.status)) {
@@ -170,13 +185,7 @@ async function actionForControl(settings, control) {
     return { action: "stop", reason: control.status, control };
   }
 
-  if (control.status !== "continue") return { action: "none", control };
-
   if (settings.pendingSequence !== null) {
-    return { action: "none", control };
-  }
-
-  if (control.sequence <= Number(settings.lastHandledSequence ?? -1)) {
     return { action: "none", control };
   }
 
@@ -186,10 +195,33 @@ async function actionForControl(settings, control) {
     return { action: "stop", reason: "max_runs", control };
   }
 
+  const disposition = continuationDisposition(
+    control,
+    { ...settings, pollIntervalSeconds: intervalSeconds },
+    now
+  );
+
+  if (disposition.action === "stale") {
+    const detail = `Control sequence regressed from ${settings.lastHandledSequence} to ${control.sequence}`;
+    await chrome.storage.local.set({ lastError: detail });
+    await stopSession("sequence_regressed");
+    return { action: "stop", reason: "sequence_regressed", control };
+  }
+
+  if (disposition.action === "retry_limit") {
+    await stopSession("retry_limit");
+    return { action: "stop", reason: "retry_limit", control };
+  }
+
+  if (disposition.action !== "send") {
+    return { action: "none", control };
+  }
+
   return {
     action: "continue",
     control,
-    prompt: String(settings.resumePrompt || "진행")
+    isRetry: disposition.isRetry,
+    prompt: String(settings.resumePrompt || DEFAULT_SETTINGS.resumePrompt)
   };
 }
 
@@ -203,10 +235,27 @@ async function claimSequence(sender, message) {
     return { claimed: false, reason: "stale_control" };
   }
   if (settings.pendingSequence !== null) return { claimed: false, reason: "already_claimed" };
-  if (sequence <= Number(settings.lastHandledSequence ?? -1)) return { claimed: false, reason: "already_handled" };
+  if (Number(settings.runCount || 0) >= normalizeMaxRuns(settings.maxRuns)) {
+    return { claimed: false, reason: "max_runs" };
+  }
 
-  await chrome.storage.local.set({ pendingSequence: sequence, pendingRunId: runId });
-  return { claimed: true };
+  const token = String(settings.githubToken || "").trim();
+  const intervalSeconds = effectivePollInterval(settings.pollIntervalSeconds, Boolean(token));
+  const disposition = continuationDisposition(
+    cachedControl,
+    { ...settings, pollIntervalSeconds: intervalSeconds },
+    Date.now()
+  );
+  if (disposition.action !== "send") {
+    return { claimed: false, reason: disposition.action };
+  }
+
+  await chrome.storage.local.set({
+    pendingSequence: sequence,
+    pendingRunId: runId,
+    pendingIsRetry: disposition.isRetry
+  });
+  return { claimed: true, isRetry: disposition.isRetry };
 }
 
 async function ackSequence(sender, message) {
@@ -219,10 +268,14 @@ async function ackSequence(sender, message) {
     return { acknowledged: false };
   }
 
+  const isRetry = Boolean(settings.pendingIsRetry);
   await chrome.storage.local.set({
     lastHandledSequence: sequence,
+    lastSentAt: new Date().toISOString(),
+    sameSequenceRetryCount: isRetry ? Number(settings.sameSequenceRetryCount || 0) + 1 : 0,
     pendingSequence: null,
     pendingRunId: null,
+    pendingIsRetry: false,
     runCount: Number(settings.runCount || 0) + 1,
     lastError: null
   });
@@ -239,7 +292,11 @@ async function releaseSequence(sender, message) {
     return { released: false };
   }
 
-  await chrome.storage.local.set({ pendingSequence: null, pendingRunId: null });
+  await chrome.storage.local.set({
+    pendingSequence: null,
+    pendingRunId: null,
+    pendingIsRetry: false
+  });
   return { released: true };
 }
 
@@ -248,6 +305,7 @@ async function stopSession(reason) {
     enabled: false,
     pendingSequence: null,
     pendingRunId: null,
+    pendingIsRetry: false,
     stopReason: reason
   });
   return { action: "stop", reason };

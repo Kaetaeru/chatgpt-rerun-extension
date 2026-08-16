@@ -6,7 +6,7 @@ Validate ChatGPT Rerun v0.2 after the session architecture changed from one brow
 
 ## Definition of Done
 
-- [ ] V02-001 tab-scoped Side Panel/config/runtime isolation verified.
+- [x] V02-001 tab-scoped Side Panel/config/runtime isolation verified.
 - [ ] V02-002 same GitHub control stream collision guard verified.
 - [ ] V02-003 new-sequence dispatch and same-sequence retry regression verified after the refactor.
 - [ ] V02-004 `Continue in new chat` ownership transfer verified.
@@ -36,8 +36,8 @@ Validate ChatGPT Rerun v0.2 after the session architecture changed from one brow
 
 | ID | Status | Depends on | Task | Acceptance criteria |
 |---|---|---|---|---|
-| V02-001 | in_progress | - | Reload v0.2 and verify tab-scoped Side Panel/config/runtime | Two ChatGPT tabs show different tab IDs and keep independent drafts/runtime; starting A does not start B |
-| V02-002 | pending | V02-001 | Verify same-stream collision guard | Starting the same owner/repo/branch/control path in a second enabled tab is rejected without stopping the first |
+| V02-001 | verified | - | Reload v0.2 and verify tab-scoped Side Panel/config/runtime | Two ChatGPT tabs remain separated with independent tab-specific panel/config/draft/runtime; starting A does not start B |
+| V02-002 | in_progress | V02-001 | Verify same-stream collision guard | Starting the same owner/repo/branch/control path in a second enabled tab is rejected without stopping the first |
 | V02-003 | pending | V02-001 | Regression-test dispatch/retry under per-tab runtime | New sequence and same-sequence retry still auto-send on the owning tab only |
 | V02-004 | pending | V02-003 | Verify fresh-chat handoff | New ChatGPT tab opens, old tab stops, GitHub coordinates/run/sequence are sent, and the new chat resumes from GitHub STATE |
 | V02-005 | pending | V02-004 | Verify handoff race/failure safeguards | Existing tab does not poll while handoffPending; failure paths stop or release ownership deterministically |
@@ -53,4 +53,6 @@ Status vocabulary: `pending`, `in_progress`, `verified`, `blocked`.
 - `Continue in new chat` opens a fresh ChatGPT tab and transfers ownership without incrementing the GitHub sequence solely because the conversation changed.
 - New-chat handoff does not copy prior conversation text; it instructs the new chat to recover from GitHub.
 - Current Run ID is `chatgpt-rerun-v02-20260816-01`.
-- User confirmed the latest unpacked v0.2 extension Reload at 2026-08-16 22:55 KST; the run gate is cleared and V02-001 is active.
+- User confirmed the latest unpacked v0.2 extension Reload at 2026-08-16 22:55 KST.
+- V02-001 closed PASS at 23:01 KST after the user confirmed the two ChatGPT tabs remained properly separated.
+- Current task is V02-002: attempt to Start the exact same GitHub stream in tab B while tab A remains running.

@@ -78,7 +78,7 @@ connectPromptButton.addEventListener("click", async () => {
   try {
     const runtime = await loadCurrentRuntime();
     if (runtime.enabled) {
-      throw new Error("Rerun 실행 중에는 연결 프롬프트를 보낼 수 없습니다. 먼저 Stop을 눌러주세요.");
+      throw new Error("GitHub watcher가 켜져 있을 때는 연결 프롬프트를 보낼 수 없습니다. 먼저 Stop을 눌러주세요.");
     }
 
     await persistFormDraft();
@@ -130,7 +130,7 @@ sessionToggle.addEventListener("click", async () => {
     if (!response?.ok) throw new Error(response?.error || "Start failed");
     await refreshRuntime(response.action === "bootstrapping"
       ? `Initializing repository · tab ${currentTabId}`
-      : `Running on tab ${currentTabId}`);
+      : `Watching GitHub · tab ${currentTabId}`);
   } catch (error) {
     showError(error);
   } finally {
@@ -300,28 +300,32 @@ function renderSessionToggle(runtime) {
   sessionToggle.setAttribute("aria-pressed", String(running));
   sessionToggle.setAttribute(
     "aria-label",
-    running ? "Stop Rerun on this tab" : "Start Rerun on this tab"
+    running ? "Stop GitHub watcher on this tab" : "Start GitHub watcher on this tab"
   );
 }
 
 async function refreshRuntime(transientMessage) {
   if (currentTabId === null) return;
   const runtime = await loadCurrentRuntime();
+  const watching = Boolean(runtime.enabled);
 
-  statusDot.classList.toggle("running", Boolean(runtime.enabled));
+  statusDot.classList.toggle("running", watching);
   const persistentStatus = runtime.bootstrapPending
     ? `Initializing repository · tab ${currentTabId}`
-    : runtime.enabled
-      ? `Running · tab ${currentTabId}`
+    : watching
+      ? `Watching GitHub · tab ${currentTabId}`
       : `Stopped · tab ${currentTabId}${runtime.stopReason ? ` · ${runtime.stopReason}` : ""}`;
   statusLine.textContent = transientMessage || persistentStatus;
   renderSessionToggle(runtime);
   handoffButton.disabled = Boolean(runtime.bootstrapPending);
-  connectPromptButton.disabled = Boolean(runtime.enabled) || connectPromptBusy;
+  connectPromptButton.disabled = watching || connectPromptBusy;
   document.getElementById("tabId").textContent = String(currentTabId);
+  document.getElementById("tabWatcher").textContent = watching ? "Watching" : "Stopped";
   document.getElementById("runId").textContent = runtime.lastRunId || "-";
   document.getElementById("sequence").textContent = runtime.lastSequence ?? "-";
-  document.getElementById("githubStatus").textContent = runtime.lastStatus || "-";
+  document.getElementById("githubStatus").textContent = runtime.lastStatus === "continue"
+    ? "continue · start"
+    : runtime.lastStatus || "-";
   document.getElementById("runCount").textContent = String(runtime.runCount || 0);
   document.getElementById("retryCount").textContent = `${runtime.sameSequenceRetryCount || 0}/${elements.maxRetriesPerSequence.value || DEFAULT_CONFIG.maxRetriesPerSequence}`;
   document.getElementById("lastSentAt").textContent = formatTime(runtime.lastSentAt);

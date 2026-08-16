@@ -17,8 +17,8 @@
       return;
     }
 
-    if (message?.type === "RERUN_HANDOFF") {
-      sendHandoffPrompt(String(message.prompt || ""))
+    if (message?.type === "RERUN_HANDOFF" || message?.type === "RERUN_BOOTSTRAP") {
+      sendDirectPrompt(String(message.prompt || ""))
         .then(() => sendResponse({ sent: true }))
         .catch((error) => sendResponse({
           sent: false,
@@ -94,14 +94,14 @@
     }
   }
 
-  async function sendHandoffPrompt(prompt) {
-    if (!prompt.trim()) throw new Error("handoff prompt is empty");
-    if (!isChatIdle()) throw new Error("새 ChatGPT 탭이 아직 응답 생성 중입니다.");
+  async function sendDirectPrompt(prompt) {
+    if (!prompt.trim()) throw new Error("direct prompt is empty");
+    if (!isChatIdle()) throw new Error("ChatGPT 탭이 아직 응답 생성 중입니다.");
 
     const composer = await waitForComposer(10_000);
-    if (!composer) throw new Error("새 ChatGPT 탭에서 입력창을 찾지 못했습니다.");
+    if (!composer) throw new Error("ChatGPT 탭에서 입력창을 찾지 못했습니다.");
     if (readComposerText(composer).trim()) {
-      throw new Error("새 ChatGPT 탭 입력창이 비어 있지 않습니다.");
+      throw new Error("ChatGPT 탭 입력창이 비어 있지 않습니다.");
     }
 
     await sendPrompt(composer, prompt);

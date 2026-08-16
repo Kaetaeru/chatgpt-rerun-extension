@@ -4,9 +4,13 @@
 
 - Run ID: `replace-me`
 - Sequence: `0`
+- Desired control status: `needs_user`
 - Current task: `TASK-001`
+- Control reason: `Initialize PLAN.md and STATE.md, then publish status=continue.`
 - Phase: `not_started`
 - Last checkpoint (UTC): `replace-me`
+
+`Sequence`, `Desired control status`, `Current task`, and `Control reason` describe the control state that should eventually be published to `control.json`. During a normal run they match `control.json`. During a crash between STATE and control writes, STATE may be exactly one sequence ahead; the next execution must reconcile that handoff instead of repeating verified work.
 
 ## Current Objective
 

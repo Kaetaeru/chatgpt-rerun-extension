@@ -1,9 +1,9 @@
 {
   "version": 1,
   "run_id": "chatgpt-rerun-v02-20260816-01",
-  "sequence": 7,
-  "status": "needs_user",
-  "reason": "v0.2.5 makes new tabs truly Unconnected and requires connection discovery from actual conversation GitHub usage; reload before the final onboarding probe.",
-  "updated_at": "2026-08-16T15:42:00Z",
+  "sequence": 8,
+  "status": "complete",
+  "reason": "V02-001 through V02-008 are verified; latest v0.2.5 syntax checks and 38/38 tests pass with no unresolved blocker.",
+  "updated_at": "2026-08-16T16:05:00Z",
   "task_id": "V02-008"
 }

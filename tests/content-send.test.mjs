@@ -54,3 +54,17 @@ test("automatic handoff failure still falls back to a safe watcher stop", () => 
   assert.match(content, /reason: `auto_handoff_failed: \$\{handoff\?\.error \|\| detail\}`/);
   assert.match(content, /type: "STOP_SESSION"/);
 });
+
+test("approval-aware mode pauses Rerun polling while a GitHub action confirmation is visible", () => {
+  assert.match(content, /if \(await shouldPauseForGitHubApproval\(\)\) return;[\s\S]*type: "POLL"/);
+  assert.match(content, /stored\[key\]\?\.approvalAwareResume/);
+  assert.match(content, /function findGitHubApprovalCard\(\)/);
+  assert.match(content, /ChatGPT가\\s\*GitHub\.\*사용하도록\\s\*허용할까요/);
+  assert.match(content, /allow\\s\+ChatGPT\\s\+to\\s\+use\\s\+GitHub/);
+});
+
+test("approval-aware mode never clicks the GitHub approval button", () => {
+  assert.match(content, /Deliberately do not click the approval button/);
+  assert.doesNotMatch(content, /findGitHubApprovalCard\(\)[\s\S]{0,300}\.click\(/);
+  assert.doesNotMatch(content, /approval(?:Button|Card)[\s\S]{0,120}\.click\(/i);
+});

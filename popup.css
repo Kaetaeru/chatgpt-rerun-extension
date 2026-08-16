@@ -42,6 +42,15 @@ input, textarea {
   font-weight: 400;
   resize: vertical;
 }
+.checkboxRow { display: flex; align-items: center; gap: 7px; }
+.checkboxRow input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  padding: 0;
+  border: initial;
+  border-radius: 0;
+  flex: none;
+}
 input:focus, textarea:focus { outline: 2px solid #0969da33; border-color: #0969da; }
 .muted, .hint { color: #656d76; font-weight: 400; }
 .hint { font-size: 11px; margin: -2px 0 0; line-height: 1.45; }

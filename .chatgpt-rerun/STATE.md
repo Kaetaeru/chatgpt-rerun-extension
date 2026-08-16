@@ -3,28 +3,26 @@
 ## Identity
 
 - Run ID: `chatgpt-rerun-v02-20260816-01`
-- Sequence: `2`
+- Sequence: `3`
 - Desired control status: `continue`
-- Current task: `V02-003`
-- Control reason: `V02-002 duplicate stream rejection verified; finish the per-tab dispatch/retry regression by confirming counters remain scoped to tab A.`
-- Phase: `awaiting_counter_isolation_probe`
-- Last checkpoint (UTC): `2026-08-16T14:07:00Z`
-- Current execution started (UTC): `2026-08-16T14:07:00Z`
-- Current execution hard stop (UTC): `2026-08-16T14:27:00Z`
+- Current task: `V02-004`
+- Control reason: `V02-003 per-tab dispatch/retry regression verified; execute the fresh-chat ownership handoff probe.`
+- Phase: `awaiting_new_chat_handoff`
+- Last checkpoint (UTC): `2026-08-16T14:09:00Z`
+- Current execution started (UTC): `2026-08-16T14:09:00Z`
+- Current execution hard stop (UTC): `2026-08-16T14:29:00Z`
 
 ## Current Objective
 
-Finish V02-003 without repeating already observed dispatch/retry behavior. Confirm in the Side Panels that tab A owns the run/retry activity while tab B, whose duplicate Start was rejected, did not inherit tab A's Sent or Same-sequence retry counters.
+Execute V02-004 from `docs/V02_E2E_TEST_PLAN.md`: in the current owning ChatGPT tab A, use **Continue in new chat** and verify that exactly one fresh ChatGPT tab C receives ownership of the same GitHub workflow without incrementing the GitHub sequence merely because the conversation changed.
 
 ## Completed in This Task
 
-- v0.2 extension Reload gate passed.
-- V02-001 is verified: two ChatGPT tabs kept independent panel/config/draft/runtime state.
-- V02-002 is verified: user attempted Start in tab B with the exact same GitHub stream as running tab A and confirmed the expected collision error appeared.
-- New-sequence regression sub-check is PASS: after GitHub changed seq 0 -> seq 1, the configured resume prompt automatically arrived in owning tab A at 23:03 KST.
-- Same-sequence retry regression sub-check is PASS: a later automatic resume prompt arrived again while control remained seq 1 / continue / V02-002.
-- That same-sequence retry also demonstrates tab A remained the active owner before the duplicate-stream result was reported.
-- `docs/V02_E2E_RESULT.md` records both observations.
+- V02-001 verified: tab-specific Side Panel/config/draft/runtime separation worked.
+- V02-002 verified: duplicate Start on the same GitHub stream in tab B was rejected with the expected error.
+- V02-003 verified: seq 1 new-sequence auto-dispatch occurred in tab A, a same-sequence retry occurred while control remained seq 1, and tab B's counters remained isolated at zero.
+- `docs/V02_E2E_RESULT.md` records the V02-003 counter-isolation evidence.
+- PLAN marks V02-003 verified and V02-004 in_progress.
 
 ## Verification
 
@@ -34,36 +32,40 @@ Finish V02-003 without repeating already observed dispatch/retry behavior. Confi
 | Unit tests | `npm test` | PASS | 20/20 tests. |
 | Manifest JSON | JSON parse | PASS | v0.2 manifest valid. |
 | V02-001 tab/session separation | Chrome user observation | PASS | User confirmed two-tab separation at 23:01 KST. |
-| V02-002 duplicate stream rejection | Chrome Side Panel observation | PASS | User confirmed expected error in tab B before 23:07 KST. |
+| V02-002 duplicate stream rejection | Chrome Side Panel observation | PASS | User confirmed collision error before 23:07 KST. |
 | V02-003 new-sequence dispatch | Chrome runtime observation | PASS | Seq 1 resume prompt automatically arrived in tab A at 23:03 KST. |
 | V02-003 same-sequence retry | Chrome runtime observation | PASS | Another automatic prompt arrived while control remained seq 1. |
-| V02-003 counter isolation | Chrome Side Panel observation | NOT_RUN | Compare Sent and Same-sequence retries in A/B; B must not inherit A's counters. |
+| V02-003 counter isolation | Chrome Side Panel observation | PASS | User confirmed tab B still showed zero run/retry activity at 23:09 KST. |
+| V02-004 new-chat handoff | Chrome runtime observation | NOT_RUN | Must use `Continue in new chat` from the owning tab A. |
 
 ## Pending / Failed
 
-- Open tab A and tab B Side Panels.
-- Compare `Sent` and `Same-sequence retries`.
-- Tab A should show the automatic sends/retry activity already observed.
-- Tab B, whose duplicate Start was rejected, must not show tab A's run/retry counters as its own.
-- Record the result before marking V02-003 verified.
+- In tab A Side Panel, press **Continue in new chat**.
+- Confirm exactly one fresh ChatGPT tab C opens.
+- Confirm old tab A is no longer the running owner and shows a `handed_off_to_tab_<id>` stop reason if its panel is inspected.
+- Confirm tab C receives the copied GitHub config/runtime and becomes the running owner.
+- Confirm a handoff prompt is automatically sent in tab C and includes owner/repo, branch, control path, run_id, and sequence.
+- Confirm tab C reads the active `.chatgpt-rerun` documents and resumes from GitHub STATE without requiring prior conversation text.
+- Do not increment sequence solely because the conversation moved to a new tab/chat.
 
 ## Files / Areas Touched
 
-- `docs/V02_E2E_RESULT.md`: V02-002 PASS and v0.2 same-sequence retry evidence.
-- `.chatgpt-rerun/PLAN.md`: V02-002 verified; V02-003 in_progress.
-- `.chatgpt-rerun/STATE.md`: advanced to seq 2 / V02-003.
+- `docs/V02_E2E_RESULT.md`: V02-003 PASS evidence.
+- `.chatgpt-rerun/PLAN.md`: V02-003 verified; V02-004 in_progress.
+- `.chatgpt-rerun/STATE.md`: advanced to seq 3 / V02-004.
 
 ## Next Exact Action
 
-In the Side Panels for tab A and tab B, compare `Sent` and `Same-sequence retries`. Confirm the rejected tab B did not inherit tab A's counters. Do not repeat the dispatch or retry probe; those are already verified. Once counter isolation is observed, mark V02-003 verified and advance to V02-004 fresh-chat handoff.
+After seq 3 becomes active, wait until the current response is idle, then press **Continue in new chat** in tab A's Side Panel. Observe the newly opened tab C and the old tab A runtime. The expected successful path is one new ChatGPT tab, one automatically delivered handoff prompt containing the GitHub coordinates plus run_id/sequence, tab C becoming the owner, and tab A stopping with a handoff reason. Report what is observed; the new chat itself should then recover from this STATE checkpoint.
 
 ## Do Not Repeat
 
-- Do not repeat V02-001 or V02-002.
+- Do not repeat V02-001, V02-002, or V02-003.
 - Do not rerun static validation unless code changes.
-- Do not intentionally wait for another same-sequence retry just to reconfirm it; it is already observed.
-- Do not mark V02-003 PASS until the per-tab run/retry counter isolation is observed.
+- Do not manually copy conversation text into the new chat.
+- Do not change GitHub sequence merely because the new chat is created.
+- Do not mark V02-004 PASS until the new tab actually receives the handoff and resumes from GitHub.
 
 ## Blockers / User Decisions
 
-- None. One Side Panel counter comparison remains for V02-003.
+- None. The next browser action is `Continue in new chat` from the owning tab A.

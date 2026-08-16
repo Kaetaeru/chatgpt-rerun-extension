@@ -15,6 +15,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   pollIntervalSeconds: 90,
   retryDelaySeconds: 120,
   maxRetriesPerSequence: 2,
+  approvalAwareResume: false,
   maxRuns: Number.MAX_SAFE_INTEGER
 });
 

@@ -11,7 +11,11 @@ let lastEtag = null;
 let cachedControl = null;
 let lastFetchAt = 0;
 
+configureSidePanel().catch((error) => console.error("Failed to configure side panel", error));
+
 chrome.runtime.onInstalled.addListener(async () => {
+  await configureSidePanel();
+
   const stored = await chrome.storage.local.get(Object.keys(DEFAULT_SETTINGS));
   const missing = {};
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
@@ -32,6 +36,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
   return true;
 });
+
+async function configureSidePanel() {
+  if (!chrome.sidePanel?.setPanelBehavior) return;
+  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+}
 
 async function handleMessage(message, sender) {
   switch (message?.type) {

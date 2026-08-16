@@ -1,9 +1,9 @@
 {
   "version": 1,
   "run_id": "chatgpt-rerun-v02-20260816-01",
-  "sequence": 0,
+  "sequence": 1,
   "status": "continue",
-  "reason": "v0.2 extension Reload confirmed; run the two-tab Side Panel/config/runtime isolation probe.",
-  "updated_at": "2026-08-16T13:55:00Z",
-  "task_id": "V02-001"
+  "reason": "V02-001 tab isolation verified; test duplicate GitHub stream rejection in tab B while tab A remains running.",
+  "updated_at": "2026-08-16T14:01:00Z",
+  "task_id": "V02-002"
 }

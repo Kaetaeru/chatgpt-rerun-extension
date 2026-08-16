@@ -42,7 +42,7 @@
           <label>Retries / sequence<input id="maxRetriesPerSequence" type="number" min="0" max="10" /></label>
           <label>GitHub token <span class="muted">optional · recommended</span><input id="githubToken" type="password" autocomplete="off" /></label>
         </div>
-        <label><input id="approvalAwareResume" type="checkbox" /> GitHub 승인 후 자동 계속</label>
+        <label class="checkboxRow"><input id="approvalAwareResume" type="checkbox" /> GitHub 승인 후 자동 계속</label>
         <p class="hint">켜면 ChatGPT의 GitHub 작업 승인 카드가 보이는 동안 Rerun의 polling/재전송을 잠시 멈춥니다. 승인 버튼은 자동으로 누르지 않습니다. 사용자가 직접 승인한 뒤 카드가 사라지면 자동으로 계속합니다. 변경 후 Save connection을 눌러 적용하세요.</p>
         <p class="hint">Rerun은 전체 작업의 send 횟수를 제한하지 않습니다. 동일한 control generation이 바뀌지 않은 채 반복 전송되는 경우에만 `Retries / sequence` 안전장치가 적용됩니다.</p>
         <p class="hint">GitHub token을 넣으면 인증된 conditional polling을 사용해 5초까지 빠르게 감시할 수 있습니다. 토큰이 없으면 GitHub의 60회/시간 비인증 한도를 넘지 않도록 watcher 수에 따라 polling을 자동으로 느리게 조정합니다. GitHub가 rate limit을 반환해도 watcher는 꺼지지 않고 reset/retry 시각까지 자동 대기한 뒤 다시 시작합니다.</p>

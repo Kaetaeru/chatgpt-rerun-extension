@@ -16,7 +16,7 @@ Tab watcher = Watching
       │
       ├─ 설정된 주기로 GitHub control polling
       │
-      ├─ continue ─────────────→ 재개 프롬프트 전송
+      ├─ continue ─────────────→ 재개 프롬프트 자동 제출
       │                         같은 sequence는 제한적 retry
       │
       ├─ complete ───────────┐
@@ -74,6 +74,19 @@ STATUS에는 현재 run/sequence/status/task, 현재 작업, 전체 진행표, �
 - 다음 same-sequence retry는 새로운 20분 예산으로 이어서 수행한다.
 
 상세 규칙은 `.chatgpt-rerun/README.md`와 `docs/PROJECT_PROTOCOL.md`에 있다.
+
+## Reliable automatic submission
+
+v0.2.6부터 Rerun의 자동 dispatch는 단순히 prompt를 composer에 붙여넣는 것으로 성공 처리하지 않는다.
+
+1. prompt 삽입 뒤 editor input/change 상태를 동기화한다.
+2. composer에 실제 text가 들어갔는지 확인한다.
+3. 활성 Send 버튼을 기다리고 클릭한다.
+4. Send 버튼이 활성화되지 않으면 Enter 제출을 fallback으로 시도한다.
+5. composer가 비워지거나 ChatGPT generation이 시작된 증거를 확인한 뒤에만 sequence를 ACK한다.
+6. 실제 제출 증거가 없으면 `send_failed`로 처리한다.
+
+이 제출 경로는 normal resume뿐 아니라 `RERUN_HANDOFF`, `RERUN_CONNECT`, `RERUN_BOOTSTRAP` direct prompt에도 공통으로 사용된다.
 
 ## Per-tab persistent Side Panel
 
@@ -151,13 +164,17 @@ Rerun 연결 프롬프트
 
 대화 컨텍스트가 길어졌다면 **Continue in new chat**으로 watcher ownership을 새 ChatGPT 탭에 이관한다.
 
+v0.2.7부터 fresh-chat handoff는 GitHub work status와 독립적인 watcher transfer다.
+
 - 새 ChatGPT 탭을 연다.
 - 기존 탭은 handoff 중 polling을 잠시 멈춘다.
 - 같은 GitHub config/runtime ownership을 새 tab ID로 이관한다.
-- 새 채팅에는 owner/repo, branch, control path, run_id, sequence가 포함된 handoff prompt를 보낸다.
+- 새 채팅에는 owner/repo, branch, control path, run_id, sequence, **status, task_id**가 포함된 handoff prompt를 자동 제출한다.
 - 이전 대화 본문은 복사하지 않고 GitHub README/control/STATE/PLAN에서 복구한다.
 - handoff 자체 때문에 GitHub sequence를 증가시키지 않는다.
-- GitHub work status가 terminal이면 handoff 요청은 거부하지만 기존 watcher는 계속 Watching 상태를 유지한다.
+- `continue`이면 새 채팅이 STATE의 미완료 지점부터 실제 작업을 재개한다.
+- `complete`, `needs_user`, `blocked`여도 handoff를 거부하지 않는다. 새 채팅은 repo/run context만 복구하고 구현은 시작하지 않으며 watcher는 계속 polling한다.
+- terminal handoff 후 GitHub가 다시 `continue`가 되면 Start를 다시 누르지 않아도 새 채팅에서 자동 재개한다.
 
 확장프로그램은 ChatGPT의 앱 승인/OAuth/관리자 승인 UI를 자동 클릭하지 않는다.
 
@@ -261,7 +278,7 @@ ChatGPT 또는 GitHub rate/service limit을 우회하도록 재시도하지 않�
 
 현재 v0.2.x 실제 Chrome 검증은 `docs/V02_E2E_TEST_PLAN.md`를 따른다. 결과는 `docs/V02_E2E_RESULT.md`에 누적한다.
 
-검증 범위에는 per-tab isolation, same-stream collision guard, dispatch/retry, fresh-chat handoff, persistent watcher across terminal GitHub work states, unified Start/Stop watcher, explicit unconnected-first connection onboarding, fallback bootstrap이 포함된다.
+검증 범위에는 per-tab isolation, same-stream collision guard, dispatch/retry, fresh-chat handoff, persistent watcher across terminal GitHub work states, unified Start/Stop watcher, explicit unconnected-first connection onboarding, fallback bootstrap, reliable auto-submit, status-independent fresh-chat handoff가 포함된다.
 
 ## 개발
 
@@ -270,4 +287,4 @@ npm run check
 npm test
 ```
 
-`npm test`는 control parser/schema, polling/retry, UI watcher semantics, unconnected/connection/bootstrap flow, terminal watcher behavior 회귀를 검증한다.
+`npm test`는 control parser/schema, polling/retry, UI watcher semantics, unconnected/connection/bootstrap flow, terminal watcher behavior, prompt auto-submit, status-aware handoff 회귀를 검증한다.

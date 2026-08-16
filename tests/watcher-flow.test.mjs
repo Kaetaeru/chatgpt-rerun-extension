@@ -20,8 +20,10 @@ test("terminal state arms the same sequence for an immediate later continue", ()
   assert.match(background, /lastHandledSequence: armedLastHandled/);
 });
 
-test("watcher safeguards wait instead of disabling polling", () => {
-  assert.match(background, /return \{ action: "wait", reason: "max_runs", control \};/);
+test("watcher has no lifetime max-runs gate but keeps retry and regression safeguards", () => {
+  assert.doesNotMatch(background, /reason: "max_runs"/);
+  assert.doesNotMatch(background, /Max sends 한도/);
+  assert.doesNotMatch(background, /normalizeMaxRuns/);
   assert.match(background, /return \{ action: "wait", reason: "retry_limit", control \};/);
   assert.match(background, /return \{ action: "wait", reason: "sequence_regressed", control \};/);
 });

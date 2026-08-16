@@ -10,7 +10,8 @@ GitHub에 보존된 작업 상태를 기준으로 중단된 ChatGPT 장기 작�
 ChatGPT 작업
    │
    ├─ PLAN.md / STATE.md 갱신
-   └─ control.json을 마지막에 게시
+   ├─ control.json을 마지막 authoritative write로 게시
+   └─ STATUS.md를 사람용 현황판으로 갱신
             │
             ▼
 Chrome Extension
@@ -24,6 +25,23 @@ Chrome Extension
 
 응답이 구현/검증 도중 끊기거나 20분 실행 시간 예산 때문에 체크포인트 종료되면 같은 `continue` sequence가 남는다. retry 시간이 지난 뒤 ChatGPT 탭이 유휴 상태면 같은 sequence를 다시 실행하고, ChatGPT는 `STATE.md` 체크포인트에서 재개한다.
 
+## GitHub Live Status
+
+사용자가 자동화 상태를 이해하기 위해 PLAN/STATE/control을 직접 해석할 필요가 없도록 `.chatgpt-rerun/STATUS.md`를 사람용 현황판으로 유지한다.
+
+STATUS에는 현재 run/sequence/status/task, 지금 하는 일, 전체 진행표, 최근 검증, 사용자가 해야 할 일, 다음 자동 작업, blocker/risk를 짧고 명확하게 표시한다.
+
+- task/sequence/status/blocker/검증 결과가 바뀌면 즉시 갱신한다.
+- 긴 ChatGPT 실행에서는 마지막 STATUS 갱신 후 약 5분이 지나고 표시할 내용이 달라졌다면 다음 안전한 체크포인트에서 갱신한다.
+- 18분 time-budget checkpoint와 실행 종료 전 내용이 달라졌다면 갱신한다.
+- 내용이 같으면 시각만 바꾸기 위한 빈 heartbeat commit은 만들지 않는다.
+- ChatGPT가 idle/stopped인 동안에는 실제 진행이 없으므로 빈 주기 커밋을 만들지 않는다.
+- GitHub token, 비밀, 민감한 사용자 입력은 STATUS에 넣지 않는다.
+
+**STATUS는 presentation-only다.** 자동 재개와 crash recovery는 여전히 `control.json` / `STATE.md` / `PLAN.md`만 사용한다. STATUS가 stale하거나 누락돼도 Rerun은 정상 복구할 수 있어야 한다.
+
+확장프로그램 자체는 이 현황판을 쓰기 위해 GitHub write 권한을 추가로 요구하지 않는다. STATUS 작성은 GitHub를 사용할 수 있는 ChatGPT 실행 프로토콜이 담당한다.
+
 ## 20-minute execution policy
 
 **한 번의 ChatGPT 실행은 반드시 20분을 넘기지 않는다.** 이 제한은 전체 sequence가 아니라 개별 실행(turn) 기준이다.
@@ -33,6 +51,7 @@ Chrome Extension
 - 20분 전에 반드시 응답을 종료한다.
 - task가 아직 검증 완료가 아니라면 `continue` + 같은 sequence를 유지한다.
 - `STATE.md`에 완료 내용, 검증 결과, 미완료 항목, `Next Exact Action`을 남긴다.
+- STATUS 내용이 달라졌다면 사용자 현황판도 갱신한다.
 - 다음 same-sequence retry는 새로운 20분 예산으로 이어서 수행한다.
 - 시간 제한 때문에 검증을 생략하고 task를 `verified`/`complete`로 처리하지 않는다.
 
@@ -104,6 +123,7 @@ Start는 ChatGPT 탭이 확장프로그램보다 먼저 열려 있었어도 동�
 ├── README.md
 ├── PLAN.md
 ├── STATE.md
+├── STATUS.md
 └── control.json
 ```
 
@@ -112,6 +132,7 @@ Start는 ChatGPT 탭이 확장프로그램보다 먼저 열려 있었어도 동�
 - `README.md`: 매 실행 가장 먼저 읽는 운영 계약.
 - `PLAN.md`: 전체 계획, 의존성, acceptance criteria.
 - `STATE.md`: 중단 복구 체크포인트, 실행 시간 예산, 실제 검증 결과.
+- `STATUS.md`: 사용자가 GitHub에서 바로 읽는 human-readable live dashboard. 자동화 판단에는 사용하지 않음.
 - `control.json`: 확장프로그램이 읽는 최소 실행 신호.
 
 ## Control 상태
@@ -143,11 +164,13 @@ v1은 네 상태만 허용한다.
 
 ## 중요한 쓰기 순서
 
-상태 전환은 반드시 다음 순서다.
+권위 있는 상태 전환은 반드시 다음 순서다.
 
 1. `PLAN.md`
 2. `STATE.md`
-3. **`control.json` 마지막**
+3. **`control.json` 마지막 authoritative write**
+
+그 뒤 사용자가 볼 STATUS 내용이 달라졌다면 `STATUS.md`를 presentation-only로 갱신할 수 있다. STATUS 쓰기 실패나 지연은 control/STATE의 유효성을 바꾸지 않는다.
 
 STATE가 control보다 정확히 1 sequence 앞선 채 중단된 경우 다음 실행은 이전 task를 반복하지 않고 누락된 control handoff만 게시한다. 자세한 reconciliation 규칙은 `docs/PROJECT_PROTOCOL.md`에 있다.
 
@@ -162,12 +185,15 @@ STATE가 control보다 정확히 1 sequence 앞선 채 중단된 경우 다음 �
 7. Side Panel에 Owner, Repository, Branch, Control file을 입력한다.
 8. 중지 상태의 단일 session control에서 **Start**를 누른다.
 9. 실행 중에는 같은 control이 **Stop**으로 표시되며, 누르면 해당 탭 Rerun만 중지한다.
+10. 작업 진행 상황은 대상 저장소의 `.chatgpt-rerun/STATUS.md`를 열어 확인한다.
 
 ## GitHub 접근
 
 공개 저장소는 token 없이 읽을 수 있다. token이 없으면 polling을 최소 60초로 제한한다.
 
 빠른 polling 또는 private repository가 필요하면 대상 저장소 contents read 권한으로 제한된 GitHub token을 사용한다. token과 설정 draft는 현재 Chrome profile의 `chrome.storage.local`에 저장되므로 공유 PC에서는 사용하지 않는다.
+
+확장프로그램의 token은 control polling용이다. STATUS를 작성하려고 확장프로그램에 GitHub contents write 권한을 요구하지 않는다.
 
 ## 안전 장치
 

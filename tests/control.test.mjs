@@ -189,11 +189,49 @@ test("invalid tab IDs are rejected", () => {
   assert.throws(() => tabRuntimeKey("x"), /valid Chrome tab ID/);
 });
 
-test("Rerun connection prompt can identify the repository from conversation context", () => {
+test("Rerun connection prompt starts from actual conversation GitHub usage, not Side Panel hints", () => {
+  const prompt = buildRerunConnectionPrompt({
+    owner: "wrong-owner",
+    repo: "wrong-repo",
+    branch: "wrong-branch"
+  });
+
+  assert.match(prompt, /Side Panel은 최초 연결 전에는 의도적으로 Unconnected/);
+  assert.match(prompt, /Side Panel 값이나 이 프롬프트 자체에 적힌 예시를 repository 식별 근거로 사용하지 마/);
+  assert.match(prompt, /GitHub 앱\/도구로 실제 접근하거나 작업한 repository/);
+  assert.doesNotMatch(prompt, /wrong-owner/);
+  assert.doesNotMatch(prompt, /wrong-repo/);
+  assert.doesNotMatch(prompt, /wrong-branch/);
+});
+
+test("Rerun connection prompt refuses writes when the chat is truly unconnected or ambiguous", () => {
   const prompt = buildRerunConnectionPrompt();
 
-  assert.match(prompt, /현재 대화의 GitHub 사용 맥락/);
-  assert.match(prompt, /후보가 둘 이상이거나 확신이 없으면/);
+  assert.match(prompt, /RERUN_CONNECTION: UNCONNECTED/);
+  assert.match(prompt, /아무 파일도 쓰지 말고/);
+  assert.match(prompt, /RERUN_CONNECTION: AMBIGUOUS/);
+  assert.match(prompt, /후보가 둘 이상/);
+});
+
+test("Rerun connection prompt reports complete connected repository coordinates and setup state", () => {
+  const prompt = buildRerunConnectionPrompt();
+
+  assert.match(prompt, /RERUN_CONNECTION: CONNECTED/);
+  assert.match(prompt, /repository full name\(owner\/repo\)/);
+  assert.match(prompt, /canonical GitHub repository URL/);
+  assert.match(prompt, /정확한 branch\/ref/);
+  assert.match(prompt, /control path/);
+  assert.match(prompt, /run_id/);
+  assert.match(prompt, /sequence/);
+  assert.match(prompt, /control status/);
+  assert.match(prompt, /task_id/);
+  assert.match(prompt, /프로젝트 목표 요약/);
+  assert.match(prompt, /assistant 답변을 파싱/);
+});
+
+test("Rerun connection prompt creates the five-file protocol but stops before implementation", () => {
+  const prompt = buildRerunConnectionPrompt();
+
   assert.match(prompt, /README\.md/);
   assert.match(prompt, /PLAN\.md/);
   assert.match(prompt, /STATE\.md/);
@@ -201,20 +239,7 @@ test("Rerun connection prompt can identify the repository from conversation cont
   assert.match(prompt, /control\.json/);
   assert.match(prompt, /기존 run_id, sequence, task, 검증 기록을 초기화하거나 덮어쓰지 마/);
   assert.match(prompt, /마지막 authoritative write/);
-  assert.match(prompt, /실제 구현 task를 시작하지 말고 종료/);
-});
-
-test("Rerun connection prompt treats side-panel coordinates as a hint", () => {
-  const prompt = buildRerunConnectionPrompt({
-    owner: "example",
-    repo: "project",
-    branch: "dev",
-    path: ".chatgpt-rerun/control.json"
-  });
-
-  assert.match(prompt, /example\/project/);
-  assert.match(prompt, /branch dev/);
-  assert.match(prompt, /실제로 작업 중인 저장소와 일치하는지 확인/);
+  assert.match(prompt, /실제 구현 task는 시작하지 말고 종료/);
 });
 
 test("auto-bootstrap only applies to the standard control path", () => {

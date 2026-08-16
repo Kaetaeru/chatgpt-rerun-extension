@@ -13,6 +13,7 @@
 
 ## Constraints
 
+- 한 번의 ChatGPT 실행(turn)은 시작부터 종료까지 20분 hard stop을 넘기지 않는다. 미완료 시 STATE를 체크포인트하고 같은 sequence에서 다음 실행으로 재개한다.
 - <!-- 변경하면 안 되는 범위, 호환성, 기술 제약 등을 기록한다. -->
 
 ## Validation Baseline

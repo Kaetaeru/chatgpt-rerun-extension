@@ -23,15 +23,19 @@
         </div>
         <div class="grid two">
           <label>Branch<input id="branch" autocomplete="off" value="main" /></label>
-          <label>Max runs<input id="maxRuns" type="number" min="1" max="100" /></label>
+          <label>Max sends<input id="maxRuns" type="number" min="1" max="100" /></label>
         </div>
         <label>Control file<input id="path" autocomplete="off" /></label>
-        <label>Resume prompt<textarea id="resumePrompt" rows="2"></textarea></label>
+        <label>Resume prompt<textarea id="resumePrompt" rows="4"></textarea></label>
         <div class="grid two">
           <label>Poll seconds<input id="pollIntervalSeconds" type="number" min="5" /></label>
+          <label>Retry after seconds<input id="retryDelaySeconds" type="number" min="10" /></label>
+        </div>
+        <div class="grid two">
+          <label>Retries / sequence<input id="maxRetriesPerSequence" type="number" min="0" max="10" /></label>
           <label>GitHub token <span class="muted">optional</span><input id="githubToken" type="password" autocomplete="off" /></label>
         </div>
-        <p class="hint">토큰이 없으면 GitHub API 제한 때문에 최소 60초 간격을 사용합니다. 토큰이 있으면 최소 5초입니다.</p>
+        <p class="hint">같은 sequence가 그대로 남아 있고 ChatGPT가 유휴 상태면 Retry after 이후 재개 프롬프트를 다시 보냅니다. 토큰이 없으면 GitHub polling은 최소 60초입니다.</p>
       </section>
 
       <section class="runtime">
@@ -39,6 +43,8 @@
         <div><span>Sequence</span><strong id="sequence">-</strong></div>
         <div><span>GitHub status</span><strong id="githubStatus">-</strong></div>
         <div><span>Sent</span><strong id="runCount">0</strong></div>
+        <div><span>Same-sequence retries</span><strong id="retryCount">0</strong></div>
+        <div><span>Last sent</span><strong id="lastSentAt">-</strong></div>
         <div><span>Rate remaining</span><strong id="rateLimit">-</strong></div>
       </section>
 

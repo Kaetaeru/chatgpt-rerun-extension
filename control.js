@@ -37,7 +37,10 @@ export const DEFAULT_RUNTIME = Object.freeze({
   rateLimitResetAt: null,
   handoffPending: false,
   handoffFromTabId: null,
-  handoffToTabId: null
+  handoffToTabId: null,
+  bootstrapPending: false,
+  bootstrapRequestedAt: null,
+  bootstrapCompletedAt: null
 });
 
 // Compatibility surface for legacy single-session storage migration.
@@ -208,6 +211,31 @@ export function streamKey(settings) {
   return [settings.owner, settings.repo, settings.branch, settings.path]
     .map((part) => String(part || "").trim())
     .join("/");
+}
+
+export function isAutoBootstrapPath(config) {
+  const path = String(config?.path || DEFAULT_CONFIG.path).replace(/^\/+/, "").trim();
+  return path === DEFAULT_CONFIG.path;
+}
+
+export function buildRepositoryBootstrapPrompt(config) {
+  const owner = String(config.owner || "").trim();
+  const repo = String(config.repo || "").trim();
+  const branch = String(config.branch || "main").trim() || "main";
+  const path = String(config.path || DEFAULT_CONFIG.path).replace(/^\/+/, "").trim() || DEFAULT_CONFIG.path;
+
+  return [
+    `GitHub 저장소 ${owner}/${repo}, branch ${branch}에 ChatGPT Rerun 표준 상태 디렉터리가 아직 없다.`,
+    `대상 control 경로는 ${path}다. 자동 작업을 시작하기 전에 저장소를 bootstrap해.`,
+    "먼저 대상 저장소의 README, AGENTS.md, CONTRIBUTING.md 등 프로젝트 지침과 이 대화의 사용자 목표를 확인해 실제 작업 목표를 파악해.",
+    "그 다음 `.chatgpt-rerun/README.md`, `PLAN.md`, `STATE.md`, `STATUS.md`, `control.json` 다섯 파일을 생성하거나, 일부가 이미 있으면 내용을 보존하며 호환 가능한 누락 파일만 보완해. 기존 파일을 무조건 덮어쓰지 마.",
+    "README.md에는 매 실행 read order(README -> control -> STATE -> PLAN), control/STATE reconciliation, PLAN -> STATE -> control.json authoritative write order, 20분 hard stop/18분 checkpoint, STATUS.md의 사람용 projection 규칙을 포함해.",
+    "PLAN.md에는 이 대화와 저장소에서 파악한 실제 목표, task ID, 의존성, acceptance criteria와 검증 방법을 작성해. STATE.md에는 새 고유 run_id, sequence 0, 첫 task, 실제 checkpoint, 다음 정확한 행동을 작성해.",
+    "STATUS.md는 사람이 GitHub에서 바로 이해할 수 있도록 현재 목표, 진행률, 최근 검증, 다음 행동, blocker를 요약하고 상태 변화 시 즉시, 긴 실행 중에는 약 5분 freshness를 목표로 갱신하도록 규칙을 적어. STATUS는 reconciliation source of truth가 아니어야 해.",
+    "마지막으로만 control.json을 version 1, 같은 run_id, sequence 0, status `continue`, 첫 task_id와 현재 ISO updated_at으로 게시해. `working` 상태는 사용하지 마.",
+    "bootstrap 과정에서 GitHub 쓰기 권한이나 프로젝트 목표가 불명확하면 추측해서 control을 게시하지 말고 필요한 내용을 이 대화에서 요청해.",
+    "control.json까지 정상 게시되면 이번 bootstrap 실행에서는 첫 구현 task를 시작하지 말고 종료해. 확장프로그램이 새 control을 감지해서 표준 재개 프롬프트로 다음 실행을 자동 시작한다."
+  ].join(" ");
 }
 
 export function buildNewChatHandoffPrompt(config, control) {

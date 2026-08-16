@@ -7,7 +7,7 @@ Runbook: `docs/V02_E2E_TEST_PLAN.md`
 - Run ID: `chatgpt-rerun-v02-20260816-01`
 - Branch: `agent/mvp-autoresume`
 - Status: `IN_PROGRESS`
-- Control: transitioning from seq 0 / V02-001 to seq 1 / V02-002
+- Control: seq 1 / `continue` / V02-002
 - Extension Reload confirmed: `2026-08-16T13:55:00Z` (22:55 KST)
 
 ## Static validation
@@ -23,13 +23,23 @@ Runbook: `docs/V02_E2E_TEST_PLAN.md`
 | Task | Result | Evidence |
 |---|---|---|
 | V02-001 tab-scoped panel/storage | PASS | After v0.2 Reload, seq 0 auto-dispatch worked in tab A. User then completed the two-tab probe and confirmed the tabs were properly separated: tab-specific panel/session state stayed independent and starting the owning tab did not cause the other tab to run. |
-| V02-002 same-stream collision guard | IN_PROGRESS | Next probe: configure tab B with the exact same owner/repo/branch/control path as running tab A and press Start; B must reject the duplicate stream while A remains running. |
-| V02-003 core dispatch/retry regression | NOT_RUN | Initial seq 0 dispatch on A is observed; full new-sequence/same-sequence regression probe remains. |
+| V02-002 same-stream collision guard | IN_PROGRESS | Tab A remains the owning session. Still requires pressing Start in tab B with the exact same owner/repo/branch/control path and observing rejection while A remains running. |
+| V02-003 core dispatch/retry regression | IN_PROGRESS | New-sequence dispatch condition is now observed: after control advanced from seq 0 to seq 1, the configured resume prompt arrived automatically in owning tab A at 23:03 KST. Same-sequence retry under v0.2 still remains to be observed. |
 | V02-004 Continue in new chat | NOT_RUN | |
 | V02-005 handoff race/failure safeguards | NOT_RUN | |
 | V02-006 terminal isolation | NOT_RUN | |
 
 ## Event log
+
+### v0.2 seq 1 new-sequence auto-dispatch observed
+
+- Time: `2026-08-16T14:03:00Z` (23:03 KST)
+- Control before: seq 1 / continue / V02-002
+- Trigger observed: exact configured resume prompt was automatically delivered in the current owning ChatGPT tab after GitHub advanced from seq 0 to seq 1.
+- Preflight: control and STATE matched on run_id `chatgpt-rerun-v02-20260816-01`, sequence 1, `continue`, V02-002.
+- Evidence gained: v0.2 per-tab runtime preserves new-sequence automatic dispatch on the owning tab.
+- Evidence not gained: no observation yet that tab B rejects an attempted duplicate-stream Start.
+- Result: V02-003 new-sequence-dispatch sub-check PASS; V02-003 remains IN_PROGRESS until same-sequence retry is observed. V02-002 remains IN_PROGRESS.
 
 ### V02-001 tab isolation PASS
 
@@ -65,4 +75,4 @@ The previous run `chatgpt-rerun-dogfood-20260816-02` verified initial dispatch, 
 
 ## Next event
 
-Run V02-002. Keep tab A running on `Kaetaeru/chatgpt-rerun-extension`, branch `agent/mvp-autoresume`, control `.chatgpt-rerun/control.json`. In tab B enter the exact same GitHub coordinates and press Start. PASS requires B to reject the duplicate stream with an already-running-tab error while A remains running and unaffected.
+Complete V02-002. Keep tab A running on `Kaetaeru/chatgpt-rerun-extension`, branch `agent/mvp-autoresume`, control `.chatgpt-rerun/control.json`. In tab B enter the exact same GitHub coordinates and press Start. PASS requires B to reject the duplicate stream with an already-running-tab error while A remains running and unaffected.

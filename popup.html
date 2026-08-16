@@ -16,7 +16,7 @@
         <span id="statusDot" aria-hidden="true"></span>
       </header>
 
-      <p class="notice">Side Panel은 페이지를 클릭해도 열린 상태를 유지합니다. 모든 입력값은 입력 즉시 임시 저장되어 패널을 닫았다 다시 열어도 복원됩니다.</p>
+      <p class="notice">이 패널과 Rerun 상태는 현재 ChatGPT 탭에만 연결됩니다. 다른 ChatGPT 탭은 별도 설정과 별도 Rerun을 가질 수 있습니다.</p>
 
       <section>
         <div class="grid two">
@@ -37,10 +37,11 @@
           <label>Retries / sequence<input id="maxRetriesPerSequence" type="number" min="0" max="10" /></label>
           <label>GitHub token <span class="muted">optional</span><input id="githubToken" type="password" autocomplete="off" /></label>
         </div>
-        <p class="hint">같은 sequence가 그대로 남아 있고 ChatGPT가 유휴 상태면 Retry after 이후 재개 프롬프트를 다시 보냅니다. 토큰이 없으면 GitHub polling은 최소 60초입니다.</p>
+        <p class="hint">같은 GitHub control stream은 동시에 한 탭만 실행할 수 있습니다. 다른 저장소/브랜치/control 파일은 각 탭에서 독립적으로 실행할 수 있습니다.</p>
       </section>
 
       <section class="runtime">
+        <div><span>Chrome tab</span><strong id="tabId">-</strong></div>
         <div><span>Run</span><strong id="runId">-</strong></div>
         <div><span>Sequence</span><strong id="sequence">-</strong></div>
         <div><span>GitHub status</span><strong id="githubStatus">-</strong></div>
@@ -50,12 +51,18 @@
         <div><span>Rate remaining</span><strong id="rateLimit">-</strong></div>
       </section>
 
+      <section class="handoffBox">
+        <strong>대화 컨텍스트가 부족할 때</strong>
+        <p>현재 대화가 너무 길어졌거나 더 이상 이어가기 어렵다면 새 ChatGPT 탭을 열고 같은 GitHub run/sequence에서 재개합니다. 이전 대화 본문은 복사하지 않고 GitHub STATE를 source of truth로 사용합니다.</p>
+        <button id="handoff" class="secondary wide">Continue in new chat</button>
+      </section>
+
       <p id="errorBox" class="error" hidden></p>
 
       <footer>
         <button id="save" class="secondary">Save settings</button>
-        <button id="stop" class="danger">Stop</button>
-        <button id="start" class="primary">Start on active ChatGPT tab</button>
+        <button id="stop" class="danger">Stop this tab</button>
+        <button id="start" class="primary">Start this tab</button>
       </footer>
     </main>
     <script type="module" src="popup.js"></script>

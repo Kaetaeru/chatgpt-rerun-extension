@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Kaetaeru/chatgpt-rerun-extension/schemas/control.schema.json",
+  "title": "ChatGPT Rerun Control v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "run_id", "sequence", "status", "updated_at"],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "status": {
+      "enum": ["continue", "complete", "needs_user", "blocked"]
+    },
+    "reason": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

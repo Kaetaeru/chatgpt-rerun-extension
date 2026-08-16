@@ -47,8 +47,9 @@ input:focus, textarea:focus { outline: 2px solid #0969da33; border-color: #0969d
 .runtime span { color: #656d76; }
 .runtime strong { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .error { font-size: 11px; color: #cf222e; background: #ffebe9; border: 1px solid #ff8182; border-radius: 6px; padding: 8px; }
-footer { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 8px; position: sticky; bottom: 0; padding-top: 10px; background: #fff; }
+footer { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; position: sticky; bottom: 0; padding-top: 10px; background: #fff; }
 button { border: 1px solid transparent; border-radius: 7px; padding: 8px 10px; font-weight: 600; cursor: pointer; }
+button:disabled { opacity: 0.6; cursor: default; }
 button.primary { background: #1f883d; color: white; }
 button.secondary { background: #f6f8fa; border-color: #d0d7de; color: #24292f; }
 button.danger { background: #fff; border-color: #ff8182; color: #cf222e; }
@@ -56,6 +57,4 @@ button.wide { width: 100%; }
 
 @media (max-width: 360px) {
   .grid.two { grid-template-columns: 1fr; gap: 0; }
-  footer { grid-template-columns: 1fr 1fr; }
-  button.primary { grid-column: 1 / -1; }
 }

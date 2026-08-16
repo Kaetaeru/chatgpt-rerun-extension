@@ -37,7 +37,7 @@
           <label>Retries / sequence<input id="maxRetriesPerSequence" type="number" min="0" max="10" /></label>
           <label>GitHub token <span class="muted">optional</span><input id="githubToken" type="password" autocomplete="off" /></label>
         </div>
-        <p class="hint">같은 GitHub control stream은 동시에 한 탭만 실행할 수 있습니다. 다른 저장소/브랜치/control 파일은 각 탭에서 독립적으로 실행할 수 있습니다.</p>
+        <p class="hint">같은 GitHub control stream은 동시에 한 탭만 실행할 수 있습니다. 기본 `.chatgpt-rerun/control.json`이 없는 접근 가능한 저장소에서 Start를 누르면 ChatGPT가 먼저 표준 README / PLAN / STATE / STATUS / control 파일을 초기화한 뒤 자동 실행을 이어갑니다.</p>
       </section>
 
       <section class="runtime">

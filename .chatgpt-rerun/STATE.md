@@ -21,13 +21,15 @@ Execute E2E-001 from `docs/E2E_TEST_PLAN.md`: verify the new persistent Side Pan
 - Form drafts now persist immediately in `chrome.storage.local`.
 - Start now pings the active ChatGPT tab, injects `content.js` when absent, enables the target-tab session, and sends a wake message.
 - Side Panel action behavior configured in the service worker.
+- README and E2E runbook updated for the persistent Side Panel flow.
 
 ## Verification
 
 | Check | Command | Result | Evidence / note |
 |---|---|---|---|
-| Unit tests | `npm test` | NOT_RUN | Must be rerun against latest branch. |
-| Syntax | `npm run check` | NOT_RUN | Must be rerun against latest branch. |
+| Unit tests | `node --test control.test.mjs` | PASS | 16/16 protocol tests passed against the current control/test contents. |
+| Startup script syntax | `node --check background.js`, `content.js`, `popup.js` | PASS | All three modified JavaScript entrypoints parsed successfully. |
+| Manifest JSON | JSON parse | PASS | Updated Side Panel/scripting manifest parsed successfully. |
 | Side Panel persistence | Chrome runtime observation | NOT_RUN | Requires user reload/retest. |
 | Draft restore after panel close/reopen | Chrome runtime observation | NOT_RUN | Requires user reload/retest. |
 | Start on already-open ChatGPT tab | Chrome runtime observation | NOT_RUN | Requires user reload/retest. |
@@ -35,8 +37,8 @@ Execute E2E-001 from `docs/E2E_TEST_PLAN.md`: verify the new persistent Side Pan
 
 ## Pending / Failed
 
-- User must pull/update the latest branch and reload the unpacked extension.
-- E2E-001 current run has not yet been triggered.
+- User must update the local checkout and reload the unpacked extension.
+- E2E-001 current run has not yet been triggered in Chrome.
 
 ## Files / Areas Touched
 
@@ -45,7 +47,7 @@ Execute E2E-001 from `docs/E2E_TEST_PLAN.md`: verify the new persistent Side Pan
 - `content.js`: ping/wake lifecycle for on-demand bootstrap.
 - `popup.js`: draft persistence and Start ping/inject/wake flow.
 - `popup.html`, `popup.css`: persistent Side Panel UI.
-- `docs/E2E_TEST_PLAN.md`, `docs/E2E_RESULT.md`: startup regression/retest protocol.
+- `README.md`, `docs/E2E_TEST_PLAN.md`, `docs/E2E_RESULT.md`: startup regression/retest documentation.
 
 ## Next Exact Action
 

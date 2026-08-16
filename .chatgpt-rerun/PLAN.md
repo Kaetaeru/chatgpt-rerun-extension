@@ -2,7 +2,7 @@
 
 ## Goal
 
-Validate ChatGPT Rerun v0.2.x after the session architecture changed from one browser-global runtime to independent per-tab runtimes, verify fresh-chat GitHub-backed handoff, the state-driven Start/Stop UX, human-readable live STATUS, and automatic initialization of new GitHub repositories that do not yet contain Rerun state.
+Validate ChatGPT Rerun v0.2.x after the session architecture changed from one browser-global runtime to independent per-tab runtimes, verify fresh-chat GitHub-backed handoff, the state-driven Start/Stop UX, human-readable live STATUS, and a project-onboarding flow where ChatGPT can explicitly install Rerun state into the GitHub repository already known in the current conversation.
 
 ## Definition of Done
 
@@ -13,7 +13,7 @@ Validate ChatGPT Rerun v0.2.x after the session architecture changed from one br
 - [ ] V02-005 handoff race/failure behavior verified to the extent safely reproducible.
 - [ ] V02-006 terminal state stops only the owning tab session.
 - [ ] V02-007 single state-driven Start/Stop toggle verified.
-- [ ] V02-008 automatic repository bootstrap verified on a separate safe test repository.
+- [ ] V02-008 explicit Rerun connection-prompt onboarding verified on a separate safe project.
 - [ ] `docs/V02_E2E_TEST_PLAN.md` evidence is complete.
 - [ ] No unresolved blocker remains.
 
@@ -28,9 +28,11 @@ Validate ChatGPT Rerun v0.2.x after the session architecture changed from one br
 - Do not parse assistant output to detect token/context-limit text. New-chat continuation is an explicit GitHub-backed handoff.
 - Do not automate clicks on ChatGPT app approval, OAuth authorization, or administrator-approval UI. Repeated GitHub app-use approval is handled by ChatGPT app permissions where available.
 - When code changes require an unpacked-extension Reload, stop the active dogfood run with `needs_user` before relying on the new behavior.
-- Automatic repository bootstrap is allowed only when the configured control path is the standard `.chatgpt-rerun/control.json` and the configured repository/branch is independently readable with the extension's current GitHub read authentication.
-- Bootstrap GitHub writes are performed by the connected ChatGPT GitHub app, not by granting the Chrome extension contents-write permission.
-- V02-008 must use a separate safe test repository/branch; never delete an existing project's Rerun files merely to manufacture a bootstrap test.
+- The primary new-project onboarding is explicit: while Stopped, press `Rerun 연결 프롬프트`, let ChatGPT identify the GitHub repository already known in the conversation and create/repair the five standard files, then configure/confirm owner/repo/branch and press Start.
+- The connection prompt must not guess between multiple repository candidates and must not reset or overwrite an existing active Rerun run.
+- v0.2.2 automatic Start bootstrap remains only as a safety fallback for the standard `.chatgpt-rerun/control.json` path on a readable repo/branch.
+- Bootstrap/connection GitHub writes are performed by the connected ChatGPT GitHub app, not by granting the Chrome extension contents-write permission.
+- V02-008 must use a separate safe test project; never delete an existing project's Rerun files merely to manufacture onboarding evidence.
 
 ## Validation Baseline
 
@@ -51,7 +53,7 @@ Validate ChatGPT Rerun v0.2.x after the session architecture changed from one br
 | V02-005 | in_progress | V02-004 | Verify handoff race/failure safeguards | New owner receives the next sequence; successful handoff has no duplicate transfer; implementation/tests prove handoffPending suppression and deterministic failure cleanup to the extent safely reproducible |
 | V02-006 | pending | V02-003 | Verify terminal isolation | complete/needs_user/blocked stops only the owning tab session |
 | V02-007 | in_progress | V02-003 | Verify unified Start/Stop session control | Stopped shows only `Start`; clicking it starts the current tab and changes the same button to `Stop`; clicking `Stop` disables the current-tab session and changes the same button back to `Start` |
-| V02-008 | pending | V02-007 | Verify automatic repository bootstrap | On an accessible test repo with no standard control, Start sends one bootstrap prompt, creates/repairs README/PLAN/STATE/STATUS/control with control last, then automatically transitions to the normal first-task resume; custom missing paths and inaccessible repos are not auto-created |
+| V02-008 | pending | V02-007 | Verify explicit Rerun connection prompt onboarding | While Stopped, one `Rerun 연결 프롬프트` sends a direct setup prompt that identifies the repository from current conversation GitHub context, refuses ambiguity, creates/repairs README/PLAN/STATE/STATUS/control without resetting an active run, publishes new-project control last, stops before implementation, and leaves Start to begin the first task |
 
 Status vocabulary: `pending`, `in_progress`, `verified`, `blocked`.
 
@@ -71,9 +73,11 @@ Status vocabulary: `pending`, `in_progress`, `verified`, `blocked`.
 - The user's ChatGPT GitHub app permission was set to the persisted automatic-approval mode (`full_access`) to reduce repeated app-use approval prompts after fresh-chat handoff. This does not expand GitHub OAuth/repository scopes or bypass workspace/safety controls.
 - At 23:21 KST separate `Start this tab` / `Stop this tab` controls were replaced by one runtime-driven session toggle.
 - At 23:30 KST a human-readable `.chatgpt-rerun/STATUS.md` dashboard was added as a presentation-only five-file protocol component.
-- At 23:39 KST the user requested that other repositories require no manual Rerun scaffold. v0.2.2 now probes the standard control path on Start; when it is missing but the repo/branch itself is readable, the extension sends a one-time bootstrap prompt to ChatGPT and holds normal sequence claims until a new control appears.
-- Bootstrap prompt requires `.chatgpt-rerun/README.md`, `PLAN.md`, `STATE.md`, `STATUS.md`, `control.json`, preserves compatible partial state, enforces the 20-minute/checkpoint/status rules, and publishes control last. It intentionally ends before starting the first implementation task so the normal Rerun path performs that execution.
-- The extension still requests only GitHub read access for its token. ChatGPT's connected GitHub app performs bootstrap writes.
-- `tests/control.test.mjs` now covers standard-path gating and bootstrap prompt invariants. `tests/bootstrap-flow.test.mjs` guards the background/content/popup bootstrap wiring. A direct Node helper check against the actual updated control helper code passed.
-- Extension/package version is now `0.2.2`.
-- Current gate remains V02-007: Reload the unpacked 0.2.2 extension and verify `Start -> Stop -> Start`. Then perform V02-008 on a separate safe test repository before resuming V02-005/V02-006.
+- v0.2.2 added safe automatic missing-control bootstrap as a Start fallback.
+- At 23:51 KST the onboarding requirement was refined: projects normally already have a GitHub repository and the current ChatGPT conversation already knows which repo it is using. v0.2.3 therefore adds a dedicated `Rerun 연결 프롬프트` button as the primary setup path.
+- The connection button does not enable the Rerun runtime. It directly sends `RERUN_CONNECT` to the current ChatGPT tab while Stopped, using Side Panel repository coordinates only as an optional hint.
+- `buildRerunConnectionPrompt()` instructs ChatGPT to identify the repository from current conversation GitHub context, ask rather than guess if ambiguous, create or safely repair README/PLAN/STATE/STATUS/control, preserve active run state, publish new-project control last, and end before the first implementation task.
+- The connection button is disabled whenever the current-tab Rerun runtime is enabled, preventing accidental re-initialization in the middle of an active run.
+- v0.2.2 Start bootstrap remains a fallback if the explicit connection step is skipped; it is no longer the recommended onboarding UX.
+- Extension/package version is now `0.2.3`.
+- Current gate remains V02-007: Reload the unpacked v0.2.3 extension and verify `Start -> Stop -> Start`. Then perform V02-008 connection-prompt onboarding on a separate safe project before resuming V02-005/V02-006.

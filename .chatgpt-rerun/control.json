@@ -1,9 +1,9 @@
 {
   "version": 1,
   "run_id": "chatgpt-rerun-v02-20260816-01",
-  "sequence": 5,
-  "status": "continue",
-  "reason": "v0.2.4 watcher stayed Watching under needs_user; verify same-sequence automatic resume without another Start.",
-  "updated_at": "2026-08-16T15:15:00Z",
+  "sequence": 6,
+  "status": "needs_user",
+  "reason": "V02-006 persistent watcher auto-resume verified; complete the explicit Stop -> Start watcher round-trip for V02-007.",
+  "updated_at": "2026-08-16T15:18:00Z",
   "task_id": "V02-007"
 }

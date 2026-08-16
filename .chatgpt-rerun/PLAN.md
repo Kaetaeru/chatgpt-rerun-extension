@@ -2,7 +2,7 @@
 
 ## Goal
 
-Validate ChatGPT Rerun v0.2.x after the architecture evolved to independent per-tab runtimes, GitHub-backed fresh-chat handoff, persistent tab watchers independent from GitHub work state, human-readable STATUS, and explicit **unconnected-first** project onboarding.
+Validate ChatGPT Rerun v0.2.x after the architecture evolved to independent per-tab runtimes, GitHub-backed fresh-chat handoff, persistent tab watchers independent from GitHub work state, human-readable STATUS, explicit unconnected-first project onboarding, and reliable automatic prompt submission.
 
 ## Definition of Done
 
@@ -14,11 +14,9 @@ Validate ChatGPT Rerun v0.2.x after the architecture evolved to independent per-
 - [x] V02-006 persistent watcher across terminal GitHub work states verified.
 - [x] V02-007 single state-driven Start/Stop watcher toggle verified.
 - [x] V02-008 unconnected-first Rerun connection onboarding verified on a separate safe project.
-- [x] `docs/V02_E2E_TEST_PLAN.md` evidence is complete.
-- [x] Latest v0.2.5 `npm run check` passes.
-- [x] Latest v0.2.5 `npm test` passes: 38/38.
-- [x] Manifest/package JSON parse passes.
-- [x] No unresolved blocker remains.
+- [ ] V02-009 injected resume prompt is automatically submitted without a manual Send/Enter action.
+- [ ] V02-009 browser evidence is recorded.
+- [ ] No unresolved blocker remains.
 
 ## Constraints / invariants
 
@@ -30,20 +28,15 @@ Validate ChatGPT Rerun v0.2.x after the architecture evolved to independent per-
 - Do not automate ChatGPT app approval, OAuth, or administrator-approval clicks.
 - `runtime.enabled` is the current-tab GitHub watcher on/off state, independent of GitHub work status.
 - `continue` is the GitHub work-start/resume signal; `complete`, `needs_user`, `blocked` pause dispatch but do not stop a watcher.
-- A new ChatGPT tab starts repository connection `Unconnected`; unrelated repo coordinates are not inherited.
-- Connection discovery uses actual GitHub app/tool usage in the current conversation, not Side Panel hints or mere text mentions.
-- No actual repo -> `RERUN_CONNECTION: UNCONNECTED` and no writes.
-- Ambiguous repo/branch -> `RERUN_CONNECTION: AMBIGUOUS` and no writes.
-- One confirmed repo/branch -> install/repair five Rerun files and report `RERUN_CONNECTION: CONNECTED` with user-confirmable coordinates and run state.
-- Extension remains content-blind and does not parse the CONNECTED answer to auto-fill repository coordinates.
-- Automatic Start bootstrap remains a fallback for an explicitly entered readable repo/branch with the standard control path.
+- Automatic Rerun dispatch means both composing the resume prompt and submitting it; leaving text in the composer for the user to send manually is a failure.
+- Prompt submission must remain content-blind and must verify observable dispatch evidence before ACKing the sequence.
 
 ## Validation baseline
 
-- Syntax: `npm run check` — PASS on latest v0.2.5 source.
-- Unit/regression tests: `npm test` — PASS, 38/38.
-- Manifest/package parse — PASS.
-- Manual E2E: `docs/V02_E2E_TEST_PLAN.md` — PASS.
+- v0.2.5 full syntax/test baseline: PASS, 38/38.
+- v0.2.6 targeted syntax: `node --check content.js` — PASS.
+- v0.2.6 targeted auto-submit regression tests: `tests/content-send.test.mjs` — PASS, 4/4.
+- Manual browser acceptance for v0.2.6: PENDING.
 - Build: N/A (unpacked Manifest V3 extension).
 
 ## Tasks
@@ -58,15 +51,23 @@ Validate ChatGPT Rerun v0.2.x after the architecture evolved to independent per-
 | V02-006 | verified | Persistent watcher across GitHub work states | `needs_user` kept watcher Watching; same-seq `continue` auto-resumed without another Start |
 | V02-007 | verified | Unified Start/Stop watcher | User-confirmed Stop -> Start round trip |
 | V02-008 | verified | Unconnected-first explicit onboarding | User completed final separate-project v0.2.5 onboarding probe successfully |
+| V02-009 | in_progress | Reliable automatic prompt submission | A `continue` dispatch inserts the resume prompt and sends it automatically; no manual Send/Enter is required; ACK occurs only after composer-cleared or generation-start evidence |
 
-## Final notes
+## V02-009 implementation note
 
-- Current Run ID: `chatgpt-rerun-v02-20260816-01`.
-- Extension/package version: `0.2.5`.
-- Full final suite initially exposed one stale test assertion in `tests/bootstrap-flow.test.mjs`; product code was correct. The assertion was updated to the current three-direct-prompt `includes(...)` contract, then the entire suite passed 38/38.
-- Final V02-008 user observation: `다 됐어.` after the requested unconnected-first onboarding sequence.
-- `docs/V02_E2E_RESULT.md` contains the complete final evidence summary.
+User observed on v0.2.5 that Start could insert the prompt into the ChatGPT composer without actually sending it. The previous `content.js` path waited 2.5 seconds for an enabled Send button and failed if the UI had not synchronized editor state in time.
 
-## Completion
+v0.2.6 changes the submission path to:
 
-All defined acceptance criteria are verified. The dogfood run is ready to publish the next authoritative state as `complete`.
+1. inject prompt text;
+2. dispatch explicit input/change synchronization, including after successful contenteditable `execCommand` insertion;
+3. verify the prompt is actually present in the composer;
+4. wait longer for an enabled Send button and click it when available;
+5. if no enabled Send button appears, dispatch Enter as a fallback;
+6. only treat submission as successful after observable dispatch evidence: composer cleared/disappeared or ChatGPT generation started.
+
+A new `tests/content-send.test.mjs` covers these invariants and passes 4/4 in the targeted local reconstruction.
+
+## Current gate
+
+Reload the unpacked extension at v0.2.6. Then, with the tab watcher enabled and a safe `continue` work signal, confirm that the resume prompt is both inserted and automatically submitted. Do not require the user to click Send or press Enter.

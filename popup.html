@@ -16,6 +16,8 @@
         <span id="statusDot" aria-hidden="true"></span>
       </header>
 
+      <p class="notice">Side Panel은 페이지를 클릭해도 열린 상태를 유지합니다. 모든 입력값은 입력 즉시 임시 저장되어 패널을 닫았다 다시 열어도 복원됩니다.</p>
+
       <section>
         <div class="grid two">
           <label>Owner<input id="owner" autocomplete="off" placeholder="Kaetaeru" /></label>
@@ -51,9 +53,9 @@
       <p id="errorBox" class="error" hidden></p>
 
       <footer>
-        <button id="save" class="secondary">Save</button>
+        <button id="save" class="secondary">Save settings</button>
         <button id="stop" class="danger">Stop</button>
-        <button id="start" class="primary">Start on this tab</button>
+        <button id="start" class="primary">Start on active ChatGPT tab</button>
       </footer>
     </main>
     <script type="module" src="popup.js"></script>

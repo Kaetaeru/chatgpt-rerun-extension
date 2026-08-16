@@ -562,9 +562,6 @@ async function handoffToNewChat(oldTabId) {
   }
 
   const control = await fetchControl(config, oldTabId);
-  if (control.status !== "continue") {
-    throw new Error(`현재 GitHub control 상태가 ${control.status}라 새 채팅 handoff는 대기합니다. 현재 탭 watcher는 계속 실행됩니다.`);
-  }
 
   if (Number(oldRuntime.runCount || 0) >= normalizeMaxRuns(config.maxRuns)) {
     throw new Error("Max sends 한도에 도달했습니다. 설정을 늘린 뒤 handoff를 다시 실행하세요.");
@@ -653,7 +650,8 @@ async function handoffToNewChat(oldTabId) {
       oldTabId,
       newTabId,
       runId: control.runId,
-      sequence: control.sequence
+      sequence: control.sequence,
+      status: control.status
     };
   } catch (error) {
     if (!oldSessionTransferred) {

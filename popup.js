@@ -30,6 +30,7 @@ const statusLine = document.getElementById("statusLine");
 const statusDot = document.getElementById("statusDot");
 const errorBox = document.getElementById("errorBox");
 const sessionToggle = document.getElementById("sessionToggle");
+const handoffButton = document.getElementById("handoff");
 let currentTabId = null;
 
 const activeTab = await getActiveChatGptTab();
@@ -90,7 +91,9 @@ sessionToggle.addEventListener("click", async () => {
       tabId: currentTabId
     });
     if (!response?.ok) throw new Error(response?.error || "Start failed");
-    await refreshRuntime(`Running on tab ${currentTabId}`);
+    await refreshRuntime(response.action === "bootstrapping"
+      ? `Initializing repository · tab ${currentTabId}`
+      : `Running on tab ${currentTabId}`);
   } catch (error) {
     showError(error);
   } finally {
@@ -98,7 +101,7 @@ sessionToggle.addEventListener("click", async () => {
   }
 });
 
-document.getElementById("handoff").addEventListener("click", async () => {
+handoffButton.addEventListener("click", async () => {
   try {
     await persistFormDraft();
     await saveSettings({ requireTarget: true });
@@ -225,7 +228,10 @@ async function saveSettings({ requireTarget }) {
         lastSequence: null,
         handoffPending: false,
         handoffFromTabId: null,
-        handoffToTabId: null
+        handoffToTabId: null,
+        bootstrapPending: false,
+        bootstrapRequestedAt: null,
+        bootstrapCompletedAt: null
       }
     : runtime;
 
@@ -266,10 +272,14 @@ async function refreshRuntime(transientMessage) {
   const runtime = await loadCurrentRuntime();
 
   statusDot.classList.toggle("running", Boolean(runtime.enabled));
-  statusLine.textContent = transientMessage || (runtime.enabled
-    ? `Running · tab ${currentTabId}`
-    : `Stopped · tab ${currentTabId}${runtime.stopReason ? ` · ${runtime.stopReason}` : ""}`);
+  const persistentStatus = runtime.bootstrapPending
+    ? `Initializing repository · tab ${currentTabId}`
+    : runtime.enabled
+      ? `Running · tab ${currentTabId}`
+      : `Stopped · tab ${currentTabId}${runtime.stopReason ? ` · ${runtime.stopReason}` : ""}`;
+  statusLine.textContent = transientMessage || persistentStatus;
   renderSessionToggle(runtime);
+  handoffButton.disabled = Boolean(runtime.bootstrapPending);
   document.getElementById("tabId").textContent = String(currentTabId);
   document.getElementById("runId").textContent = runtime.lastRunId || "-";
   document.getElementById("sequence").textContent = runtime.lastSequence ?? "-";

@@ -21,7 +21,8 @@ Validate ChatGPT Rerun v0.2/v0.2.1 after the session architecture changed from o
 - Follow `docs/V02_E2E_TEST_PLAN.md`.
 - Previous v0.1 run evidence remains valid historical evidence, but its unfinished E2E-003/004 must not be treated as v0.2 PASS after the architecture refactor.
 - Do not merge PR #1 as part of the automated run.
-- State writes use PLAN -> STATE -> control.json ordering.
+- Authoritative state writes use PLAN -> STATE -> control.json ordering; control is the last authoritative write.
+- Maintain `.chatgpt-rerun/STATUS.md` as a human-readable presentation-only dashboard. Refresh on meaningful state changes and target a safe checkpoint within about five minutes during long active executions. Never use STATUS for reconciliation.
 - One ChatGPT execution(turn) must end before the 20-minute hard stop; around 18 minutes checkpoint first and continue in the same sequence if unfinished.
 - Do not parse assistant output to detect token/context-limit text. New-chat continuation is an explicit GitHub-backed handoff.
 - Do not automate clicks on ChatGPT app approval, OAuth authorization, or administrator-approval UI. Repeated GitHub app-use approval is handled by ChatGPT app permissions where available.
@@ -66,4 +67,6 @@ Status vocabulary: `pending`, `in_progress`, `verified`, `blocked`.
 - At 23:21 KST the UX requirement changed: separate `Start this tab` and `Stop this tab` controls were replaced by one state-driven button. Extension/package version is now `0.2.1`.
 - The single toggle reads the latest tab runtime before acting: stopped -> Start path, running -> Stop path. Runtime/storage refresh changes the same button label, styling, and ARIA state.
 - `tests/popup-ui.test.mjs` was added to guard the single-toggle markup and both START/STOP message paths.
+- At 23:30 KST a human-readable `.chatgpt-rerun/STATUS.md` dashboard was added. It is refreshed by the ChatGPT execution protocol on meaningful changes and approximately every five minutes at safe checkpoints during long active work; it is never an automation/reconciliation input.
+- The reusable repository template and `docs/PROJECT_PROTOCOL.md` now include STATUS as the fifth standard `.chatgpt-rerun` file.
 - Current gate is V02-007: Reload the unpacked 0.2.1 extension and verify the button flips `Start -> Stop -> Start`. After that, resume unfinished V02-005 and V02-006.

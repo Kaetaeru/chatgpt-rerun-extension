@@ -3,62 +3,62 @@
 ## Identity
 
 - Run ID: `chatgpt-rerun-dogfood-20260816-02`
-- Sequence: `0`
+- Sequence: `1`
 - Desired control status: `continue`
-- Current task: `E2E-001`
-- Control reason: `Startup fixes applied; retest Side Panel persistence and initial automatic dispatch.`
+- Current task: `E2E-002`
+- Control reason: `E2E-001 seq 0 startup completed; start the same-sequence retry probe.`
 - Phase: `not_started`
-- Last checkpoint (UTC): `2026-08-16T13:17:00Z`
+- Last checkpoint (UTC): `2026-08-16T13:31:00Z`
 
 ## Current Objective
 
-Execute E2E-001 from `docs/E2E_TEST_PLAN.md`: verify the new persistent Side Panel, automatic draft restoration, Start bootstrapping on an already-open ChatGPT tab, initial resume dispatch, and the transition to sequence 1 without manual `진행`.
+Execute E2E-002 from `docs/E2E_TEST_PLAN.md`: first confirm that this seq 1 execution itself arrived automatically, thereby closing the next-sequence half of E2E-001, then perform the intentional E2E-002 first pass that leaves control on seq 1 and waits for a same-sequence retry.
 
 ## Completed in This Task
 
-- Previous dogfood run `...-01` failure recorded in `docs/E2E_RESULT.md`.
-- Toolbar action UI migrated from transient popup to Chrome Side Panel.
-- Form drafts now persist immediately in `chrome.storage.local`.
-- Start now pings the active ChatGPT tab, injects `content.js` when absent, enables the target-tab session, and sends a wake message.
-- Side Panel action behavior configured in the service worker.
-- README and E2E runbook updated for the persistent Side Panel flow.
+- Run `...-02` seq 0 configured resume prompt was automatically delivered into the existing ChatGPT conversation.
+- control/STATE/PLAN preflight for seq 0 returned Normal.
+- E2E-001 startup evidence was recorded in `docs/E2E_RESULT.md`.
+- Side Panel/startup regressions from run `...-01` were not reproduced in the successful Start flow.
+- E2E-001 was marked verified on the PLAN side so the state machine can publish seq 1.
 
 ## Verification
 
 | Check | Command | Result | Evidence / note |
 |---|---|---|---|
-| Unit tests | `node --test control.test.mjs` | PASS | 16/16 protocol tests passed against the current control/test contents. |
-| Startup script syntax | `node --check background.js`, `content.js`, `popup.js` | PASS | All three modified JavaScript entrypoints parsed successfully. |
-| Manifest JSON | JSON parse | PASS | Updated Side Panel/scripting manifest parsed successfully. |
-| Side Panel persistence | Chrome runtime observation | NOT_RUN | Requires user reload/retest. |
-| Draft restore after panel close/reopen | Chrome runtime observation | NOT_RUN | Requires user reload/retest. |
-| Start on already-open ChatGPT tab | Chrome runtime observation | NOT_RUN | Requires user reload/retest. |
-| Initial auto dispatch | Extension runtime observation | NOT_RUN | Requires Chrome E2E. |
+| Unit tests | `node --test control.test.mjs` | PASS | 16/16 protocol tests were already verified after the startup fix; do not repeat without a code change. |
+| Startup script syntax | `node --check background.js`, `content.js`, `popup.js` | PASS | Already verified after the startup fix; do not repeat without a code change. |
+| Manifest JSON | JSON parse | PASS | Already verified after the Side Panel/scripting change. |
+| Side Panel persistence | Chrome runtime observation | PASS | Successful retest proceeded through the persistent Side Panel Start flow without the previous focus-loss regression. |
+| Draft restore after panel close/reopen | Chrome runtime observation | PASS | Persistence probe completed before the successful Start flow; reset regression was not reproduced. |
+| Start on already-open ChatGPT tab | Chrome runtime observation | PASS | Seq 0 configured prompt was delivered into the ongoing conversation. |
+| Initial seq 0 auto dispatch | Extension runtime observation | PASS | Exact configured resume prompt initiated the 22:30 KST execution without manual `진행`. |
+| Seq 1 auto dispatch | Extension runtime observation | NOT_RUN | Must be confirmed by the next automatically delivered execution. |
+| Same-sequence retry for seq 1 | Extension runtime observation | NOT_RUN | E2E-002 probe begins after seq 1 arrives. |
 
 ## Pending / Failed
 
-- User must update the local checkout and reload the unpacked extension.
-- E2E-001 current run has not yet been triggered in Chrome.
+- Publish seq 1 / continue / E2E-002 in control.json.
+- On the next automatic execution, confirm seq 1 arrived without manual input.
+- Then perform E2E-002 first pass: record evidence, keep sequence 1, set phase to `awaiting_same_sequence_retry`, leave PLAN task/control unchanged, and intentionally end the response.
 
 ## Files / Areas Touched
 
-- `manifest.json`: Side Panel + scripting permissions and side panel entry.
-- `background.js`: action-click Side Panel behavior.
-- `content.js`: ping/wake lifecycle for on-demand bootstrap.
-- `popup.js`: draft persistence and Start ping/inject/wake flow.
-- `popup.html`, `popup.css`: persistent Side Panel UI.
-- `README.md`, `docs/E2E_TEST_PLAN.md`, `docs/E2E_RESULT.md`: startup regression/retest documentation.
+- `docs/E2E_RESULT.md`: live E2E startup evidence.
+- `.chatgpt-rerun/PLAN.md`: E2E-001 sequence-side completion and E2E-002 pending state.
+- `.chatgpt-rerun/STATE.md`: current checkpoint advanced to seq 1 / E2E-002.
 
 ## Next Exact Action
 
-Update the local checkout to the latest `agent/mvp-autoresume`, reload the unpacked extension in `chrome://extensions`, open the Side Panel from the extension icon, perform the persistence probe, activate this ChatGPT tab, and press `Start on active ChatGPT tab`. If the automatic resume prompt arrives, execute E2E-001 and publish seq 1 / `continue` / E2E-002 using PLAN -> STATE -> control order.
+When the extension automatically sends the next resume prompt for sequence 1, first update `docs/E2E_RESULT.md` to mark E2E-001 PASS because next-sequence dispatch is now observed. Then execute E2E-002 first-pass rules exactly: record the first pass, keep sequence 1 and control unchanged, set STATE phase to `awaiting_same_sequence_retry`, write the next exact retry action, and intentionally end the response so the extension must re-run the same sequence after the configured retry delay.
 
 ## Do Not Repeat
 
-- Do not use the old transient popup build for the next test.
-- Do not count run `...-01` as a PASS.
-- Do not recreate dogfood protocol files from templates.
+- Do not rerun startup implementation/static validation unless code changes.
+- Do not recreate dogfood files.
+- Do not manually send `진행` during the automated sequence.
+- Do not advance control beyond seq 1 during the E2E-002 first pass.
 
 ## Blockers / User Decisions
 
-- Real Chrome runtime retest is required before E2E-001 can be verified.
+- None. The next event should be generated by the extension from the newly published seq 1 control state.

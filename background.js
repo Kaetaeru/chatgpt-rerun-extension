@@ -1,29 +1,40 @@
 import {
-  DEFAULT_SETTINGS,
+  DEFAULT_CONFIG,
+  DEFAULT_RUNTIME,
+  buildNewChatHandoffPrompt,
   continuationDisposition,
   effectivePollInterval,
   normalizeMaxRuns,
-  parseControlPayload
+  parseControlPayload,
+  streamKey,
+  tabConfigKey,
+  tabDraftKey,
+  tabIdFromRuntimeKey,
+  tabRuntimeKey
 } from "./control.js";
 
-let lastFetchKey = null;
-let lastEtag = null;
-let cachedControl = null;
-let lastFetchAt = 0;
+const fetchCaches = new Map();
 
-configureSidePanel().catch((error) => console.error("Failed to configure side panel", error));
+void configureGlobalSidePanel();
 
-chrome.runtime.onInstalled.addListener(async () => {
-  await configureSidePanel();
+chrome.runtime.onInstalled.addListener(() => {
+  void configureGlobalSidePanel();
+});
 
-  const stored = await chrome.storage.local.get(Object.keys(DEFAULT_SETTINGS));
-  const missing = {};
-  for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
-    if (stored[key] === undefined) missing[key] = value;
-  }
-  if (Object.keys(missing).length) {
-    await chrome.storage.local.set(missing);
-  }
+chrome.runtime.onStartup.addListener(() => {
+  void configureGlobalSidePanel();
+});
+
+chrome.action.onClicked.addListener((tab) => {
+  void openTabSidePanel(tab);
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void chrome.storage.local.remove([
+    tabConfigKey(tabId),
+    tabRuntimeKey(tabId),
+    tabDraftKey(tabId)
+  ]);
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -31,19 +42,52 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .then((result) => sendResponse({ ok: true, ...result }))
     .catch(async (error) => {
       const detail = error instanceof Error ? error.message : String(error);
-      await chrome.storage.local.set({ lastError: detail });
+      const tabId = sender?.tab?.id ?? normalizeMessageTabId(message?.tabId);
+      if (tabId !== null) {
+        await updateRuntime(tabId, { lastError: detail });
+      }
       sendResponse({ ok: false, error: detail });
     });
   return true;
 });
 
-async function configureSidePanel() {
-  if (!chrome.sidePanel?.setPanelBehavior) return;
-  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+async function configureGlobalSidePanel() {
+  if (!chrome.sidePanel?.setOptions) return;
+  // Keep the manifest default path only as a packaged resource. The actual UI
+  // is enabled as a tab-specific side panel when a ChatGPT tab requests it.
+  await chrome.sidePanel.setOptions({ enabled: false });
+}
+
+async function openTabSidePanel(tab) {
+  try {
+    const tabId = tab?.id;
+    if (!Number.isSafeInteger(tabId)) return;
+
+    const liveTab = tab.url ? tab : await chrome.tabs.get(tabId);
+    if (!isChatGptUrl(liveTab?.url || "")) return;
+
+    await configureTabSidePanel(tabId);
+    await chrome.sidePanel.open({ tabId });
+  } catch (error) {
+    console.error("Failed to open tab-specific side panel", error);
+  }
+}
+
+async function configureTabSidePanel(tabId) {
+  await chrome.sidePanel.setOptions({
+    tabId,
+    path: "popup.html",
+    enabled: true
+  });
 }
 
 async function handleMessage(message, sender) {
   switch (message?.type) {
+    case "REGISTER_CHAT_TAB": {
+      const tabId = requireSenderTabId(sender);
+      await configureTabSidePanel(tabId);
+      return { action: "registered", tabId };
+    }
     case "POLL":
       return poll(sender);
     case "CLAIM_SEQUENCE":
@@ -53,58 +97,85 @@ async function handleMessage(message, sender) {
     case "RELEASE_SEQUENCE":
       return releaseSequence(sender, message);
     case "STOP_SESSION":
-      return stopSession(message.reason || "stopped");
+      return stopSession(requireSenderTabId(sender), message.reason || "stopped");
+    case "START_TAB_SESSION":
+      return startTabSession(requireMessageTabId(message));
+    case "STOP_TAB_SESSION":
+      return stopSession(requireMessageTabId(message), message.reason || "manual");
+    case "HANDOFF_NEW_CHAT":
+      return handoffToNewChat(requireMessageTabId(message));
     default:
       return { action: "none" };
   }
 }
 
-async function loadSettings() {
-  return { ...DEFAULT_SETTINGS, ...(await chrome.storage.local.get(null)) };
+async function loadConfig(tabId) {
+  const key = tabConfigKey(tabId);
+  const stored = await chrome.storage.local.get(key);
+  return { ...DEFAULT_CONFIG, ...(stored[key] || {}) };
 }
 
-function assertTargetTab(settings, sender) {
-  const senderTabId = sender?.tab?.id ?? null;
-  return Boolean(settings.enabled && senderTabId && senderTabId === settings.targetTabId);
+async function loadRuntime(tabId) {
+  const key = tabRuntimeKey(tabId);
+  const stored = await chrome.storage.local.get(key);
+  return { ...DEFAULT_RUNTIME, ...(stored[key] || {}) };
+}
+
+async function updateRuntime(tabId, patch) {
+  const key = tabRuntimeKey(tabId);
+  const current = await loadRuntime(tabId);
+  const next = { ...current, ...patch };
+  await chrome.storage.local.set({ [key]: next });
+  return next;
 }
 
 async function poll(sender) {
-  let settings = await loadSettings();
-  if (!assertTargetTab(settings, sender)) return { action: "none" };
+  const tabId = requireSenderTabId(sender);
+  const config = await loadConfig(tabId);
+  let runtime = await loadRuntime(tabId);
+  if (!runtime.enabled || runtime.handoffPending) return { action: "none" };
 
-  const token = String(settings.githubToken || "").trim();
-  const intervalSeconds = effectivePollInterval(settings.pollIntervalSeconds, Boolean(token));
+  const token = String(config.githubToken || "").trim();
+  const intervalSeconds = effectivePollInterval(config.pollIntervalSeconds, Boolean(token));
   const now = Date.now();
+  const cache = cacheFor(config);
 
-  if (now - lastFetchAt < intervalSeconds * 1000 && cachedControl) {
-    return actionForControl(settings, cachedControl, intervalSeconds, now);
+  let control;
+  if (now - cache.lastFetchAt < intervalSeconds * 1000 && cache.cachedControl) {
+    control = cache.cachedControl;
+  } else {
+    control = await fetchControl(config, tabId);
   }
 
-  const control = await fetchControl(settings);
-  if (!control) return { action: "none" };
-
-  settings = await loadSettings();
-  return actionForControl(settings, control, intervalSeconds, now);
+  runtime = await loadRuntime(tabId);
+  return actionForControl(tabId, config, runtime, control, intervalSeconds, now);
 }
 
-async function fetchControl(settings) {
-  const owner = String(settings.owner || "").trim();
-  const repo = String(settings.repo || "").trim();
-  const branch = String(settings.branch || "main").trim();
-  const path = String(settings.path || "").replace(/^\/+/, "").trim();
+function cacheFor(config) {
+  const key = streamKey(config);
+  let cache = fetchCaches.get(key);
+  if (!cache) {
+    cache = {
+      lastEtag: null,
+      cachedControl: null,
+      lastFetchAt: 0
+    };
+    fetchCaches.set(key, cache);
+  }
+  return cache;
+}
+
+async function fetchControl(config, tabId) {
+  const owner = String(config.owner || "").trim();
+  const repo = String(config.repo || "").trim();
+  const branch = String(config.branch || "main").trim();
+  const path = String(config.path || "").replace(/^\/+/, "").trim();
 
   if (!owner || !repo || !path) {
     throw new Error("GitHub owner, repository, and control file path are required");
   }
 
-  const key = `${owner}/${repo}@${branch}:${path}`;
-  if (key !== lastFetchKey) {
-    lastFetchKey = key;
-    lastEtag = null;
-    cachedControl = null;
-    lastFetchAt = 0;
-  }
-
+  const cache = cacheFor(config);
   const url = new URL(
     `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path
       .split("/")
@@ -117,27 +188,27 @@ async function fetchControl(settings) {
     Accept: "application/vnd.github.raw+json",
     "X-GitHub-Api-Version": "2022-11-28"
   };
-  const token = String(settings.githubToken || "").trim();
+  const token = String(config.githubToken || "").trim();
   if (token) headers.Authorization = `Bearer ${token}`;
-  if (lastEtag) headers["If-None-Match"] = lastEtag;
+  if (cache.lastEtag) headers["If-None-Match"] = cache.lastEtag;
 
   const response = await fetch(url.toString(), {
     method: "GET",
     headers,
     cache: "no-store"
   });
-  lastFetchAt = Date.now();
+  cache.lastFetchAt = Date.now();
 
   const remaining = response.headers.get("x-ratelimit-remaining");
   const reset = response.headers.get("x-ratelimit-reset");
-  await chrome.storage.local.set({
+  await updateRuntime(tabId, {
     lastCheckedAt: new Date().toISOString(),
     rateLimitRemaining: remaining === null ? null : Number(remaining),
     rateLimitResetAt: reset === null ? null : new Date(Number(reset) * 1000).toISOString()
   });
 
-  if (response.status === 304 && cachedControl) {
-    return cachedControl;
+  if (response.status === 304 && cache.cachedControl) {
+    return cache.cachedControl;
   }
 
   if (!response.ok) {
@@ -153,20 +224,20 @@ async function fetchControl(settings) {
     throw new Error(`GitHub request failed with HTTP ${response.status}`);
   }
 
-  lastEtag = response.headers.get("etag");
-  cachedControl = parseControlPayload(await response.text());
-  return cachedControl;
+  cache.lastEtag = response.headers.get("etag");
+  cache.cachedControl = parseControlPayload(await response.text());
+  return cache.cachedControl;
 }
 
-async function actionForControl(settings, control, intervalSeconds, now) {
-  await chrome.storage.local.set({
+async function actionForControl(tabId, config, runtime, control, intervalSeconds, now) {
+  runtime = await updateRuntime(tabId, {
     lastError: null,
     lastStatus: control.status,
     lastSequence: control.sequence
   });
 
-  if (control.runId !== settings.lastRunId) {
-    await chrome.storage.local.set({
+  if (control.runId !== runtime.lastRunId) {
+    runtime = await updateRuntime(tabId, {
       lastRunId: control.runId,
       lastHandledSequence: -1,
       lastSentAt: null,
@@ -176,43 +247,32 @@ async function actionForControl(settings, control, intervalSeconds, now) {
       pendingIsRetry: false,
       runCount: 0
     });
-    settings = {
-      ...settings,
-      lastRunId: control.runId,
-      lastHandledSequence: -1,
-      lastSentAt: null,
-      sameSequenceRetryCount: 0,
-      pendingSequence: null,
-      pendingRunId: null,
-      pendingIsRetry: false,
-      runCount: 0
-    };
   }
 
   if (["complete", "needs_user", "blocked"].includes(control.status)) {
-    await stopSession(control.status);
+    await stopSession(tabId, control.status);
     return { action: "stop", reason: control.status, control };
   }
 
-  if (settings.pendingSequence !== null) {
+  if (runtime.pendingSequence !== null) {
     return { action: "none", control };
   }
 
-  const maxRuns = normalizeMaxRuns(settings.maxRuns);
-  if (Number(settings.runCount || 0) >= maxRuns) {
+  const maxRuns = normalizeMaxRuns(config.maxRuns);
+  if (Number(runtime.runCount || 0) >= maxRuns) {
     return { action: "stop_when_idle", reason: "max_runs", control };
   }
 
   const disposition = continuationDisposition(
     control,
-    { ...settings, pollIntervalSeconds: intervalSeconds },
+    { ...config, ...runtime, pollIntervalSeconds: intervalSeconds },
     now
   );
 
   if (disposition.action === "stale") {
-    const detail = `Control sequence regressed from ${settings.lastHandledSequence} to ${control.sequence}`;
-    await chrome.storage.local.set({ lastError: detail });
-    await stopSession("sequence_regressed");
+    const detail = `Control sequence regressed from ${runtime.lastHandledSequence} to ${control.sequence}`;
+    await updateRuntime(tabId, { lastError: detail });
+    await stopSession(tabId, "sequence_regressed");
     return { action: "stop", reason: "sequence_regressed", control };
   }
 
@@ -228,36 +288,40 @@ async function actionForControl(settings, control, intervalSeconds, now) {
     action: "continue",
     control,
     isRetry: disposition.isRetry,
-    prompt: String(settings.resumePrompt || DEFAULT_SETTINGS.resumePrompt)
+    prompt: String(config.resumePrompt || DEFAULT_CONFIG.resumePrompt)
   };
 }
 
 async function claimSequence(sender, message) {
-  const settings = await loadSettings();
-  if (!assertTargetTab(settings, sender)) return { claimed: false, reason: "wrong_tab" };
+  const tabId = requireSenderTabId(sender);
+  const config = await loadConfig(tabId);
+  const runtime = await loadRuntime(tabId);
+  if (!runtime.enabled || runtime.handoffPending) return { claimed: false, reason: "stopped" };
 
   const runId = String(message.runId || "");
   const sequence = Number(message.sequence);
-  if (!cachedControl || cachedControl.runId !== runId || cachedControl.sequence !== sequence || cachedControl.status !== "continue") {
+  const cache = cacheFor(config);
+  const control = cache.cachedControl || await fetchControl(config, tabId);
+  if (control.runId !== runId || control.sequence !== sequence || control.status !== "continue") {
     return { claimed: false, reason: "stale_control" };
   }
-  if (settings.pendingSequence !== null) return { claimed: false, reason: "already_claimed" };
-  if (Number(settings.runCount || 0) >= normalizeMaxRuns(settings.maxRuns)) {
+  if (runtime.pendingSequence !== null) return { claimed: false, reason: "already_claimed" };
+  if (Number(runtime.runCount || 0) >= normalizeMaxRuns(config.maxRuns)) {
     return { claimed: false, reason: "max_runs" };
   }
 
-  const token = String(settings.githubToken || "").trim();
-  const intervalSeconds = effectivePollInterval(settings.pollIntervalSeconds, Boolean(token));
+  const token = String(config.githubToken || "").trim();
+  const intervalSeconds = effectivePollInterval(config.pollIntervalSeconds, Boolean(token));
   const disposition = continuationDisposition(
-    cachedControl,
-    { ...settings, pollIntervalSeconds: intervalSeconds },
+    control,
+    { ...config, ...runtime, pollIntervalSeconds: intervalSeconds },
     Date.now()
   );
   if (disposition.action !== "send") {
     return { claimed: false, reason: disposition.action };
   }
 
-  await chrome.storage.local.set({
+  await updateRuntime(tabId, {
     pendingSequence: sequence,
     pendingRunId: runId,
     pendingIsRetry: disposition.isRetry
@@ -266,40 +330,41 @@ async function claimSequence(sender, message) {
 }
 
 async function ackSequence(sender, message) {
-  const settings = await loadSettings();
-  if (!assertTargetTab(settings, sender)) return { acknowledged: false };
+  const tabId = requireSenderTabId(sender);
+  const runtime = await loadRuntime(tabId);
+  if (!runtime.enabled) return { acknowledged: false };
 
   const runId = String(message.runId || "");
   const sequence = Number(message.sequence);
-  if (settings.pendingRunId !== runId || Number(settings.pendingSequence) !== sequence) {
+  if (runtime.pendingRunId !== runId || Number(runtime.pendingSequence) !== sequence) {
     return { acknowledged: false };
   }
 
-  const isRetry = Boolean(settings.pendingIsRetry);
-  await chrome.storage.local.set({
+  const isRetry = Boolean(runtime.pendingIsRetry);
+  await updateRuntime(tabId, {
     lastHandledSequence: sequence,
     lastSentAt: new Date().toISOString(),
-    sameSequenceRetryCount: isRetry ? Number(settings.sameSequenceRetryCount || 0) + 1 : 0,
+    sameSequenceRetryCount: isRetry ? Number(runtime.sameSequenceRetryCount || 0) + 1 : 0,
     pendingSequence: null,
     pendingRunId: null,
     pendingIsRetry: false,
-    runCount: Number(settings.runCount || 0) + 1,
+    runCount: Number(runtime.runCount || 0) + 1,
     lastError: null
   });
   return { acknowledged: true };
 }
 
 async function releaseSequence(sender, message) {
-  const settings = await loadSettings();
-  if (!assertTargetTab(settings, sender)) return { released: false };
+  const tabId = requireSenderTabId(sender);
+  const runtime = await loadRuntime(tabId);
 
   const runId = String(message.runId || "");
   const sequence = Number(message.sequence);
-  if (settings.pendingRunId !== runId || Number(settings.pendingSequence) !== sequence) {
+  if (runtime.pendingRunId !== runId || Number(runtime.pendingSequence) !== sequence) {
     return { released: false };
   }
 
-  await chrome.storage.local.set({
+  await updateRuntime(tabId, {
     pendingSequence: null,
     pendingRunId: null,
     pendingIsRetry: false
@@ -307,13 +372,227 @@ async function releaseSequence(sender, message) {
   return { released: true };
 }
 
-async function stopSession(reason) {
+async function startTabSession(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  if (!isChatGptUrl(tab.url || "")) {
+    throw new Error("Start는 ChatGPT 탭에서만 사용할 수 있습니다.");
+  }
+
+  const config = await loadConfig(tabId);
+  if (!String(config.owner || "").trim() || !String(config.repo || "").trim()) {
+    throw new Error("Owner와 Repository를 입력해주세요.");
+  }
+
+  const conflictTabId = await findConflictingTab(tabId, config);
+  if (conflictTabId !== null) {
+    throw new Error(`같은 GitHub control stream이 이미 tab ${conflictTabId}에서 실행 중입니다.`);
+  }
+
+  await configureTabSidePanel(tabId);
+  await ensureContentScript(tabId);
+  await updateRuntime(tabId, {
+    enabled: true,
+    stopReason: null,
+    lastError: null,
+    pendingSequence: null,
+    pendingRunId: null,
+    pendingIsRetry: false,
+    handoffPending: false,
+    handoffToTabId: null
+  });
+
+  const wake = await chrome.tabs.sendMessage(tabId, { type: "RERUN_WAKE" });
+  if (!wake?.ready) {
+    await stopSession(tabId, "start_failed");
+    throw new Error("ChatGPT 탭의 rerun content script가 응답하지 않습니다.");
+  }
+
+  return { action: "started", tabId };
+}
+
+async function findConflictingTab(tabId, config) {
+  const all = await chrome.storage.local.get(null);
+  const wanted = streamKey(config);
+  for (const [key, value] of Object.entries(all)) {
+    const otherTabId = tabIdFromRuntimeKey(key);
+    if (otherTabId === null || otherTabId === tabId || !value?.enabled) continue;
+    const otherConfigKey = tabConfigKey(otherTabId);
+    const otherConfig = { ...DEFAULT_CONFIG, ...(all[otherConfigKey] || {}) };
+    if (streamKey(otherConfig) === wanted) return otherTabId;
+  }
+  return null;
+}
+
+async function handoffToNewChat(oldTabId) {
+  const config = await loadConfig(oldTabId);
+  const oldRuntime = await loadRuntime(oldTabId);
+  if (!String(config.owner || "").trim() || !String(config.repo || "").trim()) {
+    throw new Error("새 채팅 handoff 전에 Owner와 Repository를 설정해야 합니다.");
+  }
+
+  const conflictTabId = await findConflictingTab(oldTabId, config);
+  if (conflictTabId !== null) {
+    throw new Error(`같은 GitHub control stream이 이미 tab ${conflictTabId}에서 실행 중입니다.`);
+  }
+
+  const control = await fetchControl(config, oldTabId);
+  if (control.status !== "continue") {
+    await stopSession(oldTabId, control.status);
+    throw new Error(`현재 control 상태가 ${control.status}라 새 채팅으로 이어갈 수 없습니다.`);
+  }
+
+  if (Number(oldRuntime.runCount || 0) >= normalizeMaxRuns(config.maxRuns)) {
+    throw new Error("Max sends 한도에 도달했습니다. 설정을 늘린 뒤 handoff를 다시 실행하세요.");
+  }
+
+  const newTab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: true });
+  const newTabId = newTab.id;
+  if (!Number.isSafeInteger(newTabId)) {
+    throw new Error("새 ChatGPT 탭을 만들지 못했습니다.");
+  }
+
+  await waitForTabComplete(newTabId, 20_000);
+  await configureTabSidePanel(newTabId);
+  await ensureContentScript(newTabId);
+
+  const newRuntime = {
+    ...oldRuntime,
+    enabled: true,
+    pendingSequence: null,
+    pendingRunId: null,
+    pendingIsRetry: false,
+    stopReason: null,
+    lastError: null,
+    handoffPending: true,
+    handoffFromTabId: oldTabId,
+    handoffToTabId: null
+  };
+
   await chrome.storage.local.set({
+    [tabConfigKey(newTabId)]: config,
+    [tabDraftKey(newTabId)]: config,
+    [tabRuntimeKey(newTabId)]: newRuntime
+  });
+
+  await updateRuntime(oldTabId, {
     enabled: false,
     pendingSequence: null,
     pendingRunId: null,
     pendingIsRetry: false,
+    stopReason: `handed_off_to_tab_${newTabId}`,
+    handoffToTabId: newTabId
+  });
+
+  const prompt = buildNewChatHandoffPrompt(config, control);
+  const response = await chrome.tabs.sendMessage(newTabId, {
+    type: "RERUN_HANDOFF",
+    prompt
+  });
+
+  if (!response?.sent) {
+    const detail = response?.error || "새 ChatGPT 탭에 handoff 프롬프트를 보내지 못했습니다.";
+    await updateRuntime(newTabId, {
+      enabled: false,
+      handoffPending: false,
+      stopReason: "handoff_send_failed",
+      lastError: detail
+    });
+    throw new Error(detail);
+  }
+
+  const isRetry = control.sequence === Number(oldRuntime.lastHandledSequence);
+  await updateRuntime(newTabId, {
+    enabled: true,
+    handoffPending: false,
+    lastRunId: control.runId,
+    lastHandledSequence: control.sequence,
+    lastSentAt: new Date().toISOString(),
+    sameSequenceRetryCount: isRetry ? Number(oldRuntime.sameSequenceRetryCount || 0) + 1 : 0,
+    runCount: Number(oldRuntime.runCount || 0) + 1,
+    lastStatus: control.status,
+    lastSequence: control.sequence,
+    stopReason: null,
+    lastError: null
+  });
+
+  return {
+    action: "handed_off",
+    oldTabId,
+    newTabId,
+    runId: control.runId,
+    sequence: control.sequence
+  };
+}
+
+async function stopSession(tabId, reason) {
+  await updateRuntime(tabId, {
+    enabled: false,
+    pendingSequence: null,
+    pendingRunId: null,
+    pendingIsRetry: false,
+    handoffPending: false,
     stopReason: reason
   });
-  return { action: "stop", reason };
+  return { action: "stop", reason, tabId };
+}
+
+async function ensureContentScript(tabId) {
+  try {
+    const ping = await chrome.tabs.sendMessage(tabId, { type: "RERUN_PING" });
+    if (ping?.ready) return;
+  } catch {
+    // The tab may predate the current unpacked-extension load/reload.
+  }
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["content.js"]
+  });
+
+  const ping = await chrome.tabs.sendMessage(tabId, { type: "RERUN_PING" });
+  if (!ping?.ready) {
+    throw new Error("ChatGPT 탭에 rerun content script를 주입하지 못했습니다.");
+  }
+}
+
+async function waitForTabComplete(tabId, timeoutMs) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.status === "complete") return;
+    await sleep(150);
+  }
+  throw new Error("새 ChatGPT 탭 로딩이 제한 시간 안에 끝나지 않았습니다.");
+}
+
+function requireSenderTabId(sender) {
+  const tabId = sender?.tab?.id;
+  if (!Number.isSafeInteger(tabId)) {
+    throw new Error("This message must come from a Chrome tab");
+  }
+  return tabId;
+}
+
+function normalizeMessageTabId(tabId) {
+  const value = Number(tabId);
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function requireMessageTabId(message) {
+  const tabId = normalizeMessageTabId(message?.tabId);
+  if (tabId === null) throw new Error("A valid tabId is required");
+  return tabId;
+}
+
+function isChatGptUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === "chatgpt.com" || parsed.hostname === "chat.openai.com";
+  } catch {
+    return false;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

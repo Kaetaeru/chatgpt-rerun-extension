@@ -106,6 +106,16 @@ function writeComposerText(composer, text) {
   }
 
   if (composer.getAttribute("contenteditable") === "true") {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(composer);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    if (typeof document.execCommand === "function" && document.execCommand("insertText", false, text)) {
+      return;
+    }
+
     composer.replaceChildren();
     const paragraph = document.createElement("p");
     paragraph.textContent = text;

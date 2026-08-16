@@ -1,7 +1,9 @@
 {
   "version": 1,
   "run_id": "example-run-001",
-  "sequence": 1,
+  "sequence": 7,
   "status": "continue",
-  "reason": "The verified task is complete and the next planned task can start."
+  "reason": "TASK-006 verified; TASK-007 is ready.",
+  "updated_at": "2026-08-16T12:30:00Z",
+  "task_id": "TASK-007"
 }

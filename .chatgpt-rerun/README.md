@@ -37,6 +37,7 @@ v0.2.4부터 Chrome 탭의 Start/Stop과 GitHub control 상태를 서로 다른 
 - retry limit, sequence regression 같은 dispatch guard도 watcher 자체를 끄지 않고 계속 관찰한다. 새 run/새 유효 상태가 오면 다시 평가한다.
 - **workflow 전체의 lifetime send 횟수에는 상한을 두지 않는다.** `Sent`/`runCount`는 진단용 누적 통계일 뿐 dispatch 또는 fresh-chat handoff를 차단하지 않는다. 동일한 control generation의 반복만 per-sequence retry 안전장치로 제한한다.
 - `GitHub 승인 후 자동 계속`이 켜진 탭에서는 ChatGPT의 GitHub action-confirmation 카드가 보이는 동안 content script가 Rerun polling/retry를 잠시 멈춘다. **승인 버튼은 자동 클릭하지 않는다.** 사용자가 직접 승인해서 카드가 사라지면 다음 content tick부터 polling과 continuation을 자동 재개한다.
+- **Rerun이 자동 제출한 ChatGPT generation이 활성 상태로 23분 이상 계속되면 content script가 현재 ChatGPT Stop 버튼을 한 번 눌러 fail-safe 종료한다.** 이 watchdog은 watcher가 켜진 Rerun-owned generation에만 적용되며 일반 수동 ChatGPT 응답에는 적용하지 않는다. GitHub action-confirmation 카드에서 사용자의 결정을 기다리는 시간은 23분 active-generation 시간에서 제외한다.
 - 사용자 composer draft 보호, prompt 전송 실패, bootstrap/handoff 실패처럼 브라우저 안전을 위해 명시적 중지가 필요한 경우는 예외다.
 - 탭이 닫히면 그 tab ID의 watcher/config/runtime은 제거된다. 확장프로그램이 꺼져 있으면 polling도 없다.
 
@@ -91,6 +92,7 @@ STATUS에는 최소한 다음 정보를 유지한다.
 6. **20분 deadline 전에 응답을 종료한다.** 확장프로그램의 same-sequence retry가 다음 실행을 만들고, 다음 실행은 STATE 체크포인트에서 이어간다.
 7. deadline을 넘길 가능성이 큰 단일 명령/도구 호출은 직전에 시작하지 않는다. 예상 시간이 불명확하면 더 작은 단위로 분할한다.
 8. 시간 제한으로 종료하는 것은 실패가 아니다. STATE에 `time_budget_checkpoint`로 기록하고 같은 sequence에서 안전하게 재개한다.
+9. **23분 generation watchdog은 20분 규칙을 대체하지 않는 브라우저 fail-safe다.** assistant가 오류/프리즈로 20분 규칙을 지키지 못하고 Rerun-owned generation의 Stop 버튼이 계속 활성 상태로 남아 있을 때만, 3분 grace 뒤 강제로 Stop을 눌러 다음 Rerun continuation이 회복할 수 있게 한다. GitHub 승인 대기 시간은 이 23분 계산에서 제외한다.
 
 ## v0.2 dogfood execution rules
 
@@ -110,6 +112,7 @@ STATUS에는 최소한 다음 정보를 유지한다.
 12. assistant output을 파싱해 token/context-limit 문구를 감지하지 않는다.
 13. terminal GitHub status를 Chrome watcher Stop으로 해석하지 않는다.
 14. GitHub action-confirmation UI의 존재 여부는 승인 대기 보호를 위해 감지할 수 있지만, 앱 승인 카드나 OAuth/관리자 승인 버튼을 자동 클릭하지 않는다.
+15. 23분 generation watchdog은 Rerun이 자동 제출한 generation만 강제 종료할 수 있고, watcher가 꺼지면 즉시 reset되어야 한다.
 
 ## Per-tab and new-chat invariants
 

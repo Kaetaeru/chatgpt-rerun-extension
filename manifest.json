@@ -23,12 +23,12 @@
   "content_scripts": [
     {
       "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
-      "js": [
-        "content.js",
-        "turn-observer.js",
-        "team-content.js",
-        "utilities/patient-oracle/oracle-content.js"
-      ],
+      "js": ["content.js", "turn-observer.js", "team-content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+      "js": ["utilities/patient-oracle/oracle-content.js"],
       "run_at": "document_idle"
     }
   ]

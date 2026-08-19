@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check background.js && node --check background-v04.js && node --check team-background.js && node --check team-safety.js && node --check content.js && node --check turn-observer.js && node --check team-content.js && node --check control.js && node --check team-control.js && node --check popup.js && node --check team-panel.js && node --check team-panel-safety.js",
+    "check": "node --check background.js && node --check background-v04.js && node --check team-background.js && node --check team-safety.js && node --check content.js && node --check turn-observer.js && node --check team-content.js && node --check control.js && node --check team-control.js && node --check popup.js && node --check team-panel.js && node --check team-panel-safety.js && node --check patient-oracle-background.js && node --check patient-oracle-panel.js && node --check patient-oracle-panel-safety.js && node --check utilities/patient-oracle/oracle-control.js && node --check utilities/patient-oracle/oracle-background.js && node --check utilities/patient-oracle/oracle-content.js && node --check utilities/patient-oracle/oracle-safety.js",
     "test": "node --test"
   }
 }

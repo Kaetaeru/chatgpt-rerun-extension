@@ -57,7 +57,7 @@ test("automatic handoff failure still falls back to a safe watcher stop", () => 
 
 test("approval-aware mode pauses Rerun polling while a GitHub action confirmation is visible", () => {
   assert.match(content, /const approvalWaiting = Boolean\(findGitHubApprovalCard\(\)\)/);
-  assert.match(content, /if \(approvalWaiting && await isApprovalAwareResumeEnabled\(\)\) return;[\s\S]*type: "POLL"/);
+  assert.match(content, /if \(watcherEnabled && approvalWaiting && await isApprovalAwareResumeEnabled\(\)\) return;[\s\S]*type: "POLL"/);
   assert.match(content, /stored\[key\]\?\.approvalAwareResume/);
   assert.match(content, /function findGitHubApprovalCard\(\)/);
   assert.match(content, /ChatGPT가\\s\*GitHub\.\*사용하도록\\s\*허용할까요/);
@@ -70,11 +70,21 @@ test("approval-aware mode never clicks the GitHub approval button", () => {
   assert.doesNotMatch(content, /approval(?:Button|Card)[\s\S]{0,120}\.click\(/i);
 });
 
-test("generation watchdog force-stops a continuously generating response after 23 active minutes", () => {
+test("generation watchdog force-stops a continuously generating Rerun response after 23 active minutes", () => {
   assert.match(content, /const GENERATION_WATCHDOG_MS = 23 \* 60 \* 1000/);
-  assert.match(content, /if \(enforceGenerationWatchdog\(approvalWaiting\)\) return;[\s\S]*type: "POLL"/);
+  assert.match(content, /const watcherEnabled = await isRerunWatcherEnabled\(\)/);
+  assert.match(content, /if \(!watcherEnabled\) resetGenerationWatchdog\(\)/);
+  assert.match(content, /if \(watcherEnabled && enforceGenerationWatchdog\(approvalWaiting\)\) return;[\s\S]*type: "POLL"/);
   assert.match(content, /activeGenerationMs < GENERATION_WATCHDOG_MS \|\| generationWatchdogFired/);
   assert.match(content, /generationWatchdogFired = true;[\s\S]*stopButton\.click\(\);[\s\S]*return true/);
+});
+
+test("generation watchdog is armed only after a Rerun prompt has visibly dispatched", () => {
+  assert.match(content, /const dispatchStartedAtMs = Date\.now\(\)/);
+  assert.match(content, /waitForDispatchEvidence\(4000\)[\s\S]*armGenerationWatchdog\(dispatchStartedAtMs\)/);
+  assert.match(content, /function armGenerationWatchdog\(startedAtMs = Date\.now\(\)\)/);
+  assert.match(content, /function isRerunWatcherEnabled\(\)/);
+  assert.match(content, /`tabRuntime:\$\{tabId\}`/);
 });
 
 test("generation watchdog excludes GitHub approval waiting time from the 23 minute budget", () => {
@@ -84,7 +94,8 @@ test("generation watchdog excludes GitHub approval waiting time from the 23 minu
 });
 
 test("generation watchdog resets when ChatGPT is no longer generating and only uses an actionable visible stop button", () => {
-  assert.match(content, /if \(!stopButton\) \{[\s\S]*resetGenerationWatchdog\(\);[\s\S]*return false/);
+  assert.match(content, /const GENERATION_START_GRACE_MS = 15_000/);
+  assert.match(content, /if \(!stopButton\) \{[\s\S]*GENERATION_START_GRACE_MS[\s\S]*resetGenerationWatchdog\(\);[\s\S]*return false/);
   assert.match(content, /button\.disabled \|\| button\.getAttribute\("aria-disabled"\) === "true"/);
   assert.match(content, /button\.getClientRects\(\)\.length === 0/);
   assert.match(content, /function isChatIdle\(\) \{[\s\S]*return !findStopButton\(\)/);

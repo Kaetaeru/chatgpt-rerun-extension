@@ -6,62 +6,64 @@
 - Sequence: `9`
 - Desired control status: `needs_user`
 - Current task: `V02-009`
-- Control reason: `v0.2.13 adds opt-in approval-aware waiting: suppress Rerun retry while a GitHub action confirmation is visible, never auto-click approval, and resume automatically after manual confirmation.`
-- Phase: `awaiting_v0213_simplevtt_approval_aware_probe`
-- Last checkpoint (UTC): `2026-08-16T23:51:00Z`
+- Control reason: `v0.2.14 adds a 23-active-minute stuck-generation watchdog for Rerun-owned responses; reload and live-test forced Stop/recovery on SimpleVTT.`
+- Phase: `awaiting_v0214_simplevtt_generation_watchdog_probe`
+- Last checkpoint (UTC): `2026-08-19T17:55:00Z`
 
 ## Current Objective
 
-Verify v0.2.13 on the actual live project, `Kaetaeru/SimpleVTT @ main`, after two separate long-run blockers were already corrected:
+Verify v0.2.14 on the live Rerun workflow after the user reported a distinct freeze mode: ChatGPT can error or stall mid-answer while still presenting a generating/Stop state. In that condition the existing content loop sees the chat as non-idle forever, so GitHub `continue` cannot dispatch another recovery turn.
 
-1. fresh same-sequence `continue` rewrites must not be trapped by `retry_limit`;
-2. deliberate continuation count must not be capped by lifetime `Max sends`.
+The normal assistant contract remains unchanged: checkpoint around 18 minutes and end the response before the 20-minute hard stop. The new 23-minute browser watchdog is only a recovery grace period when that contract fails because the ChatGPT generation remains stuck.
 
-The new browser interruption reported by the user is ChatGPT's GitHub write-action confirmation card, e.g. while creating `tests/ui/connectedProjectedCharacterSpellProjection.test.ts`.
+## v0.2.14 implementation
 
-## v0.2.13 implementation
-
-- `control.js`: adds tab-scoped `approvalAwareResume`, default `false`.
-- `popup.html`: adds **GitHub 승인 후 자동 계속** checkbox and explicit explanation that approval is still manual.
-- `popup.js`: persists the checkbox as a boolean in the existing per-tab config/draft and shows `GitHub approvals = Manual · auto-resume` when enabled.
-- `popup.css`: gives the checkbox a normal compact row layout instead of the generic 100%-width input styling.
-- `content.js`: before every Rerun `POLL`, reads the saved tab config. If approval-aware mode is enabled and a GitHub action-confirmation card is visible, the tick returns without polling.
-- The detector requires an interactive `허용`, `허용하기`, or `Allow` button and nearby GitHub confirmation text matching Korean `ChatGPT가 GitHub...사용하도록 허용할까요` or English `Allow ChatGPT to use GitHub`.
-- The detector does not click the approval button or dropdown. Manual confirmation remains required.
-- Once the user approves and the card disappears, the next normal content tick (base interval 2 seconds) resumes polling automatically.
-- Because the option is ordinary tab config, fresh-chat handoff copies it with the rest of the connection config.
+- `content.js`: adds `GENERATION_WATCHDOG_MS = 23 * 60 * 1000`.
+- The watchdog is armed by `sendPrompt()` only after a Rerun prompt has actual dispatch evidence; merely observing an arbitrary ChatGPT generation does not arm it.
+- `isRerunWatcherEnabled()` reads the current tab runtime. If the watcher is not enabled, watchdog state resets.
+- A 15-second dispatch-start grace prevents the timer from being discarded during the short period before ChatGPT's Stop control appears.
+- `findStopButton()` now centralizes visible/actionable Stop detection and is also used by `isChatIdle()`.
+- Disabled, aria-disabled, and layout-hidden Stop controls are ignored.
+- GitHub action-confirmation waiting pauses the watchdog clock. That user-decision time is subtracted from active-generation duration even when the approval-aware retry option is being used.
+- At 23 active minutes, the watchdog clicks the current Stop button once and returns from the tick.
+- After ChatGPT becomes idle, watchdog state resets. Existing same-sequence retry/fresh-control-generation logic remains responsible for the next continuation.
+- The forced Stop does not disable the tab watcher and does not alter GitHub control/sequence.
+- Manual/non-Rerun ChatGPT generations are not armed and must not be force-stopped merely because a content script is present.
 
 ## Safety / protocol boundary
 
-This is not an auto-approval feature. Rerun may detect the presence of the explicit GitHub action-confirmation UI only to avoid duplicate Rerun retries while the user is deciding. It must not click ChatGPT app approval, GitHub OAuth/repository-access, or administrator-approval UI.
+- 20 minutes remains the assistant execution hard stop; 23 minutes is a browser fail-safe, not a larger normal work budget.
+- The watchdog controls only the ordinary ChatGPT Stop-generation UI for a Rerun-owned response.
+- It does not click GitHub approval, OAuth, repository-access, or administrator confirmation UI.
+- It does not parse assistant response text or error copy to decide whether a generation is stuck.
 
 ## Verification
 
 | Check | Result | Evidence / note |
 |---|---|---|
 | V02-001~008 prior browser evidence | PASS | Retained. |
-| SimpleVTT control/STATE/PLAN inspection | PASS | sequence 1 / continue is correctly authorized. |
 | v0.2.12 lifetime send-cap removal | COMMITTED / SOURCE-VERIFIED | Historical `Sent` count no longer blocks dispatch/claim/handoff. |
-| v0.2.13 approval-aware config/UI | COMMITTED / SOURCE-VERIFIED | Checkbox, persistence, runtime label, CSS present. |
-| v0.2.13 detector ordering | COMMITTED / SOURCE-VERIFIED | approval check occurs before `POLL`. |
-| v0.2.13 no-auto-click boundary | COMMITTED / SOURCE-VERIFIED | detector returns card only; no approval click path. |
-| v0.2.13 phrase probe | PASS TARGETED | Korean exact/whitespace and English examples match; ordinary GitHub status text does not. |
-| v0.2.13 regression assertions | COMMITTED | content-send and popup-ui tests updated. |
-| v0.2.13 exact latest full npm suite | NOT_RUN | Exact branch checkout is not available in this runtime. |
-| v0.2.13 live approval-card browser behavior | NOT_RUN | Requires Reload and actual ChatGPT GitHub action confirmation. |
+| v0.2.13 approval-aware config/UI | COMMITTED / SOURCE-VERIFIED | Approval wait behavior retained. |
+| v0.2.14 watchdog code | COMMITTED / SOURCE-VERIFIED | 23-minute threshold, Rerun-only arm, watcher-enabled scope, Stop click and reset present. |
+| v0.2.14 approval-time exclusion | COMMITTED / SOURCE-VERIFIED | approval wait pauses and is subtracted from active time. |
+| v0.2.14 manual-chat protection | COMMITTED / SOURCE-VERIFIED | watchdog is not armed by merely observing a manual generation. |
+| v0.2.14 regression assertions | COMMITTED | `tests/content-send.test.mjs` covers scope/timing/approval/Stop filtering. |
+| v0.2.14 manifest/package | COMMITTED | version bumped to `0.2.14`. |
+| v0.2.14 exact latest full npm suite | NOT_RUN | Exact branch checkout is not available in this runtime. |
+| v0.2.14 live forced Stop | NOT_RUN | Requires Reload and live/controlled browser probe. |
 
 ## Next Exact Action
 
-1. Reload unpacked extension v0.2.13.
-2. Return to the existing ChatGPT tab connected to `Kaetaeru/SimpleVTT @ main`.
-3. Check **GitHub 승인 후 자동 계속**, then press **Save connection**.
-4. Keep/turn watcher Watching.
-5. Continue until a GitHub write action shows the confirmation card.
-6. Leave it unanswered past the configured retry delay; verify no duplicate Rerun resume prompt is sent and the approval UI is not auto-clicked.
-7. Manually approve (`허용하기` or `대화에서 허용하기`).
-8. Verify ChatGPT work continues and Rerun polling resumes without pressing Start again.
+1. Reload unpacked extension v0.2.14.
+2. Return to the existing ChatGPT tab connected to `Kaetaeru/SimpleVTT @ main` and keep/turn watcher Watching.
+3. Confirm ordinary runs still checkpoint around 18 minutes and finish before 20 minutes.
+4. For practical watchdog testing, use a controlled stuck-generation case or temporarily shorten the watchdog threshold in a local-only test build while keeping the production constant 23 minutes.
+5. Verify the Rerun-owned response gets one automatic Stop at the threshold equivalent.
+6. Verify the tab watcher remains Watching and the existing continuation/retry path can resume without another Start click.
+7. Verify GitHub approval waiting is excluded from watchdog time.
+8. Verify watcher-stopped/manual ChatGPT generations are not force-stopped.
 
-Do not change SimpleVTT's run_id/sequence merely to wake the watcher.
+Do not change SimpleVTT's run_id or sequence merely to wake the watcher.
 
 ## Do Not Repeat
 
@@ -70,7 +72,9 @@ Do not change SimpleVTT's run_id/sequence merely to wake the watcher.
 - Do not reintroduce a lifetime Max sends cap.
 - Do not remove per-generation retry protection for unchanged/stuck control.
 - Do not auto-click app approval, OAuth, repository-access, or administrator-approval UI.
-- Do not parse assistant limit-warning text.
+- Do not parse assistant limit/error text to trigger the watchdog.
+- Do not apply the 23-minute watchdog to ordinary manual ChatGPT generations.
+- Do not reinterpret 23 minutes as the normal assistant execution budget; normal hard stop remains 20 minutes.
 - Do not overwrite non-Rerun user drafts.
 - Do not recursively open fresh chats after direct handoff failure.
 - Do not merge PR #1 unless explicitly requested.

@@ -37,6 +37,8 @@ export async function assertOracleStartIsSafe(tabId, repositoryConfig, oracleCon
       throw new Error(`Patient Oracle stream is already owned by tab ${otherTabId}`);
     }
   }
+
+  await assertRepositoryBranchAccessible(repositoryConfig);
 }
 
 async function enforceOracleSafety(tabId) {
@@ -74,6 +76,33 @@ async function enforceOracleSafety(tabId) {
       "Repository/branch/Patient Oracle runtime path changed while active. Oracle stopped before dispatching against the new stream."
     );
   }
+}
+
+async function assertRepositoryBranchAccessible(repositoryConfig) {
+  const owner = String(repositoryConfig?.owner || "").trim();
+  const repo = String(repositoryConfig?.repo || "").trim();
+  const branch = String(repositoryConfig?.branch || "main").trim() || "main";
+  if (!owner || !repo) throw new Error("Patient Oracle requires a connected GitHub owner and repository");
+
+  const url = new URL(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents`);
+  url.searchParams.set("ref", branch);
+  const headers = {
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28"
+  };
+  const token = String(repositoryConfig?.githubToken || "").trim();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const response = await fetch(url.toString(), { method: "GET", headers, cache: "no-store" });
+  if (response.ok) return;
+  if (response.status === 401) throw new Error("Patient Oracle GitHub authentication failed during repository preflight");
+  if (response.status === 403 || response.status === 429) {
+    throw new Error(`Patient Oracle repository preflight was rate-limited with HTTP ${response.status}; do not bootstrap until GitHub reads recover`);
+  }
+  if (response.status === 404) {
+    throw new Error("Configured GitHub repository or branch cannot be read; Patient Oracle will not treat this as a missing runtime or bootstrap into an unverified target");
+  }
+  throw new Error(`Patient Oracle repository preflight failed with HTTP ${response.status}`);
 }
 
 async function stopOracleForSafety(tabId, state, reason, detail) {

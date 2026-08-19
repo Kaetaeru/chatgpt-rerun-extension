@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Rerun",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "minimum_chrome_version": "116",
-  "description": "Pause Rerun while GitHub action approval is waiting, then resume automatically after manual confirmation.",
+  "description": "Force-stop a stuck ChatGPT generation after 23 active minutes so Rerun can recover and continue.",
   "permissions": ["storage", "activeTab", "sidePanel", "scripting"],
   "host_permissions": [
     "https://api.github.com/*",

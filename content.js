@@ -4,6 +4,7 @@
 
   const BASE_TICK_MS = 2000;
   const GENERATION_WATCHDOG_MS = 23 * 60 * 1000;
+  const GENERATION_START_GRACE_MS = 15_000;
   const STOP_BUTTON_SELECTORS = [
     'button[data-testid="stop-button"]',
     'button[aria-label*="Stop"]',
@@ -60,9 +61,12 @@
     if (ticking) return;
     ticking = true;
     try {
+      const watcherEnabled = await isRerunWatcherEnabled();
+      if (!watcherEnabled) resetGenerationWatchdog();
+
       const approvalWaiting = Boolean(findGitHubApprovalCard());
-      if (enforceGenerationWatchdog(approvalWaiting)) return;
-      if (approvalWaiting && await isApprovalAwareResumeEnabled()) return;
+      if (watcherEnabled && enforceGenerationWatchdog(approvalWaiting)) return;
+      if (watcherEnabled && approvalWaiting && await isApprovalAwareResumeEnabled()) return;
 
       const response = await chrome.runtime.sendMessage({ type: "POLL" });
       if (!response?.ok) return;
@@ -148,30 +152,33 @@
     }
   }
 
+  function armGenerationWatchdog(startedAtMs = Date.now()) {
+    generationStartedAtMs = startedAtMs;
+    generationPausedAtMs = null;
+    generationPausedTotalMs = 0;
+    generationWatchdogFired = false;
+  }
+
   function enforceGenerationWatchdog(approvalWaiting, nowMs = Date.now()) {
+    if (generationStartedAtMs === null) return false;
+
     if (approvalWaiting) {
-      if (generationStartedAtMs !== null && generationPausedAtMs === null) {
+      if (generationPausedAtMs === null) {
         generationPausedAtMs = nowMs;
       }
       return false;
     }
 
-    const stopButton = findStopButton();
-    if (!stopButton) {
-      resetGenerationWatchdog();
-      return false;
-    }
-
-    if (generationStartedAtMs === null) {
-      generationStartedAtMs = nowMs;
-      generationPausedAtMs = null;
-      generationPausedTotalMs = 0;
-      generationWatchdogFired = false;
-    }
-
     if (generationPausedAtMs !== null) {
       generationPausedTotalMs += Math.max(0, nowMs - generationPausedAtMs);
       generationPausedAtMs = null;
+    }
+
+    const stopButton = findStopButton();
+    if (!stopButton) {
+      if (nowMs - generationStartedAtMs < GENERATION_START_GRACE_MS) return false;
+      resetGenerationWatchdog();
+      return false;
     }
 
     const activeGenerationMs = Math.max(
@@ -192,6 +199,19 @@
     generationPausedAtMs = null;
     generationPausedTotalMs = 0;
     generationWatchdogFired = false;
+  }
+
+  async function isRerunWatcherEnabled() {
+    const tabId = currentTabId ?? await registerCurrentTab();
+    if (!Number.isSafeInteger(tabId)) return false;
+
+    try {
+      const key = `tabRuntime:${tabId}`;
+      const stored = await chrome.storage.local.get(key);
+      return Boolean(stored[key]?.enabled);
+    } catch {
+      return false;
+    }
   }
 
   async function isApprovalAwareResumeEnabled() {
@@ -333,6 +353,7 @@
     }
 
     const sendButton = await waitForSendButton(4000);
+    const dispatchStartedAtMs = Date.now();
     if (sendButton) {
       sendButton.click();
     } else {
@@ -344,6 +365,8 @@
         ? "prompt inserted but send button click did not start sending"
         : "prompt inserted but Enter fallback did not start sending");
     }
+
+    armGenerationWatchdog(dispatchStartedAtMs);
   }
 
   function writeComposerText(composer, text) {

@@ -6,7 +6,7 @@ Runbook: `docs/V02_E2E_TEST_PLAN.md`
 
 - Run ID: `chatgpt-rerun-v02-20260816-01`
 - Branch: `agent/mvp-autoresume`
-- Extension to verify: `0.2.13`
+- Extension to verify: `0.2.14`
 - Status: `V02_009_LIVE_VERIFY`
 - Current task: `V02-009`
 
@@ -36,30 +36,20 @@ Runbook: `docs/V02_E2E_TEST_PLAN.md`
 9. v0.2.11 made newer same-sequence `updated_at` a fresh authorization.
 10. SimpleVTT still stopped after many successful continuations because lifetime `Max sends=20` remained.
 11. v0.2.12 removed that lifetime send gate entirely.
-12. The next workflow risk identified by the user is ChatGPT's GitHub write-action confirmation card. A long manual approval pause can outlive Rerun retry delay and create redundant continuation attempts if the page otherwise looks idle.
-13. v0.2.13 adds approval-aware manual-confirmation resume: detect the GitHub action-confirmation UI, suppress Rerun POLL/retry while it is visible, never click the approval control, and automatically resume polling after the user approves and the card disappears.
+12. v0.2.13 added approval-aware manual-confirmation resume so GitHub action approval waiting does not trigger duplicate Rerun retries.
+13. The user then reported another freeze mode: a ChatGPT answer can error or hang mid-response and remain in a generating state, leaving Rerun unable to continue because `isChatIdle()` never becomes true.
+14. v0.2.14 adds a 23-minute active-generation watchdog that force-clicks ChatGPT Stop for Rerun-owned generations only.
 
-## SimpleVTT evidence retained
+## v0.2.14 stuck-generation watchdog
 
-The live project remains `Kaetaeru/SimpleVTT @ main` with run_id `b7f27a61-29d8-4ba2-9f93-8e66722d5f41`, sequence `1`, status `continue`, task `phase14-production-play-session-ux`. Its STATE/PLAN require continued work on the same sequence.
-
-## v0.2.12 lifetime-send fix retained
-
-- Normal dispatch, `CLAIM_SEQUENCE`, and fresh-chat handoff no longer have a lifetime send-count gate.
-- `runCount` remains diagnostic only.
-- `Retries / sequence` still limits an unchanged control generation.
-
-## v0.2.13 approval-aware resume
-
-- `DEFAULT_CONFIG.approvalAwareResume=false` keeps the feature explicit opt-in.
-- Side Panel adds **GitHub 승인 후 자동 계속** and requires Save connection to apply the setting.
-- The Side Panel explains that Rerun does not click the approval button; runtime summary shows `GitHub approvals = Manual · auto-resume` when enabled.
-- `content.js` reads the saved tab-scoped config before every POLL.
-- When enabled, it looks for an interactive `허용/허용하기/Allow` button whose nearby card text contains GitHub plus either `ChatGPT가 GitHub...사용하도록 허용할까요` or `Allow ChatGPT to use GitHub`.
-- While that card exists, `tick()` returns before sending `POLL`; this prevents same-control retry/duplicate resume while the user is deciding.
-- The detector deliberately returns the card only; it contains no approval-button `.click()` path.
-- After the user manually approves and the card disappears, the next normal content tick resumes polling automatically.
-- The setting is part of tab config, so normal fresh-chat ownership transfer copies it with the rest of config.
+- `content.js` defines `GENERATION_WATCHDOG_MS = 23 * 60 * 1000`.
+- The watchdog is armed only after `sendPrompt()` has visible dispatch evidence for a Rerun-submitted prompt.
+- The content script checks the tab runtime and disables/resets the watchdog when the Rerun watcher is not enabled, so unrelated manual ChatGPT generations are not targeted.
+- It uses the same visible/actionable Stop-button detection as `isChatIdle()` and ignores disabled/hidden stop controls.
+- GitHub action-confirmation waiting pauses the active-time clock; the wait is subtracted from the 23-minute budget.
+- If active generation time reaches 23 minutes, the watchdog clicks the current Stop button once and returns from that tick.
+- After ChatGPT becomes idle, watchdog state resets. Existing GitHub `continue` / same-sequence retry or fresh-authorization logic remains responsible for the next continuation.
+- The existing assistant contract still requires an 18-minute checkpoint and response end before 20 minutes. The 23-minute browser watchdog is only a recovery grace period when that contract fails because the response hangs.
 
 ## Validation status
 
@@ -67,25 +57,27 @@ The live project remains `Kaetaeru/SimpleVTT @ main` with run_id `b7f27a61-29d8-
 |---|---|---|
 | v0.2.12 lifetime-cap removal | COMMITTED / SOURCE-VERIFIED | Background dispatch/claim/handoff has no lifetime gate. |
 | v0.2.13 approval-aware config/UI | COMMITTED / SOURCE-VERIFIED | Checkbox, saved boolean, runtime summary, checkbox CSS present. |
-| v0.2.13 approval detector ordering | COMMITTED / SOURCE-VERIFIED | `shouldPauseForGitHubApproval()` runs before `POLL`. |
-| v0.2.13 no auto-approval | COMMITTED / SOURCE-VERIFIED | Detector only returns card; approval button is not clicked. |
-| v0.2.13 detector phrase probe | PASS TARGETED | Korean exact/sample, Korean whitespace, English sample matched; ordinary GitHub status text did not match. |
-| v0.2.13 regression assertions | COMMITTED | `tests/content-send.test.mjs` and `tests/popup-ui.test.mjs` updated. |
-| v0.2.13 latest full npm suite | NOT_RUN | Container still cannot materialize the exact GitHub checkout. |
-| v0.2.13 live GitHub approval-card behavior | PENDING | Requires Reload and an actual action confirmation in ChatGPT. |
-| v0.2.13 SimpleVTT browser dispatch | PENDING | Requires live browser observation. |
+| v0.2.13 no auto-approval | COMMITTED / SOURCE-VERIFIED | Approval detector does not click confirmation UI. |
+| v0.2.14 watchdog implementation | COMMITTED / SOURCE-VERIFIED | 23-minute constant, Rerun-only arm, watcher-enabled gate, Stop click and reset paths present. |
+| v0.2.14 watchdog approval exclusion | COMMITTED / SOURCE-VERIFIED | approval waiting pauses and is subtracted from active-generation time. |
+| v0.2.14 source regression assertions | COMMITTED | `tests/content-send.test.mjs` covers timing, ownership scope, approval pause and stop-button filtering. |
+| v0.2.14 manifest/package | COMMITTED | version `0.2.14`. |
+| v0.2.14 latest full npm suite | NOT_RUN | Exact branch checkout is not available in this runtime. |
+| v0.2.14 live 23-minute forced-stop behavior | PENDING | Requires Reload and live browser observation or a controlled shortened-time browser probe. |
+| v0.2.13 live GitHub approval-card behavior | PENDING | Requires actual action confirmation in ChatGPT. |
+| SimpleVTT browser dispatch/recovery | PENDING | Requires live browser observation. |
 
 ## Next browser probe
 
-1. Reload unpacked ChatGPT Rerun v0.2.13.
-2. On the SimpleVTT tab, check **GitHub 승인 후 자동 계속** and press **Save connection**.
-3. Keep watcher Watching.
-4. Trigger/continue a GitHub write action that shows the GitHub action-confirmation card.
-5. Leave the card unanswered long enough to cross the configured retry delay; no duplicate Rerun resume prompt should be sent.
-6. Confirm Rerun did not click the approval control.
-7. Manually choose `허용하기` or `대화에서 허용하기`.
-8. After the card disappears, the running ChatGPT action and Rerun watcher should continue without another Start click.
+1. Reload unpacked ChatGPT Rerun v0.2.14.
+2. Keep the SimpleVTT watcher Watching.
+3. Verify normal Rerun work still follows the 18-minute checkpoint / 20-minute end rule.
+4. For watchdog verification, use a controlled stuck-generation case or a temporary shortened watchdog build if waiting 23 minutes is impractical.
+5. Confirm the Rerun-owned generation receives one automatic Stop when the watchdog threshold is reached.
+6. Confirm the watcher stays enabled and continuation can resume without another Start click.
+7. Confirm a normal manual ChatGPT generation with watcher stopped is not force-stopped.
+8. Confirm GitHub approval-card waiting is not counted toward the watchdog active time.
 
 ## Completion assessment
 
-V02-001~008 remain verified. V02-009 remains in progress until live SimpleVTT dispatch/fresh-chat behavior, rate-limit behavior, and approval-aware manual-confirmation resume are observed in the browser.
+V02-001~008 remain verified. V02-009 remains in progress until live SimpleVTT dispatch/fresh-chat behavior, rate-limit behavior, approval-aware manual-confirmation resume, and the v0.2.14 stuck-generation recovery path are observed in the browser.

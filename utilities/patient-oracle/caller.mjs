@@ -186,7 +186,7 @@ async function waitForResponse(context, options) {
 }
 
 async function getContentFile(context, path, { allow404 = false, etag = null } = {}) {
-  const url = contentsUrl(context, path);
+  const url = contentsReadUrl(context, path);
   const headers = githubHeaders(context.token);
   if (etag) headers["If-None-Match"] = etag;
   const response = await fetch(url, { method: "GET", headers, cache: "no-store" });
@@ -217,7 +217,7 @@ async function putContentFile(context, path, value, message, sha = null) {
   };
   if (sha) body.sha = sha;
 
-  const response = await fetch(contentsUrl(context, path), {
+  const response = await fetch(contentsWriteUrl(context, path), {
     method: "PUT",
     headers: {
       ...githubHeaders(context.token),
@@ -283,11 +283,15 @@ function makeRequestId() {
   return `REQ-${stamp}-${suffix}`;
 }
 
-function contentsUrl(context, path) {
-  const encoded = String(path).split("/").map(encodeURIComponent).join("/");
-  const url = new URL(`${API_ROOT}/repos/${encodeURIComponent(context.owner)}/${encodeURIComponent(context.repo)}/contents/${encoded}`);
+function contentsReadUrl(context, path) {
+  const url = new URL(contentsWriteUrl(context, path));
   url.searchParams.set("ref", context.branch);
   return url.toString();
+}
+
+function contentsWriteUrl(context, path) {
+  const encoded = String(path).split("/").map(encodeURIComponent).join("/");
+  return `${API_ROOT}/repos/${encodeURIComponent(context.owner)}/${encodeURIComponent(context.repo)}/contents/${encoded}`;
 }
 
 function githubHeaders(token) {

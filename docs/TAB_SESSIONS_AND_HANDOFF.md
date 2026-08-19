@@ -82,10 +82,24 @@ v0.2.13의 Side Panel에는 **GitHub 승인 후 자동 계속** 옵션이 있다
 - 따라서 승인 대기 시간이 retry delay를 넘어가도 동일 control을 별도 resume prompt로 중복 전송하지 않는다.
 - 이 기능은 assistant 답변 내용을 읽어 승인 여부를 추측하지 않고, 실제 상호작용 가능한 GitHub 승인 UI의 존재만 감지한다.
 
+## 23-minute stuck-generation watchdog
+
+v0.2.14부터 Rerun이 직접 자동 제출한 ChatGPT generation에는 브라우저 fail-safe가 적용된다.
+
+- assistant 프로토콜의 정상 규칙은 여전히 약 18분 checkpoint, 20분 전에 응답 종료다.
+- content script는 Rerun prompt가 실제 dispatch evidence를 남긴 시점에 generation watchdog을 arm한다.
+- watcher가 `Watching`인 동안 해당 Rerun-owned generation의 visible/actionable Stop 버튼이 계속 존재하면 active generating time을 누적한다.
+- active generating time이 23분을 넘으면 Stop 버튼을 한 번 클릭해 stuck generation을 강제 종료한다.
+- GitHub action-confirmation 카드에서 사용자의 승인을 기다리는 시간은 active time에서 제외한다.
+- watcher가 Stop되면 watchdog state도 즉시 reset한다.
+- Rerun이 제출하지 않은 일반 수동 ChatGPT 응답은 watchdog 대상이 아니다.
+- Stop 뒤 ChatGPT가 idle로 돌아오면 기존 GitHub control/retry/fresh-authorization 로직이 다음 continuation 여부를 다시 결정한다.
+- 이 watchdog은 assistant의 20분 규칙을 23분으로 늘리는 기능이 아니라, 20분 종료가 오류/프리즈로 실패했을 때 3분 grace 뒤 복구하는 안전망이다.
+
 책임 분리는 다음과 같다.
 
 ```text
-Rerun extension: 새 탭 생성 + watcher ownership 이관 + GitHub-backed handoff prompt 전달 + 승인 대기 중 retry 억제/수동 승인 후 자동 재개
+Rerun extension: 새 탭 생성 + watcher ownership 이관 + GitHub-backed handoff prompt 전달 + 승인 대기 retry 억제 + stuck-generation 23분 fail-safe Stop
 ChatGPT app permission: GitHub action confirmation 표시와 사용자의 승인 선택
 GitHub OAuth/admin: 실제 저장소 접근 범위와 조직 승인
 ```
@@ -122,7 +136,7 @@ handoff prompt에는 최소한 다음 정보가 직접 포함된다.
 
 현재 구현은 ChatGPT 답변 본문을 읽어 "토큰 제한" 문구를 탐지하지 않는다.
 
-그 대신 사용자가 대화가 길어졌다고 판단할 때 **Continue in new chat**을 명시적으로 누르는 방식이다. 또한 Rerun 확장프로그램은 ChatGPT의 앱 승인 카드나 OAuth/관리자 승인 UI를 자동 클릭하지 않는다. `GitHub 승인 후 자동 계속`도 승인 자체를 자동화하는 기능이 아니라 승인 대기 중 Rerun retry를 억제하고 수동 승인 뒤 자동 재개하는 기능이다.
+사용자가 대화가 길어졌다고 판단할 때는 **Continue in new chat**을 명시적으로 누르는 방식이 유지된다. Rerun은 앱 승인 카드나 OAuth/관리자 승인 UI를 자동 클릭하지 않는다. 23분 watchdog도 assistant 출력 내용을 파싱하지 않고, Rerun-owned generation의 실제 Stop control 상태와 경과 시간만 본다.
 
 ## Manual verification
 
@@ -162,6 +176,15 @@ handoff prompt에는 최소한 다음 정보가 직접 포함된다.
 4. 승인 버튼이 Rerun에 의해 자동 클릭되지 않는지 확인한다.
 5. 사용자가 직접 `허용하기` 또는 `대화에서 허용하기`를 선택한다.
 6. ChatGPT action이 계속되고 카드가 사라진 뒤 Rerun watcher가 Start 재클릭 없이 자동으로 polling/continuation을 이어가는지 확인한다.
+
+### 23-minute generation watchdog
+
+1. watcher가 Watching인 Rerun 탭에서 Rerun prompt가 자동 제출되어 generation이 시작되게 한다.
+2. 정상 케이스는 20분 전에 종료되어 watchdog이 개입하지 않는지 확인한다.
+3. controlled stuck-generation 테스트에서는 active generating time이 23분에 도달하면 Stop이 한 번 자동 클릭되는지 확인한다.
+4. 승인 카드 대기 시간을 포함시켜 그 시간이 23분 누적에서 제외되는지 확인한다.
+5. watcher를 Stop한 뒤 일반 수동 ChatGPT generation에는 watchdog이 개입하지 않는지 확인한다.
+6. forced Stop 뒤 watcher가 그대로 살아 있고 이후 `continue`가 다시 실행 가능한지 확인한다.
 
 ## Chrome version
 

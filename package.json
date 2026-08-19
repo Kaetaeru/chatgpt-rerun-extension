@@ -1,10 +1,10 @@
 {
   "name": "chatgpt-rerun-extension",
-  "version": "0.2.13",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check background.js && node --check content.js && node --check control.js && node --check popup.js",
+    "check": "node --check background.js && node --check content.js && node --check turn-observer.js && node --check control.js && node --check popup.js",
     "test": "node --test"
   }
 }

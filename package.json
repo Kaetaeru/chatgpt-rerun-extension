@@ -1,10 +1,10 @@
 {
-  "name": "chatgpt-rerun-extension",
-  "version": "0.3.0",
+  "name": "the-voyage-of-theseus-extension",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check background.js && node --check content.js && node --check turn-observer.js && node --check control.js && node --check popup.js",
+    "check": "node --check background.js && node --check background-v04.js && node --check team-background.js && node --check team-safety.js && node --check content.js && node --check turn-observer.js && node --check team-content.js && node --check control.js && node --check team-control.js && node --check popup.js && node --check team-panel.js && node --check team-panel-safety.js",
     "test": "node --test"
   }
 }

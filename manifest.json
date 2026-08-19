@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "ChatGPT Rerun",
-  "version": "0.3.0",
+  "name": "The Voyage of Theseus",
+  "version": "0.4.0",
   "minimum_chrome_version": "116",
-  "description": "Resume GitHub-backed ChatGPT work immediately when a Rerun turn finishes, with polling retained as recovery fallback.",
+  "description": "Minds change. The voyage continues. Run GitHub-backed Planner and Programmer agents in one reusable ChatGPT worker tab.",
   "permissions": ["storage", "activeTab", "sidePanel", "scripting"],
   "host_permissions": [
     "https://api.github.com/*",
@@ -11,11 +11,11 @@
     "https://chat.openai.com/*"
   ],
   "background": {
-    "service_worker": "background.js",
+    "service_worker": "background-v04.js",
     "type": "module"
   },
   "action": {
-    "default_title": "ChatGPT Rerun"
+    "default_title": "The Voyage of Theseus"
   },
   "side_panel": {
     "default_path": "popup.html"
@@ -23,7 +23,7 @@
   "content_scripts": [
     {
       "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
-      "js": ["content.js", "turn-observer.js"],
+      "js": ["content.js", "turn-observer.js", "team-content.js"],
       "run_at": "document_idle"
     }
   ]

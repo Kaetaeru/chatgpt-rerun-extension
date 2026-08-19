@@ -3,7 +3,7 @@
   "name": "The Voyage of Theseus",
   "version": "0.4.0",
   "minimum_chrome_version": "116",
-  "description": "Minds change. The voyage continues. Run GitHub-backed Planner and Programmer agents in one reusable ChatGPT worker tab.",
+  "description": "Minds change. The voyage continues. Run GitHub-backed Single, Team, and Patient Oracle workers in reusable ChatGPT tabs.",
   "permissions": ["storage", "activeTab", "sidePanel", "scripting"],
   "host_permissions": [
     "https://api.github.com/*",
@@ -23,7 +23,12 @@
   "content_scripts": [
     {
       "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
-      "js": ["content.js", "turn-observer.js", "team-content.js"],
+      "js": [
+        "content.js",
+        "turn-observer.js",
+        "team-content.js",
+        "utilities/patient-oracle/oracle-content.js"
+      ],
       "run_at": "document_idle"
     }
   ]

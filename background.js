@@ -97,6 +97,8 @@ async function handleMessage(message, sender) {
     }
     case "POLL":
       return poll(sender);
+    case "TURN_FINISHED":
+      return reconcileAfterTurn(sender, message);
     case "CLAIM_SEQUENCE":
       return claimSequence(sender, message);
     case "ACK_SEQUENCE":
@@ -136,7 +138,29 @@ async function updateRuntime(tabId, patch) {
   return next;
 }
 
-async function poll(sender) {
+async function reconcileAfterTurn(sender, message) {
+  const tabId = requireSenderTabId(sender);
+  const runtime = await loadRuntime(tabId);
+  if (!runtime.enabled || runtime.handoffPending) {
+    return { action: "none", trigger: "turn_finished" };
+  }
+
+  const result = await poll(sender, { forceFetch: true });
+  if (result.action === "continue") {
+    await chrome.tabs.sendMessage(tabId, {
+      type: "RERUN_WAKE",
+      trigger: "turn_finished"
+    });
+  }
+
+  return {
+    ...result,
+    trigger: "turn_finished",
+    executionToken: String(message?.executionToken || "")
+  };
+}
+
+async function poll(sender, { forceFetch = false } = {}) {
   const tabId = requireSenderTabId(sender);
   const config = await loadConfig(tabId);
   let runtime = await loadRuntime(tabId);
@@ -173,7 +197,7 @@ async function poll(sender) {
   let control;
   try {
     if (runtime.bootstrapPending) {
-      if (now - cache.lastFetchAt < intervalSeconds * 1000) {
+      if (!forceFetch && now - cache.lastFetchAt < intervalSeconds * 1000) {
         if (cache.cachedControl) {
           control = cache.cachedControl;
         } else {
@@ -189,7 +213,7 @@ async function poll(sender) {
         bootstrapCompletedAt: new Date().toISOString(),
         lastError: null
       });
-    } else if (now - cache.lastFetchAt < intervalSeconds * 1000 && cache.cachedControl) {
+    } else if (!forceFetch && now - cache.lastFetchAt < intervalSeconds * 1000 && cache.cachedControl) {
       control = cache.cachedControl;
     } else {
       control = await fetchControl(config, tabId);
@@ -823,22 +847,30 @@ async function stopSession(tabId, reason) {
 }
 
 async function ensureContentScript(tabId) {
+  let contentReady = false;
   try {
     const ping = await chrome.tabs.sendMessage(tabId, { type: "RERUN_PING" });
-    if (ping?.ready) return;
+    contentReady = Boolean(ping?.ready);
   } catch {
     // The tab may predate the current unpacked-extension load/reload.
   }
 
+  if (!contentReady) {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content.js"]
+    });
+
+    const ping = await chrome.tabs.sendMessage(tabId, { type: "RERUN_PING" });
+    if (!ping?.ready) {
+      throw new Error("ChatGPT 탭에 rerun content script를 주입하지 못했습니다.");
+    }
+  }
+
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["content.js"]
+    files: ["turn-observer.js"]
   });
-
-  const ping = await chrome.tabs.sendMessage(tabId, { type: "RERUN_PING" });
-  if (!ping?.ready) {
-    throw new Error("ChatGPT 탭에 rerun content script를 주입하지 못했습니다.");
-  }
 }
 
 async function waitForTabComplete(tabId, timeoutMs) {

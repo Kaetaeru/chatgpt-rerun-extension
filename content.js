@@ -3,8 +3,19 @@
   globalThis.__CHATGPT_RERUN_CONTENT_LOADED__ = true;
 
   const BASE_TICK_MS = 2000;
+  const GENERATION_WATCHDOG_MS = 23 * 60 * 1000;
+  const STOP_BUTTON_SELECTORS = [
+    'button[data-testid="stop-button"]',
+    'button[aria-label*="Stop"]',
+    'button[aria-label*="stop"]',
+    'button[aria-label*="중지"]'
+  ];
   let ticking = false;
   let currentTabId = null;
+  let generationStartedAtMs = null;
+  let generationPausedAtMs = null;
+  let generationPausedTotalMs = 0;
+  let generationWatchdogFired = false;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "RERUN_PING") {
@@ -49,7 +60,9 @@
     if (ticking) return;
     ticking = true;
     try {
-      if (await shouldPauseForGitHubApproval()) return;
+      const approvalWaiting = Boolean(findGitHubApprovalCard());
+      if (enforceGenerationWatchdog(approvalWaiting)) return;
+      if (approvalWaiting && await isApprovalAwareResumeEnabled()) return;
 
       const response = await chrome.runtime.sendMessage({ type: "POLL" });
       if (!response?.ok) return;
@@ -135,19 +148,63 @@
     }
   }
 
-  async function shouldPauseForGitHubApproval() {
+  function enforceGenerationWatchdog(approvalWaiting, nowMs = Date.now()) {
+    if (approvalWaiting) {
+      if (generationStartedAtMs !== null && generationPausedAtMs === null) {
+        generationPausedAtMs = nowMs;
+      }
+      return false;
+    }
+
+    const stopButton = findStopButton();
+    if (!stopButton) {
+      resetGenerationWatchdog();
+      return false;
+    }
+
+    if (generationStartedAtMs === null) {
+      generationStartedAtMs = nowMs;
+      generationPausedAtMs = null;
+      generationPausedTotalMs = 0;
+      generationWatchdogFired = false;
+    }
+
+    if (generationPausedAtMs !== null) {
+      generationPausedTotalMs += Math.max(0, nowMs - generationPausedAtMs);
+      generationPausedAtMs = null;
+    }
+
+    const activeGenerationMs = Math.max(
+      0,
+      nowMs - generationStartedAtMs - generationPausedTotalMs
+    );
+    if (activeGenerationMs < GENERATION_WATCHDOG_MS || generationWatchdogFired) {
+      return false;
+    }
+
+    generationWatchdogFired = true;
+    stopButton.click();
+    return true;
+  }
+
+  function resetGenerationWatchdog() {
+    generationStartedAtMs = null;
+    generationPausedAtMs = null;
+    generationPausedTotalMs = 0;
+    generationWatchdogFired = false;
+  }
+
+  async function isApprovalAwareResumeEnabled() {
     const tabId = currentTabId ?? await registerCurrentTab();
     if (!Number.isSafeInteger(tabId)) return false;
 
     try {
       const key = `tabConfig:${tabId}`;
       const stored = await chrome.storage.local.get(key);
-      if (!stored[key]?.approvalAwareResume) return false;
+      return Boolean(stored[key]?.approvalAwareResume);
     } catch {
       return false;
     }
-
-    return Boolean(findGitHubApprovalCard());
   }
 
   function findGitHubApprovalCard() {
@@ -253,14 +310,19 @@
     return composer.textContent || "";
   }
 
+  function findStopButton() {
+    for (const selector of STOP_BUTTON_SELECTORS) {
+      for (const button of document.querySelectorAll(selector)) {
+        if (button.disabled || button.getAttribute("aria-disabled") === "true") continue;
+        if (typeof button.getClientRects === "function" && button.getClientRects().length === 0) continue;
+        return button;
+      }
+    }
+    return null;
+  }
+
   function isChatIdle() {
-    const stopSelectors = [
-      'button[data-testid="stop-button"]',
-      'button[aria-label*="Stop"]',
-      'button[aria-label*="stop"]',
-      'button[aria-label*="중지"]'
-    ];
-    return !stopSelectors.some((selector) => document.querySelector(selector));
+    return !findStopButton();
   }
 
   async function sendPrompt(composer, prompt) {

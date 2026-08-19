@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Kaetaeru/chatgpt-rerun-extension/schemas/team-runtime.schema.json",
+  "title": "ChatGPT Rerun Team Runtime v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "run_id", "revision", "status", "updated_at"],
+  "properties": {
+    "version": { "const": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "revision": { "type": "integer", "minimum": 0 },
+    "status": { "enum": ["ready", "complete", "needs_user", "blocked"] },
+    "agent": { "enum": ["planner", "programmer"] },
+    "task_id": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "ready" } },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["agent", "task_id"]
+      }
+    }
+  ]
+}

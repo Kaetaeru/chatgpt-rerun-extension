@@ -51,9 +51,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     tabRuntimeKey(currentTabId),
     tabDraftKey(currentTabId)
   ]);
-  if (Object.keys(changes).some((key) => relevantKeys.has(key))) {
-    void refreshRuntime();
-  }
+  if (Object.keys(changes).some((key) => relevantKeys.has(key))) void refreshRuntime();
 });
 
 for (const element of Object.values(elements)) {
@@ -79,7 +77,7 @@ connectPromptButton.addEventListener("click", async () => {
   try {
     const runtime = await loadCurrentRuntime();
     if (runtime.enabled) {
-      throw new Error("GitHub watcher가 켜져 있을 때는 연결 프롬프트를 보낼 수 없습니다. 먼저 Stop을 눌러주세요.");
+      throw new Error("Stop the GitHub watcher before sending a connection prompt.");
     }
 
     await ensureContentScript(currentTabId);
@@ -89,9 +87,9 @@ connectPromptButton.addEventListener("click", async () => {
       prompt
     });
     if (!response?.sent) {
-      throw new Error(response?.error || "Rerun 연결 프롬프트를 전송하지 못했습니다.");
+      throw new Error(response?.error || "Failed to send the connection prompt.");
     }
-    await refreshRuntime("연결 프롬프트 전송됨 · 채팅의 RERUN_CONNECTION 결과를 확인하세요");
+    await refreshRuntime("Connection prompt sent · review the RERUN_CONNECTION result in ChatGPT");
   } catch (error) {
     showError(error);
   } finally {
@@ -156,7 +154,7 @@ handoffButton.addEventListener("click", async () => {
 async function getActiveChatGptTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !isChatGptUrl(tab.url || "")) {
-    throw new Error("이 Side Panel은 활성 ChatGPT 탭에서 열어주세요.");
+    throw new Error("Open The Voyage of Theseus Side Panel from an active ChatGPT tab.");
   }
   return tab;
 }
@@ -200,17 +198,12 @@ async function loadForm() {
   const draftKey = tabDraftKey(currentTabId);
   const stored = await chrome.storage.local.get([configKey, draftKey]);
   const config = { ...DEFAULT_CONFIG, ...(stored[configKey] || {}) };
-  const draft = stored[draftKey] && typeof stored[draftKey] === "object"
-    ? stored[draftKey]
-    : {};
+  const draft = stored[draftKey] && typeof stored[draftKey] === "object" ? stored[draftKey] : {};
 
   for (const id of ids) {
     const value = draft[id] ?? config[id] ?? "";
-    if (elements[id].type === "checkbox") {
-      elements[id].checked = value === true || value === "true";
-    } else {
-      elements[id].value = value;
-    }
+    if (elements[id].type === "checkbox") elements[id].checked = value === true || value === "true";
+    else elements[id].value = value;
   }
 }
 
@@ -222,9 +215,7 @@ function collectFormDraft() {
 }
 
 async function persistFormDraft() {
-  await chrome.storage.local.set({
-    [tabDraftKey(currentTabId)]: collectFormDraft()
-  });
+  await chrome.storage.local.set({ [tabDraftKey(currentTabId)]: collectFormDraft() });
 }
 
 async function saveSettings({ requireTarget }) {
@@ -235,10 +226,7 @@ async function saveSettings({ requireTarget }) {
   const runtime = { ...DEFAULT_RUNTIME, ...(stored[runtimeKey] || {}) };
 
   const token = elements.githubToken.value.trim();
-  const pollIntervalSeconds = effectivePollInterval(
-    elements.pollIntervalSeconds.value,
-    Boolean(token)
-  );
+  const pollIntervalSeconds = effectivePollInterval(elements.pollIntervalSeconds.value, Boolean(token));
   const next = {
     owner: elements.owner.value.trim(),
     repo: elements.repo.value.trim(),
@@ -254,7 +242,7 @@ async function saveSettings({ requireTarget }) {
   };
 
   if (requireTarget && (!next.owner || !next.repo)) {
-    throw new Error("아직 repository가 연결되지 않았습니다. 연결 프롬프트의 CONNECTED 결과에서 Owner와 Repository를 확인해 입력해주세요.");
+    throw new Error("No repository is connected yet. Enter the Owner and Repository reported by the CONNECTED result.");
   }
 
   const changedStream = streamKey(before) !== streamKey(next);
@@ -287,10 +275,7 @@ async function saveSettings({ requireTarget }) {
       }
     : runtime;
 
-  await chrome.storage.local.set({
-    [configKey]: next,
-    [runtimeKey]: nextRuntime
-  });
+  await chrome.storage.local.set({ [configKey]: next, [runtimeKey]: nextRuntime });
 
   elements.branch.value = next.branch;
   elements.path.value = next.path;
@@ -320,18 +305,12 @@ function renderSessionToggle(runtime) {
   sessionToggle.classList.toggle("primary", !running);
   sessionToggle.classList.toggle("danger", running);
   sessionToggle.setAttribute("aria-pressed", String(running));
-  sessionToggle.setAttribute(
-    "aria-label",
-    running ? "Stop GitHub watcher on this tab" : "Start GitHub watcher on this tab"
-  );
+  sessionToggle.setAttribute("aria-label", running ? "Stop GitHub watcher on this tab" : "Start GitHub watcher on this tab");
 }
 
 async function refreshRuntime(transientMessage) {
   if (currentTabId === null) return;
-  const [config, runtime] = await Promise.all([
-    loadCurrentConfig(),
-    loadCurrentRuntime()
-  ]);
+  const [config, runtime] = await Promise.all([loadCurrentConfig(), loadCurrentRuntime()]);
   const watching = Boolean(runtime.enabled);
   const connected = Boolean(String(config.owner || "").trim() && String(config.repo || "").trim());
   const branch = String(config.branch || "").trim() || "main";
@@ -352,18 +331,12 @@ async function refreshRuntime(transientMessage) {
   handoffButton.disabled = Boolean(runtime.bootstrapPending);
   connectPromptButton.disabled = watching || connectPromptBusy;
   document.getElementById("tabId").textContent = String(currentTabId);
-  document.getElementById("connectionState").textContent = connected
-    ? `${config.owner}/${config.repo} @ ${branch}`
-    : "Unconnected";
+  document.getElementById("connectionState").textContent = connected ? `${config.owner}/${config.repo} @ ${branch}` : "Unconnected";
   document.getElementById("tabWatcher").textContent = watching ? "Watching" : "Stopped";
   document.getElementById("runId").textContent = runtime.lastRunId || "-";
   document.getElementById("sequence").textContent = runtime.lastSequence ?? "-";
-  document.getElementById("githubStatus").textContent = runtime.lastStatus === "continue"
-    ? "continue · start"
-    : runtime.lastStatus || "-";
-  document.getElementById("approvalMode").textContent = config.approvalAwareResume
-    ? "Manual · auto-resume"
-    : "Manual";
+  document.getElementById("githubStatus").textContent = runtime.lastStatus === "continue" ? "continue · start" : runtime.lastStatus || "-";
+  document.getElementById("approvalMode").textContent = config.approvalAwareResume ? "Manual · auto-resume" : "Manual";
   document.getElementById("runCount").textContent = String(runtime.runCount || 0);
   document.getElementById("retryCount").textContent = `${runtime.sameSequenceRetryCount || 0}/${elements.maxRetriesPerSequence.value || DEFAULT_CONFIG.maxRetriesPerSequence}`;
   document.getElementById("lastSentAt").textContent = formatTime(runtime.lastSentAt);
@@ -376,9 +349,7 @@ async function refreshRuntime(transientMessage) {
   if (runtime.lastError) {
     errorBox.hidden = false;
     errorBox.textContent = runtime.lastError;
-  } else if (!transientMessage) {
-    hideError();
-  }
+  } else if (!transientMessage) hideError();
 }
 
 async function ensureContentScript(tabId) {
@@ -389,15 +360,10 @@ async function ensureContentScript(tabId) {
     // The tab may predate the current unpacked-extension load/reload.
   }
 
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ["content.js"]
-  });
+  await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
 
   const ping = await chrome.tabs.sendMessage(tabId, { type: "RERUN_PING" });
-  if (!ping?.ready) {
-    throw new Error("ChatGPT 탭에 Rerun content script를 주입하지 못했습니다.");
-  }
+  if (!ping?.ready) throw new Error("Failed to inject the conversation worker into the ChatGPT tab.");
 }
 
 function formatTime(value) {

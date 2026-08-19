@@ -6,9 +6,9 @@ const observer = readFileSync(new URL("../turn-observer.js", import.meta.url), "
 const background = readFileSync(new URL("../background.js", import.meta.url), "utf8");
 const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
 
-test("turn observer is loaded alongside the existing content script", () => {
+test("turn observer is loaded alongside the existing and Team content scripts", () => {
   const scripts = manifest.content_scripts?.[0]?.js || [];
-  assert.deepEqual(scripts, ["content.js", "turn-observer.js"]);
+  assert.deepEqual(scripts, ["content.js", "turn-observer.js", "team-content.js"]);
 });
 
 test("observer arms only from Rerun runtime activity and watches DOM generation transitions", () => {

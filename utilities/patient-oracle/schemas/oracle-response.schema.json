@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Patient Oracle Response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "request_id", "status"],
+  "properties": {
+    "version": { "const": 1 },
+    "request_id": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9._-]+$" },
+    "status": { "enum": ["complete", "needs_user", "blocked"] },
+    "answer": { "type": "string" },
+    "reason": { "type": "string" },
+    "completed_at": { "type": "string", "format": "date-time" },
+    "metadata": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "complete" } }, "required": ["status"] },
+      "then": { "required": ["answer", "completed_at"] }
+    },
+    {
+      "if": { "properties": { "status": { "enum": ["needs_user", "blocked"] } }, "required": ["status"] },
+      "then": { "required": ["reason"] }
+    }
+  ]
+}

@@ -96,7 +96,7 @@ async function handleMessage(message, sender) {
       return { action: "registered", tabId };
     }
     case "POLL":
-      return poll(sender);
+      return poll(sender, message);
     case "CLAIM_SEQUENCE":
       return claimSequence(sender, message);
     case "ACK_SEQUENCE":
@@ -136,12 +136,13 @@ async function updateRuntime(tabId, patch) {
   return next;
 }
 
-async function poll(sender) {
+async function poll(sender, message = {}) {
   const tabId = requireSenderTabId(sender);
   const config = await loadConfig(tabId);
   let runtime = await loadRuntime(tabId);
   if (!runtime.enabled || runtime.handoffPending) return { action: "none" };
 
+  const afterGenerationComplete = Boolean(message.afterGenerationComplete);
   const now = Date.now();
   const pausedUntilMs = Date.parse(String(runtime.rateLimitPausedUntil || ""));
   if (Number.isFinite(pausedUntilMs) && pausedUntilMs > now) {
@@ -173,7 +174,7 @@ async function poll(sender) {
   let control;
   try {
     if (runtime.bootstrapPending) {
-      if (now - cache.lastFetchAt < intervalSeconds * 1000) {
+      if (!afterGenerationComplete && now - cache.lastFetchAt < intervalSeconds * 1000) {
         if (cache.cachedControl) {
           control = cache.cachedControl;
         } else {
@@ -189,7 +190,7 @@ async function poll(sender) {
         bootstrapCompletedAt: new Date().toISOString(),
         lastError: null
       });
-    } else if (now - cache.lastFetchAt < intervalSeconds * 1000 && cache.cachedControl) {
+    } else if (!afterGenerationComplete && now - cache.lastFetchAt < intervalSeconds * 1000 && cache.cachedControl) {
       control = cache.cachedControl;
     } else {
       control = await fetchControl(config, tabId);
@@ -206,7 +207,15 @@ async function poll(sender) {
   }
 
   runtime = await loadRuntime(tabId);
-  return actionForControl(tabId, config, runtime, control, intervalSeconds, now);
+  return actionForControl(
+    tabId,
+    config,
+    runtime,
+    control,
+    intervalSeconds,
+    now,
+    afterGenerationComplete
+  );
 }
 
 function cacheFor(config) {
@@ -392,7 +401,15 @@ async function assertRepositoryBranchAccessible(config, tabId) {
   throw new Error(`GitHub repository probe failed with HTTP ${response.status}`);
 }
 
-async function actionForControl(tabId, config, runtime, control, intervalSeconds, now) {
+async function actionForControl(
+  tabId,
+  config,
+  runtime,
+  control,
+  intervalSeconds,
+  now,
+  afterGenerationComplete = false
+) {
   if (control.runId !== runtime.lastRunId) {
     runtime = await updateRuntime(tabId, {
       lastRunId: control.runId,
@@ -442,6 +459,16 @@ async function actionForControl(tabId, config, runtime, control, intervalSeconds
     return { action: "wait", reason: "sequence_regressed", control };
   }
 
+  if (afterGenerationComplete) {
+    return {
+      action: "continue",
+      control,
+      isRetry: false,
+      normalContinuation: true,
+      prompt: String(config.resumePrompt || DEFAULT_CONFIG.resumePrompt)
+    };
+  }
+
   if (disposition.action === "retry_limit") {
     return { action: "wait", reason: "retry_limit", control };
   }
@@ -474,6 +501,19 @@ async function claimSequence(sender, message) {
     return { claimed: false, reason: "stale_control" };
   }
   if (runtime.pendingSequence !== null) return { claimed: false, reason: "already_claimed" };
+
+  if (message.normalContinuation) {
+    const lastHandled = Number(runtime.lastHandledSequence ?? -1);
+    if (control.sequence < lastHandled) {
+      return { claimed: false, reason: "stale" };
+    }
+    await updateRuntime(tabId, {
+      pendingSequence: sequence,
+      pendingRunId: runId,
+      pendingIsRetry: false
+    });
+    return { claimed: true, isRetry: false };
+  }
 
   const token = String(config.githubToken || "").trim();
   const unauthenticatedWatcherCount = token

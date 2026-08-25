@@ -74,9 +74,17 @@ test("generation watchdog force-stops a continuously generating Rerun response a
   assert.match(content, /const GENERATION_WATCHDOG_MS = 23 \* 60 \* 1000/);
   assert.match(content, /const watcherEnabled = await isRerunWatcherEnabled\(\)/);
   assert.match(content, /if \(!watcherEnabled\) resetGenerationWatchdog\(\)/);
-  assert.match(content, /if \(watcherEnabled && enforceGenerationWatchdog\(approvalWaiting\)\) return;[\s\S]*type: "POLL"/);
+  assert.match(content, /if \(watcherEnabled && await enforceGenerationWatchdog\(approvalWaiting\)\) return;[\s\S]*type: "POLL"/);
   assert.match(content, /activeGenerationMs < GENERATION_WATCHDOG_MS \|\| generationWatchdogFired/);
-  assert.match(content, /generationWatchdogFired = true;[\s\S]*stopButton\.click\(\);[\s\S]*return true/);
+  assert.match(content, /generationWatchdogFired = true;[\s\S]*await rearmContinuationAfterWatchdogStop\(\);[\s\S]*stopButton\.click\(\);[\s\S]*return true/);
+});
+
+test("watchdog force-stop rearms the same-sequence continuation instead of freezing at retry_limit", () => {
+  assert.match(content, /async function rearmContinuationAfterWatchdogStop\(\)/);
+  assert.match(content, /sameSequenceRetryCount: 0/);
+  assert.match(content, /pendingSequence: null/);
+  assert.match(content, /pendingRunId: null/);
+  assert.match(content, /pendingIsRetry: false/);
 });
 
 test("generation watchdog is armed only after a Rerun prompt has visibly dispatched", () => {

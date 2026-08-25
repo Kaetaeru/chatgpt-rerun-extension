@@ -18,6 +18,7 @@
   let generationPausedTotalMs = 0;
   let generationWatchdogFired = false;
   let generationInterruptedByUser = false;
+  let generationObservedActive = false;
   let normalContinuationPending = false;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -179,6 +180,7 @@
     generationPausedTotalMs = 0;
     generationWatchdogFired = false;
     generationInterruptedByUser = false;
+    generationObservedActive = false;
   }
 
   async function enforceGenerationWatchdog(approvalWaiting, nowMs = Date.now()) {
@@ -198,13 +200,16 @@
 
     const stopButton = findStopButton();
     if (!stopButton) {
-      if (nowMs - generationStartedAtMs < GENERATION_START_GRACE_MS) return false;
+      if (!generationObservedActive && nowMs - generationStartedAtMs < GENERATION_START_GRACE_MS) {
+        return false;
+      }
       const completedNormally = !generationWatchdogFired && !generationInterruptedByUser;
       resetGenerationWatchdog();
       if (completedNormally) normalContinuationPending = true;
       return false;
     }
 
+    generationObservedActive = true;
     const activeGenerationMs = Math.max(
       0,
       nowMs - generationStartedAtMs - generationPausedTotalMs
@@ -250,6 +255,7 @@
     generationPausedTotalMs = 0;
     generationWatchdogFired = false;
     generationInterruptedByUser = false;
+    generationObservedActive = false;
   }
 
   async function isRerunWatcherEnabled() {

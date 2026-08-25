@@ -68,6 +68,7 @@ Do not repeat V02-001 through V02-008 unless a new regression directly invalidat
 - v0.2.15 watchdog recovery re-arm: committed/source-verified.
 - v0.2.16 immediate normal-completion chaining: committed/source-verified.
 - `tests/content-send.test.mjs` and `tests/watcher-flow.test.mjs`: v0.2.16 source regression assertions committed.
+- Approval detector source-regex assertion escape was corrected after a standalone Node probe reproduced the mismatch; corrected probe result: **PASS (`true`)**.
 - Exact latest `npm run check` / `npm test`: **NOT_RUN**. This execution environment could not materialize the exact branch because `github.com` DNS resolution failed (`Could not resolve host: github.com`).
 - Build: N/A; unpacked Manifest V3 extension.
 

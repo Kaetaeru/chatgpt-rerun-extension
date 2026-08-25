@@ -2,7 +2,7 @@
 
 ## Goal
 
-ChatGPT Rerun v0.2 keeps one independent watcher/runtime per ChatGPT tab while GitHub remains the durable workflow source of truth. A long workflow may remain on one `sequence` across many separate ChatGPT executions.
+ChatGPT Rerun keeps one independent watcher/runtime per ChatGPT tab while GitHub remains the durable workflow source of truth. A long workflow may stay on one `sequence` across many ChatGPT executions and, when the current conversation is no longer dispatchable, ownership may move to one fresh ChatGPT tab.
 
 ## Per-tab storage
 
@@ -14,72 +14,48 @@ tabDraft:<tabId>    # Side Panel draft
 
 Start/Stop affects only the current tab. Two enabled tabs cannot own the same owner/repo/branch/control stream simultaneously.
 
-## Normal execution chaining — v0.2.16
+## Normal execution chaining
 
 The normal workflow cadence is completion-driven, not retry-driven.
 
 ```text
 Rerun submits prompt
-  -> ChatGPT generation becomes active
-  -> generation finishes normally
-  -> content script sees Stop control disappear
-  -> immediate one-shot GitHub control refresh
-  -> latest continue: submit next Rerun prompt immediately
-  -> latest terminal state: wait while watcher remains enabled
+-> ChatGPT generation becomes active
+-> generation finishes normally
+-> same-sequence retry history clears
+-> immediate one-shot GitHub control refresh
+-> latest continue: submit next Rerun prompt immediately
+-> latest terminal state: wait while watcher remains enabled
 ```
 
-Details:
+Regular GitHub polling and same-sequence retry delay protect idle/external-change and abnormal-recovery cases; they do not pace successful executions.
 
-- Content polling still has a 2-second base tick.
-- Once an active Stop control has been observed, disappearance is handled on the next tick; the 15-second dispatch-start grace no longer delays a genuinely observed generation ending.
-- The completion refresh bypasses the normal local GitHub poll-cache interval once. It does not disable server-side rate-limit protection.
-- The refreshed control is authoritative. `complete`, `needs_user`, `blocked`, and sequence regression remain blockers.
-- A valid refreshed `continue` is a **normal continuation**, not an unchanged-generation retry. It bypasses `retryDelaySeconds` / `maxRetriesPerSequence` and claims with `pendingIsRetry=false`.
-- The immediate completion marker is consumed after one background response, so persistent GitHub errors cannot create a 2-second API hammer loop.
+Manual user Stop and 23-minute watchdog Stop are not normal completion and use their existing guarded recovery behavior.
 
-### What is not normal completion
+## Exhausted/non-dispatchable chat recovery — v0.2.18
 
-- If the user directly clicks ChatGPT Stop, the trusted click marks that generation as manually interrupted. It does not immediately auto-chain.
-- If the 23-minute watchdog programmatically clicks Stop, `generationWatchdogFired` excludes it from the normal-completion path. Watchdog recovery uses its re-armed abnormal-recovery path.
-- Prompt dispatch failures continue to use guarded retry/handoff behavior.
+A valid `continue` can arrive while the current ChatGPT conversation is idle but no usable composer exists. Prior behavior silently returned and left the watcher Watching indefinitely.
 
-## GitHub polling and retry roles
+v0.2.18 uses this flow:
 
-Regular unauthenticated polling remains conservative for GitHub rate-limit safety. That cadence is for observing external control changes while idle, not for pacing successful Rerun executions.
+```text
+POLL -> continue
+-> current composer available? use it
+-> otherwise wait up to 5 seconds for SPA rendering
+-> composer appears? use it
+-> still absent? reuse HANDOFF_NEW_CHAT
+-> one fresh ChatGPT tab
+-> transfer watcher ownership/context
+-> auto-submit GitHub-backed handoff prompt
+```
 
-`retryDelaySeconds` and `maxRetriesPerSequence` protect abnormal unchanged-generation recovery. They are not the delay between successful normal executions.
+This deliberately reuses the existing handoff mechanism instead of introducing a second ownership-transfer implementation.
 
-There is no lifetime send cap. `Sent` / `runCount` is diagnostic only.
-
-## GitHub approval-aware resume
-
-A GitHub action-confirmation card may appear in an existing or fresh ChatGPT conversation.
-
-When **GitHub 승인 후 자동 계속** is enabled:
-
-- Rerun detects the visible confirmation UI only to suppress its own polling/retry while approval is pending.
-- Rerun does not click `허용하기`, `Allow`, OAuth, repository-access, or admin approval controls.
-- After the user manually approves and the card disappears, normal content polling resumes.
-- Approval waiting time is excluded from the 23-minute generation watchdog budget.
-
-## 23-minute stuck-generation watchdog — v0.2.14/v0.2.15
-
-Normal assistant policy remains checkpoint around 18 minutes and end before 20 minutes.
-
-If a Rerun-owned generation nevertheless remains actively generating for 23 active minutes:
-
-1. verify watcher ownership is still enabled;
-2. exclude approval-wait time;
-3. clear stale pending claim and reset same-sequence retry count;
-4. click the visible/actionable ChatGPT Stop once;
-5. keep watcher ownership alive;
-6. recover through the guarded abnormal-recovery path rather than normal-completion fast chaining.
-
-The watchdog is armed only by Rerun-submitted prompts and does not target unrelated manual ChatGPT responses.
+If direct handoff prompt submission fails, the new watcher safe-stops. It must not recursively open more fresh chats.
 
 ## Continue in new chat
 
-`Continue in new chat` transfers watcher ownership, not GitHub task identity.
+Manual `Continue in new chat` and automatic exhausted-chat recovery both use the same background ownership-transfer path:
 
 1. Read latest GitHub control.
 2. Mark old tab `handoffPending`.
@@ -91,8 +67,6 @@ The watchdog is armed only by Rerun-submitted prompts and does not target unrela
 
 Handoff is allowed even when GitHub status is terminal. A terminal handoff restores context and waits; later `continue` resumes automatically.
 
-Fresh-chat handoff must not recursively open more chats if direct handoff prompt submission fails. User composer drafts remain protected.
-
 ## Same-stream collision guard
 
 Stream identity is:
@@ -103,28 +77,40 @@ owner / repo / branch / control path
 
 Start or handoff refuses a second enabled owner for the same stream.
 
+## User-draft safety
+
+A non-empty composer containing user text is never overwritten. A stale exact Rerun-owned prompt may be recognized as Rerun state and route to fresh-chat recovery.
+
+## GitHub approval-aware resume
+
+When **GitHub 승인 후 자동 계속** is enabled, a visible GitHub action-confirmation card pauses Rerun polling/retry while the user decides. Rerun never clicks approval, OAuth, repository-access, or admin confirmation controls. Polling resumes after manual approval and card disappearance.
+
+## 23-minute stuck-generation watchdog
+
+If a Rerun-owned generation remains active for 23 active minutes, excluding approval wait time, Rerun re-arms abnormal recovery state and clicks the current visible/actionable ChatGPT Stop once. It does not target unrelated manual ChatGPT generations.
+
 ## Manual verification
 
-### Immediate normal continuation
+### Normal continuation
 
-1. Reload v0.2.16.
-2. Keep watcher Watching on a control stream intentionally left at `continue`.
+1. Reload the current extension.
+2. Keep watcher Watching on an intentional `continue` stream.
 3. Let a Rerun response finish normally.
-4. Verify the next prompt starts on the next completion cycle rather than after regular polling/retry delay.
-5. Change control to a terminal state and verify the chain stops while watcher remains Watching.
-6. Manually Stop a Rerun generation and verify it does not use immediate normal chaining.
+4. Verify Same-sequence retries becomes `0/N` and the next prompt starts without ordinary polling/retry delay.
 
-### Watchdog recovery
+### Missing-composer fresh-chat recovery
 
-Verify a controlled watchdog Stop re-arms recovery and does not freeze at `retry_limit`.
+1. Use v0.2.18 with watcher Watching and GitHub `continue`.
+2. Put the current conversation in an idle state where no usable composer exists.
+3. Verify Rerun waits up to 5 seconds for a transient composer.
+4. If none appears, verify exactly one fresh ChatGPT tab opens.
+5. Verify watcher ownership/context moves to the new tab and the handoff prompt is automatically submitted.
+6. Verify the old watcher is stopped as handed off.
+7. Verify direct handoff failure does not open another recursive tab.
 
-### Approval-aware resume
+### Approval and watchdog
 
-Verify approval is still manual, duplicate Rerun retry is suppressed while the card is visible, and polling resumes after approval.
-
-### New-chat handoff
-
-Verify one new tab receives ownership and an automatically submitted GitHub-backed handoff prompt, with no duplicate watcher.
+Retain the existing manual-approval and 23-minute watchdog safety probes.
 
 ## Chrome version
 

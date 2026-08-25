@@ -86,7 +86,7 @@
         type: "POLL",
         afterGenerationComplete
       });
-      if (response?.ok && afterGenerationComplete) {
+      if (response && afterGenerationComplete) {
         normalContinuationPending = false;
       }
       if (!response?.ok) return;

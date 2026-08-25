@@ -61,7 +61,7 @@ test("approval-aware mode pauses Rerun polling while a GitHub action confirmatio
   assert.match(content, /stored\[key\]\?\.approvalAwareResume/);
   assert.match(content, /function findGitHubApprovalCard\(\)/);
   assert.match(content, /ChatGPT가\\s\*GitHub\.\*사용하도록\\s\*허용할까요/);
-  assert.match(content, /allow\\s\+ChatGPT\\s+to\\s+use\\s+GitHub/);
+  assert.match(content, /allow\\s\+ChatGPT\\s\+to\\s\+use\\s\+GitHub/);
 });
 
 test("approval-aware mode never clicks the GitHub approval button", () => {
@@ -106,6 +106,7 @@ test("normal Rerun completion immediately requests an authoritative control refr
   assert.match(content, /const afterGenerationComplete = normalContinuationPending/);
   assert.match(content, /type: "POLL",[\s\S]*afterGenerationComplete/);
   assert.match(content, /normalContinuation: Boolean\(response\.normalContinuation\)/);
+  assert.match(content, /if \(response && afterGenerationComplete\)[\s\S]*normalContinuationPending = false/);
 });
 
 test("an observed active generation chains on the next content tick instead of waiting the startup grace", () => {

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "run_id": "example-run-001",
+  "sequence": 7,
+  "status": "continue",
+  "reason": "TASK-006 verified; TASK-007 is ready.",
+  "updated_at": "2026-08-16T12:30:00Z",
+  "task_id": "TASK-007"
+}

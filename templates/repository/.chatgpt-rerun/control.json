@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "run_id": "replace-with-unique-run-id",
+  "sequence": 0,
+  "status": "needs_user",
+  "reason": "Initialize PLAN.md and STATE.md, then publish status=continue.",
+  "updated_at": "1970-01-01T00:00:00Z",
+  "task_id": "TASK-001"
+}

@@ -107,8 +107,17 @@
       const { control, prompt } = response;
       if (!control || !isChatIdle()) return;
 
-      const composer = findComposer();
-      if (!composer) return;
+      const composer = findComposer() || await waitForComposer(5_000);
+      if (!composer) {
+        const handoff = await handoffAfterDispatchFailure();
+        if (handoff?.ok) return;
+
+        await chrome.runtime.sendMessage({
+          type: "STOP_SESSION",
+          reason: `auto_handoff_failed: ${handoff?.error || "ChatGPT composer remained unavailable after 5 seconds"}`
+        });
+        return;
+      }
 
       const existingComposerText = readComposerText(composer).trim();
       const staleRerunPrompt = isSameRerunPrompt(existingComposerText, prompt);

@@ -61,7 +61,7 @@ test("approval-aware mode pauses Rerun polling while a GitHub action confirmatio
   assert.match(content, /stored\[key\]\?\.approvalAwareResume/);
   assert.match(content, /function findGitHubApprovalCard\(\)/);
   assert.match(content, /ChatGPT가\\s\*GitHub\.\*사용하도록\\s\*허용할까요/);
-  assert.match(content, /allow\\s\+ChatGPT\\s\+to\\s\+use\\s\+GitHub/);
+  assert.match(content, /allow\\s\+ChatGPT\\s+to\\s+use\\s+GitHub/);
 });
 
 test("approval-aware mode never clicks the GitHub approval button", () => {
@@ -108,6 +108,12 @@ test("normal Rerun completion immediately requests an authoritative control refr
   assert.match(content, /normalContinuation: Boolean\(response\.normalContinuation\)/);
 });
 
+test("an observed active generation chains on the next content tick instead of waiting the startup grace", () => {
+  assert.match(content, /let generationObservedActive = false/);
+  assert.match(content, /if \(!generationObservedActive && nowMs - generationStartedAtMs < GENERATION_START_GRACE_MS\)/);
+  assert.match(content, /generationObservedActive = true;[\s\S]*const activeGenerationMs/);
+});
+
 test("manual Stop is not mistaken for normal completion", () => {
   assert.match(content, /document\.addEventListener\("click"/);
   assert.match(content, /!event\.isTrusted \|\| generationStartedAtMs === null \|\| generationWatchdogFired/);
@@ -117,7 +123,7 @@ test("manual Stop is not mistaken for normal completion", () => {
 
 test("generation watchdog resets when ChatGPT is no longer generating and only uses an actionable visible stop button", () => {
   assert.match(content, /const GENERATION_START_GRACE_MS = 15_000/);
-  assert.match(content, /if \(!stopButton\) \{[\s\S]*GENERATION_START_GRACE_MS[\s\S]*resetGenerationWatchdog\(\);[\s\S]*return false/);
+  assert.match(content, /resetGenerationWatchdog\(\);[\s\S]*if \(completedNormally\) normalContinuationPending = true/);
   assert.match(content, /button\.disabled \|\| button\.getAttribute\("aria-disabled"\) === "true"/);
   assert.match(content, /button\.getClientRects\(\)\.length === 0/);
   assert.match(content, /function isChatIdle\(\) \{[\s\S]*return !findStopButton\(\)/);

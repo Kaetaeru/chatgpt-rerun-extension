@@ -3,7 +3,7 @@
   "run_id": "chatgpt-rerun-v02-20260816-01",
   "sequence": 9,
   "status": "needs_user",
-  "reason": "v0.2.14 adds a 23-active-minute stuck-generation watchdog for Rerun-owned responses; reload and live-test forced Stop/recovery on SimpleVTT.",
-  "updated_at": "2026-08-19T17:55:00Z",
+  "reason": "v0.2.16 restores immediate normal chaining: after a Rerun response completes normally, refresh GitHub control once and immediately dispatch latest continue without regular poll/retry delay; reload and live-test.",
+  "updated_at": "2026-08-25T19:54:52Z",
   "task_id": "V02-009"
 }

@@ -65,7 +65,7 @@
       if (!watcherEnabled) resetGenerationWatchdog();
 
       const approvalWaiting = Boolean(findGitHubApprovalCard());
-      if (watcherEnabled && enforceGenerationWatchdog(approvalWaiting)) return;
+      if (watcherEnabled && await enforceGenerationWatchdog(approvalWaiting)) return;
       if (watcherEnabled && approvalWaiting && await isApprovalAwareResumeEnabled()) return;
 
       const response = await chrome.runtime.sendMessage({ type: "POLL" });
@@ -159,7 +159,7 @@
     generationWatchdogFired = false;
   }
 
-  function enforceGenerationWatchdog(approvalWaiting, nowMs = Date.now()) {
+  async function enforceGenerationWatchdog(approvalWaiting, nowMs = Date.now()) {
     if (generationStartedAtMs === null) return false;
 
     if (approvalWaiting) {
@@ -190,8 +190,34 @@
     }
 
     generationWatchdogFired = true;
+    await rearmContinuationAfterWatchdogStop();
     stopButton.click();
     return true;
+  }
+
+  async function rearmContinuationAfterWatchdogStop() {
+    const tabId = currentTabId ?? await registerCurrentTab();
+    if (!Number.isSafeInteger(tabId)) return;
+
+    try {
+      const key = `tabRuntime:${tabId}`;
+      const stored = await chrome.storage.local.get(key);
+      const runtime = stored[key];
+      if (!runtime?.enabled) return;
+
+      await chrome.storage.local.set({
+        [key]: {
+          ...runtime,
+          sameSequenceRetryCount: 0,
+          pendingSequence: null,
+          pendingRunId: null,
+          pendingIsRetry: false,
+          lastError: null
+        }
+      });
+    } catch {
+      // The next content tick can still recover from a fresh GitHub authorization.
+    }
   }
 
   function resetGenerationWatchdog() {

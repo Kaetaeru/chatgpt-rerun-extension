@@ -2,45 +2,38 @@
 
 ## Scope
 
-Current verification target: **v0.2.16** on branch `agent/mvp-autoresume`.
+Current verification target: **v0.2.18** on branch `agent/mvp-autoresume`.
 
-Stable baseline remains V02-001 through V02-008. V02-009 covers the remaining browser/runtime reliability chain:
+Stable baseline remains V02-001 through V02-008. V02-009 covers automatic submission, fresh-chat recovery, rate-limit resilience, same-sequence authorization, unlimited lifetime sends, approval-aware manual confirmation, stuck-generation recovery, immediate normal chaining, retry-reset semantics, and exhausted-chat handoff.
 
-- automatic prompt submission;
-- fresh-chat handoff and exhausted-chat recovery;
-- GitHub REST rate-limit pause/resume;
-- fresh same-sequence authorization;
-- no lifetime send cap;
-- approval-aware manual-confirmation resume;
-- 23-minute stuck-generation recovery;
-- **immediate normal-completion continuation**.
+Relevant version chain:
 
-Version chain relevant to the current probe:
-
-- v0.2.10: rate-limit-resilient polling; unauthenticated regular polling is deliberately conservative.
-- v0.2.11: newer same-sequence `updated_at` is a fresh authorization.
+- v0.2.10: rate-limit-resilient polling.
+- v0.2.11: newer same-sequence `updated_at` is fresh authorization.
 - v0.2.12: removed lifetime `Max sends` gate.
-- v0.2.13: suppress retry while a GitHub action-confirmation card is waiting; approval remains manual.
-- v0.2.14: 23-active-minute watchdog can Stop a stuck Rerun-owned generation.
-- v0.2.15: watchdog Stop re-arms stale pending/retry state so recovery cannot freeze at `retry_limit`.
-- v0.2.16: a **normally completed** Rerun generation forces one immediate authoritative GitHub control refresh and, when the latest control is `continue`, submits the next prompt without waiting for regular polling or retry delay.
+- v0.2.13: approval-aware wait; approval remains manual.
+- v0.2.14: 23-minute stuck-generation watchdog.
+- v0.2.15: watchdog Stop re-arms pending/retry state.
+- v0.2.16: normal completion forces one immediate GitHub refresh and valid `continue` chains without normal retry delay.
+- v0.2.17: successful completion clears `sameSequenceRetryCount` immediately.
+- v0.2.18: a valid `continue` with no current-chat composer waits briefly for SPA rendering, then reuses the existing one-shot fresh-chat handoff instead of silently waiting forever.
 
 ## Invariants
 
 - One ChatGPT execution checkpoints around 18 minutes and ends before 20 minutes; 23 minutes is recovery-only.
-- Normal completion is not a retry.
-- `retryDelaySeconds` / `maxRetriesPerSequence` protect abnormal unchanged-generation recovery only.
-- Manual user Stop is not normal completion and must not auto-chain immediately.
-- Watchdog Stop is not normal completion; it follows its re-armed recovery path.
-- Terminal `complete` / `needs_user` / `blocked` always pause implementation dispatch while leaving the watcher enabled.
-- Sequence regression still blocks dispatch.
-- A normal-completion refresh may bypass the local GitHub poll cache once, but it does not bypass an active server-side GitHub rate-limit pause.
+- Normal completion is not a retry and clears unresolved same-sequence retry history.
+- `retryDelaySeconds` / `maxRetriesPerSequence` protect abnormal recovery only.
+- Manual user Stop and watchdog Stop are not normal completion.
+- Terminal `complete` / `needs_user` / `blocked` pause implementation dispatch while watcher stays enabled.
+- Sequence regression remains blocked.
+- Server-side GitHub rate-limit pauses are never bypassed.
 - No app/OAuth/admin approval button is auto-clicked.
 - Non-Rerun user composer content is never overwritten.
+- Fresh-chat recovery may open at most one new tab per handoff attempt; direct handoff failure must safe-stop rather than recurse.
 
 ## V02-001 through V02-008
 
-Retain previously verified evidence unless a current change directly invalidates it:
+Retain previously verified evidence unless a current regression directly invalidates it:
 
 1. tab-scoped config/runtime isolation;
 2. same-stream collision guard;
@@ -49,67 +42,62 @@ Retain previously verified evidence unless a current change directly invalidates
 5. handoff race/failure safeguards;
 6. watcher persistence across terminal GitHub work states;
 7. unified Start/Stop watcher toggle;
-8. unconnected-first explicit repository onboarding.
+8. unconnected-first repository onboarding.
 
-Do not repeat these probes merely because v0.2.16 was published.
+## V02-009 primary probes
 
-## V02-009 A — Automatic submission
+### A. Automatic submission
 
-A valid `continue` must populate and actually submit the resume prompt without user Send/Enter. Paste-only is failure.
+A valid `continue` must populate and actually submit the resume prompt without user Send/Enter.
 
-## V02-009 B — Fresh-chat recovery
+### B. Fresh-chat ownership transfer
 
-Exhausted/stale Rerun prompt paths may transfer watcher ownership to one new ChatGPT tab. User drafts remain protected; recursive handoff is forbidden.
+A manual or automatic handoff opens one fresh ChatGPT tab, copies watcher ownership/context, auto-submits the GitHub-backed handoff prompt, disables the old watcher, and does not recurse if direct handoff submission fails.
 
-## V02-009 C — Rate-limit behavior
+### C. Rate-limit behavior
 
-GitHub `403/429` rate limits pause polling while keeping the watcher enabled. Polling automatically resumes after the server-provided/reset delay.
+GitHub `403/429` pauses polling without disabling watcher ownership. Polling resumes automatically after the server-provided/reset delay.
 
-## V02-009 D — Same-sequence authorization and unlimited workflow
+### D. Same-sequence authorization and unlimited workflow
 
-A newer same-sequence `continue.updated_at` is fresh authorization. Historical `Sent` / `runCount` never blocks a valid authorization or handoff.
+Newer same-sequence `continue.updated_at` is fresh authorization. Historical `Sent` / `runCount` never blocks a valid authorization or handoff.
 
-## V02-009 E — GitHub approval-aware resume
+### E. GitHub approval-aware resume
 
-When enabled, a visible GitHub action-confirmation card suppresses Rerun polling/retry until the user manually approves. Rerun never clicks the approval control. After the card disappears, normal polling resumes automatically.
+A visible GitHub action-confirmation card suppresses Rerun polling/retry until the user manually approves. Rerun never clicks the approval control.
 
-## V02-009 F — 23-minute stuck-generation watchdog
+### F. 23-minute stuck-generation watchdog
 
-For a Rerun-owned generation only:
+For Rerun-owned generations only, a generation still active at 23 active minutes receives one Stop after approval-wait time is excluded. Pending/retry recovery is re-armed first.
 
-1. normal execution should finish before 20 minutes;
-2. if generation remains active to 23 active minutes, click the visible/actionable ChatGPT Stop once;
-3. exclude GitHub approval waiting time;
-4. before the forced Stop, clear stale pending claim and reset same-sequence retry count;
-5. after Stop, keep the watcher enabled and allow recovery;
-6. never apply this watchdog to an unrelated manual ChatGPT generation.
+### G. Immediate normal-completion continuation and retry reset
 
-## V02-009 G — Immediate normal-completion continuation
+1. Let a Rerun-owned response finish normally.
+2. `Same-sequence retries` becomes `0/N` immediately.
+3. Completion triggers one authoritative GitHub refresh.
+4. Latest valid `continue` dispatches the next prompt without the ordinary 90/120-second polling/retry delays.
+5. Terminal state, manual Stop, watchdog Stop, sequence regression, and active GitHub rate-limit pause still block the fast path as appropriate.
 
-This is the current primary regression probe.
+### H. Missing-composer exhausted-chat recovery — v0.2.18
 
-1. Reload unpacked extension **v0.2.16**.
-2. Start/keep a watcher on a valid `continue` stream.
-3. Let a Rerun-submitted ChatGPT response finish **normally**; do not click Stop.
-4. Once the content script has observed an active Stop control, its disappearance must be recognized on the next base content tick (about 2 seconds), not after the 15-second startup grace.
-5. The completion tick sends `POLL { afterGenerationComplete: true }`.
-6. Background bypasses its normal local poll-cache interval exactly for that completion refresh and reads current GitHub control.
-7. If the refreshed control is `continue` and not sequence-regressed, return a `normalContinuation` dispatch even if the unchanged-control retry delay/count would otherwise wait or be exhausted.
-8. `CLAIM_SEQUENCE` for that normal continuation records `pendingIsRetry=false`; ACK therefore resets/keeps the retry counter at zero rather than consuming retry budget.
-9. The next prompt must be automatically submitted without waiting 90/120 seconds.
-10. If refreshed control is `complete`, `needs_user`, or `blocked`, do not submit another implementation prompt.
-11. If the user manually clicks Stop, do not mark it normal completion and do not use this immediate chain path.
-12. If the 23-minute watchdog clicks Stop, do not use the normal-completion path; use watchdog recovery instead.
-13. A completion refresh response is consumed once so persistent GitHub errors cannot cause a 2-second API hammer loop.
+1. Use a watcher whose GitHub state is valid `continue`.
+2. Put the current ChatGPT conversation in a state where it is idle but no usable composer is available.
+3. Rerun must first wait up to 5 seconds for transient SPA rendering.
+4. If a composer appears, use it normally and do not hand off.
+5. If it remains absent, call the existing `HANDOFF_NEW_CHAT` path instead of silently returning.
+6. Exactly one fresh ChatGPT tab should open.
+7. The new tab should inherit repo/branch/control/run/sequence watcher ownership and receive an automatically submitted handoff prompt.
+8. The old tab should become handed-off/stopped.
+9. If direct handoff submission fails, safe-stop; do not recursively open another tab.
 
-### PASS-G
+### PASS-H
 
-A normal Rerun response ends and, when GitHub still authorizes `continue`, the next Rerun prompt starts on the next completion cycle rather than after regular polling/retry delay. Terminal, manual-Stop, watchdog-Stop, rate-limit, and sequence-regression safety boundaries remain intact.
+A non-dispatchable/exhausted current conversation no longer remains indefinitely `Watching` with no work. It either regains its composer within the short render grace or transfers to one fresh ChatGPT conversation and continues from GitHub state.
 
 ## Current browser gate
 
-Use `Kaetaeru/SimpleVTT @ work/v1-composite` or another safe connected stream that can remain `continue` across two normal executions. Record only actually observed browser evidence.
+Use `Kaetaeru/SimpleVTT @ work/v1-composite` or another safe connected stream. Reload v0.2.18, refresh the current ChatGPT tab, retain watcher ownership, and record only actually observed browser evidence.
 
 ## Pass criteria
 
-V02-009 is complete only when the current extension has live evidence for the relevant dispatch/recovery paths. Source inspection or committed assertions are not browser PASS by themselves.
+V02-009 is complete only when the current extension has live browser evidence for the relevant dispatch/recovery paths. Source inspection or committed assertions are not browser PASS by themselves.

@@ -3,7 +3,7 @@
   "run_id": "chatgpt-rerun-v02-20260816-01",
   "sequence": 9,
   "status": "needs_user",
-  "reason": "v0.2.17 resets same-sequence retry history immediately on normal Rerun completion, before any next prompt ACK; reload and live-test retry counter plus immediate chaining.",
-  "updated_at": "2026-08-25T20:11:45Z",
+  "reason": "v0.2.18 restores exhausted-chat recognition: if a valid continue is ready but the current composer stays unavailable for 5 seconds, reuse the one-shot fresh-chat ownership handoff instead of silently waiting; reload and live-test.",
+  "updated_at": "2026-08-25T21:17:00Z",
   "task_id": "V02-009"
 }

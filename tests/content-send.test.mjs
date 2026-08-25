@@ -41,6 +41,12 @@ test("a stale Rerun-owned prompt immediately attempts fresh-chat handoff", () =>
   assert.match(content, /stale Rerun prompt could not be handed off/);
 });
 
+test("missing composer triggers fresh-chat handoff instead of silently waiting", () => {
+  assert.match(content, /const composer = findComposer\(\) \|\| await waitForComposer\(5_000\)/);
+  assert.match(content, /if \(!composer\) \{[\s\S]*handoffAfterDispatchFailure\(\)[\s\S]*auto_handoff_failed/);
+  assert.match(content, /ChatGPT composer remained unavailable after 5 seconds/);
+});
+
 test("confirmed dispatch failure attempts fresh-chat handoff instead of immediately stopping", () => {
   assert.match(content, /function isConfirmedDispatchFailure\(detail\)/);
   assert.match(content, /startsWith\("prompt inserted but "\)/);

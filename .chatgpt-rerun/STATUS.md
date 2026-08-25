@@ -53,6 +53,7 @@ Rerun prompt
 
 - v0.2.17 product source: COMMITTED / SOURCE-VERIFIED
 - v0.2.17 retry-reset source assertion: COMMITTED
+- targeted helper probe: **PASS** — `sameSequenceRetryCount 3 -> 0`, `runCount 17` preserved
 - exact latest full `npm run check` / `npm test`: NOT_RUN — 현재 실행 환경에서 GitHub DNS 해석 실패로 exact checkout 불가
 - live `Same-sequence retries -> 0/N`: PENDING
 - live immediate normal-completion chaining: PENDING

@@ -205,7 +205,10 @@
       }
       const completedNormally = !generationWatchdogFired && !generationInterruptedByUser;
       resetGenerationWatchdog();
-      if (completedNormally) normalContinuationPending = true;
+      if (completedNormally) {
+        await resetSameSequenceRetryCount();
+        normalContinuationPending = true;
+      }
       return false;
     }
 
@@ -246,6 +249,27 @@
       });
     } catch {
       // The next content tick can still recover from a fresh GitHub authorization.
+    }
+  }
+
+  async function resetSameSequenceRetryCount() {
+    const tabId = currentTabId ?? await registerCurrentTab();
+    if (!Number.isSafeInteger(tabId)) return;
+
+    try {
+      const key = `tabRuntime:${tabId}`;
+      const stored = await chrome.storage.local.get(key);
+      const runtime = stored[key];
+      if (!runtime?.enabled || Number(runtime.sameSequenceRetryCount || 0) === 0) return;
+
+      await chrome.storage.local.set({
+        [key]: {
+          ...runtime,
+          sameSequenceRetryCount: 0
+        }
+      });
+    } catch {
+      // The next normal-continuation ACK also resets this counter.
     }
   }
 

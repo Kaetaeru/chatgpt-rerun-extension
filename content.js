@@ -17,6 +17,8 @@
   let generationPausedAtMs = null;
   let generationPausedTotalMs = 0;
   let generationWatchdogFired = false;
+  let generationInterruptedByUser = false;
+  let normalContinuationPending = false;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "RERUN_PING") {
@@ -41,6 +43,14 @@
     }
   });
 
+  document.addEventListener("click", (event) => {
+    if (!event.isTrusted || generationStartedAtMs === null || generationWatchdogFired) return;
+    const button = event.target instanceof Element ? event.target.closest("button") : null;
+    if (button && isStopButtonElement(button)) {
+      generationInterruptedByUser = true;
+    }
+  }, true);
+
   void registerCurrentTab();
   setInterval(tick, BASE_TICK_MS);
   void tick();
@@ -62,13 +72,23 @@
     ticking = true;
     try {
       const watcherEnabled = await isRerunWatcherEnabled();
-      if (!watcherEnabled) resetGenerationWatchdog();
+      if (!watcherEnabled) {
+        resetGenerationWatchdog();
+        normalContinuationPending = false;
+      }
 
       const approvalWaiting = Boolean(findGitHubApprovalCard());
       if (watcherEnabled && await enforceGenerationWatchdog(approvalWaiting)) return;
       if (watcherEnabled && approvalWaiting && await isApprovalAwareResumeEnabled()) return;
 
-      const response = await chrome.runtime.sendMessage({ type: "POLL" });
+      const afterGenerationComplete = normalContinuationPending;
+      const response = await chrome.runtime.sendMessage({
+        type: "POLL",
+        afterGenerationComplete
+      });
+      if (response?.ok && afterGenerationComplete) {
+        normalContinuationPending = false;
+      }
       if (!response?.ok) return;
 
       if (response.action === "stop_when_idle") {
@@ -110,7 +130,8 @@
       const claim = await chrome.runtime.sendMessage({
         type: "CLAIM_SEQUENCE",
         runId: control.runId,
-        sequence: control.sequence
+        sequence: control.sequence,
+        normalContinuation: Boolean(response.normalContinuation)
       });
       if (!claim?.ok || !claim.claimed) return;
 
@@ -157,6 +178,7 @@
     generationPausedAtMs = null;
     generationPausedTotalMs = 0;
     generationWatchdogFired = false;
+    generationInterruptedByUser = false;
   }
 
   async function enforceGenerationWatchdog(approvalWaiting, nowMs = Date.now()) {
@@ -177,7 +199,9 @@
     const stopButton = findStopButton();
     if (!stopButton) {
       if (nowMs - generationStartedAtMs < GENERATION_START_GRACE_MS) return false;
+      const completedNormally = !generationWatchdogFired && !generationInterruptedByUser;
       resetGenerationWatchdog();
+      if (completedNormally) normalContinuationPending = true;
       return false;
     }
 
@@ -225,6 +249,7 @@
     generationPausedAtMs = null;
     generationPausedTotalMs = 0;
     generationWatchdogFired = false;
+    generationInterruptedByUser = false;
   }
 
   async function isRerunWatcherEnabled() {
@@ -354,6 +379,10 @@
       return composer.value || "";
     }
     return composer.textContent || "";
+  }
+
+  function isStopButtonElement(button) {
+    return STOP_BUTTON_SELECTORS.some((selector) => button.matches(selector));
   }
 
   function findStopButton() {

@@ -6,76 +6,111 @@
 - Sequence: `9`
 - Desired control status: `needs_user`
 - Current task: `V02-009`
-- Control reason: `v0.2.14 adds a 23-active-minute stuck-generation watchdog for Rerun-owned responses; reload and live-test forced Stop/recovery on SimpleVTT.`
-- Phase: `awaiting_v0214_simplevtt_generation_watchdog_probe`
-- Last checkpoint (UTC): `2026-08-19T17:55:00Z`
+- Phase: `awaiting_v0216_immediate_completion_probe`
+- Extension version: `0.2.16`
+- Checkpointed at: `2026-08-25T19:54:23Z` (`2026-08-26 04:54:23 +09:00`)
 
-## Current Objective
+## Current objective
 
-Verify v0.2.14 on the live Rerun workflow after the user reported a distinct freeze mode: ChatGPT can error or stall mid-answer while still presenting a generating/Stop state. In that condition the existing content loop sees the chat as non-idle forever, so GitHub `continue` cannot dispatch another recovery turn.
+Restore the original continuous Rerun behavior without weakening failure safeguards: a **normally completed** Rerun response should cause one immediate authoritative GitHub control refresh and, when latest control remains `continue`, the next Rerun prompt should be submitted immediately rather than being delayed by regular polling or same-sequence retry timing.
 
-The normal assistant contract remains unchanged: checkpoint around 18 minutes and end the response before the 20-minute hard stop. The new 23-minute browser watchdog is only a recovery grace period when that contract fails because the ChatGPT generation remains stuck.
+## Root cause confirmed
 
-## v0.2.14 implementation
+The workflow had conflated two different events:
 
-- `content.js`: adds `GENERATION_WATCHDOG_MS = 23 * 60 * 1000`.
-- The watchdog is armed by `sendPrompt()` only after a Rerun prompt has actual dispatch evidence; merely observing an arbitrary ChatGPT generation does not arm it.
-- `isRerunWatcherEnabled()` reads the current tab runtime. If the watcher is not enabled, watchdog state resets.
-- A 15-second dispatch-start grace prevents the timer from being discarded during the short period before ChatGPT's Stop control appears.
-- `findStopButton()` now centralizes visible/actionable Stop detection and is also used by `isChatIdle()`.
-- Disabled, aria-disabled, and layout-hidden Stop controls are ignored.
-- GitHub action-confirmation waiting pauses the watchdog clock. That user-decision time is subtracted from active-generation duration even when the approval-aware retry option is being used.
-- At 23 active minutes, the watchdog clicks the current Stop button once and returns from the tick.
-- After ChatGPT becomes idle, watchdog state resets. Existing same-sequence retry/fresh-control-generation logic remains responsible for the next continuation.
-- The forced Stop does not disable the tab watcher and does not alter GitHub control/sequence.
-- Manual/non-Rerun ChatGPT generations are not armed and must not be force-stopped merely because a content script is present.
+1. successful normal execution completion;
+2. abnormal unchanged-generation retry/recovery.
 
-## Safety / protocol boundary
+Current defaults retained `retryDelaySeconds=120`, and unauthenticated regular GitHub polling had been made deliberately conservative for rate-limit safety. Because an unchanged same-sequence `continue` was evaluated through the retry path after a normal answer ended, normal long-running work could pause for the retry interval instead of chaining immediately.
 
-- 20 minutes remains the assistant execution hard stop; 23 minutes is a browser fail-safe, not a larger normal work budget.
-- The watchdog controls only the ordinary ChatGPT Stop-generation UI for a Rerun-owned response.
-- It does not click GitHub approval, OAuth, repository-access, or administrator confirmation UI.
-- It does not parse assistant response text or error copy to decide whether a generation is stuck.
+This was a regression in workflow cadence, not an intended product behavior.
 
-## Verification
+## Work completed
 
-| Check | Result | Evidence / note |
+### v0.2.15 — watchdog recovery re-arm retained
+
+Before the 23-minute watchdog clicks ChatGPT Stop, content runtime clears:
+
+- `sameSequenceRetryCount`;
+- `pendingSequence`;
+- `pendingRunId`;
+- `pendingIsRetry`.
+
+This prevents a forced Stop from leaving the watcher permanently at `retry_limit`.
+
+### v0.2.16 — normal completion lifecycle
+
+`content.js` now distinguishes normal completion from interruption:
+
+- generation tracking remains armed only after actual Rerun prompt dispatch evidence;
+- `generationObservedActive` records that a visible/actionable ChatGPT Stop control was actually seen;
+- after an active Stop control has been seen, its disappearance is processed on the next 2-second content tick instead of waiting the 15-second dispatch-start grace;
+- trusted user clicks on the Stop control set `generationInterruptedByUser=true`;
+- watchdog Stop sets `generationWatchdogFired=true` before its programmatic click;
+- only a completion with neither interruption flag sets `normalContinuationPending=true`;
+- the next `POLL` carries `afterGenerationComplete=true`;
+- the completion marker is consumed after one background response so persistent API errors cannot create a 2-second request hammer loop.
+
+`background.js` now treats the completion signal as a distinct one-shot path:
+
+- `POLL` receives `afterGenerationComplete`;
+- completion polling bypasses the normal **local** GitHub poll cache interval once and fetches authoritative control;
+- active GitHub server-side rate-limit pause remains respected;
+- terminal `complete` / `needs_user` / `blocked`, pending-claim, and sequence-regression guards execute before the fast continuation path;
+- valid refreshed `continue` returns `normalContinuation=true` even if ordinary unchanged-generation retry timing/count would otherwise wait or be exhausted;
+- `CLAIM_SEQUENCE` for that path uses `pendingIsRetry=false`;
+- ACK therefore resets/keeps same-sequence retry count at zero instead of consuming abnormal retry budget.
+
+The ordinary retry delay/count path remains unchanged for abnormal recovery.
+
+## Regression assertions
+
+Updated source tests pin:
+
+- completion `POLL { afterGenerationComplete: true }`;
+- one-shot local cache bypass;
+- normal continuation claim with `pendingIsRetry=false`;
+- terminal and sequence-regression ordering before fast continuation;
+- trusted manual Stop exclusion;
+- watchdog Stop exclusion/re-arm;
+- observed-active completion bypassing startup grace;
+- no lifetime max-runs gate.
+
+## Validation status
+
+| Check | Result | Note |
 |---|---|---|
-| V02-001~008 prior browser evidence | PASS | Retained. |
-| v0.2.12 lifetime send-cap removal | COMMITTED / SOURCE-VERIFIED | Historical `Sent` count no longer blocks dispatch/claim/handoff. |
-| v0.2.13 approval-aware config/UI | COMMITTED / SOURCE-VERIFIED | Approval wait behavior retained. |
-| v0.2.14 watchdog code | COMMITTED / SOURCE-VERIFIED | 23-minute threshold, Rerun-only arm, watcher-enabled scope, Stop click and reset present. |
-| v0.2.14 approval-time exclusion | COMMITTED / SOURCE-VERIFIED | approval wait pauses and is subtracted from active time. |
-| v0.2.14 manual-chat protection | COMMITTED / SOURCE-VERIFIED | watchdog is not armed by merely observing a manual generation. |
-| v0.2.14 regression assertions | COMMITTED | `tests/content-send.test.mjs` covers scope/timing/approval/Stop filtering. |
-| v0.2.14 manifest/package | COMMITTED | version bumped to `0.2.14`. |
-| v0.2.14 exact latest full npm suite | NOT_RUN | Exact branch checkout is not available in this runtime. |
-| v0.2.14 live forced Stop | NOT_RUN | Requires Reload and live/controlled browser probe. |
+| v0.2.15 watchdog re-arm source | COMMITTED / SOURCE-VERIFIED | Forced Stop recovery state reset present. |
+| v0.2.16 content completion path | COMMITTED / SOURCE-VERIFIED | Normal/manual/watchdog distinction present. |
+| v0.2.16 background immediate refresh | COMMITTED / SOURCE-VERIFIED | Completion bypasses local poll cache once. |
+| v0.2.16 normal claim | COMMITTED / SOURCE-VERIFIED | `pendingIsRetry=false`; terminal/regression guards preserved. |
+| v0.2.16 source regression assertions | COMMITTED | `content-send` and `watcher-flow` updated. |
+| manifest/package version | COMMITTED | `0.2.16`. |
+| exact latest `npm run check` / `npm test` | NOT_RUN | Exact checkout could not be materialized because this runtime failed DNS resolution for `github.com`: `Could not resolve host: github.com`. |
+| live immediate chaining | NOT_RUN | Requires Reload and actual browser observation. |
+| live manual/watchdog Stop boundaries | NOT_RUN | Requires browser observation. |
+
+No full-suite PASS is claimed.
 
 ## Next Exact Action
 
-1. Reload unpacked extension v0.2.14.
-2. Return to the existing ChatGPT tab connected to `Kaetaeru/SimpleVTT @ main` and keep/turn watcher Watching.
-3. Confirm ordinary runs still checkpoint around 18 minutes and finish before 20 minutes.
-4. For practical watchdog testing, use a controlled stuck-generation case or temporarily shorten the watchdog threshold in a local-only test build while keeping the production constant 23 minutes.
-5. Verify the Rerun-owned response gets one automatic Stop at the threshold equivalent.
-6. Verify the tab watcher remains Watching and the existing continuation/retry path can resume without another Start click.
-7. Verify GitHub approval waiting is excluded from watchdog time.
-8. Verify watcher-stopped/manual ChatGPT generations are not force-stopped.
+1. Reload unpacked ChatGPT Rerun **v0.2.16** from `chrome://extensions`.
+2. Return to a connected ChatGPT tab with watcher `Watching`; `Kaetaeru/SimpleVTT @ work/v1-composite` is the current dogfood target when its GitHub control is intentionally `continue`.
+3. Let a Rerun-owned response finish normally without clicking Stop.
+4. Verify that after the active Stop control disappears, the next content cycle performs the immediate GitHub refresh and the next prompt is automatically submitted without waiting 90/120 seconds when refreshed control remains `continue`.
+5. Verify terminal GitHub status prevents chaining while watcher remains enabled.
+6. Verify manually clicking ChatGPT Stop does not immediately auto-chain.
+7. Verify a controlled 23-minute watchdog Stop recovers through its re-armed abnormal path and does not freeze at `retry_limit`.
+8. Record live evidence in `docs/V02_E2E_RESULT.md`; only then advance V02-009 completion status.
 
-Do not change SimpleVTT's run_id or sequence merely to wake the watcher.
+## Do not repeat / regress
 
-## Do Not Repeat
-
-- Do not repeat V02-001 through V02-008.
-- Do not change SimpleVTT sequence merely to bypass local extension counters.
-- Do not reintroduce a lifetime Max sends cap.
-- Do not remove per-generation retry protection for unchanged/stuck control.
-- Do not auto-click app approval, OAuth, repository-access, or administrator-approval UI.
-- Do not parse assistant limit/error text to trigger the watchdog.
-- Do not apply the 23-minute watchdog to ordinary manual ChatGPT generations.
-- Do not reinterpret 23 minutes as the normal assistant execution budget; normal hard stop remains 20 minutes.
-- Do not overwrite non-Rerun user drafts.
-- Do not recursively open fresh chats after direct handoff failure.
+- Do not repeat V02-001 through V02-008 without new evidence of regression.
+- Do not use normal retry delay as the cadence between successful executions.
+- Do not remove abnormal retry protection.
+- Do not reintroduce lifetime `Max sends`.
+- Do not auto-click GitHub/ChatGPT approval controls.
+- Do not treat user manual Stop as normal completion.
+- Do not treat watchdog Stop as normal completion.
+- Do not bypass an active GitHub server-side rate-limit pause.
 - Do not merge PR #1 unless explicitly requested.
-- Do not use STATUS for reconciliation.

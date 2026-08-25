@@ -1,60 +1,66 @@
 # ChatGPT Rerun Live Status
 
-> 사람을 위한 읽기 전용 현황판입니다. 자동 재개/reconciliation의 source of truth는 `README.md`, `control.json`, `STATE.md`, `PLAN.md`입니다.
+> 사람용 현황판입니다. 자동 reconciliation의 source of truth는 README / PLAN / STATE / control입니다.
 
 ## At a glance
 
 | Item | Current |
 |---|---|
-| Last updated | `2026-08-19T17:55:00Z` (02:55 KST, Aug 20) |
+| Last updated | `2026-08-25T19:56:36Z` (`2026-08-26 04:56:36 KST`) |
 | Run | `chatgpt-rerun-v02-20260816-01` |
 | Sequence | `9` |
 | GitHub work status | `needs_user` |
 | Current task | `V02-009` |
-| Extension version to verify | `0.2.14` |
-| Live project | `Kaetaeru/SimpleVTT @ main` |
-| Browser verification | PENDING v0.2.14 RELOAD |
+| Extension version to verify | **0.2.16** |
+| Dogfood target | `Kaetaeru/SimpleVTT @ work/v1-composite` |
+| Browser verification | PENDING RELOAD |
 
-## v0.2.14 — 23분 stuck-generation watchdog
+## v0.2.16 — 정상 응답 종료 즉시 다음 실행
 
-가끔 ChatGPT 응답이 오류/프리즈로 중간에 멈추면서도 generation 상태가 끝나지 않아 Rerun이 영구 대기하는 문제를 위한 fail-safe를 추가했습니다.
+원래 Rerun UX를 복구했습니다.
 
-- 정상 assistant 규칙: 약 18분에 checkpoint, 20분 전에 응답 종료
-- browser fail-safe: Rerun이 실제 자동 제출한 generation이 **active generating time 23분**을 넘으면 현재 ChatGPT Stop 버튼을 한 번 자동 클릭
-- watcher가 Watching인 Rerun-owned generation에만 적용
-- watcher Stop 시 watchdog reset
-- Rerun이 제출하지 않은 일반 수동 ChatGPT 응답은 watchdog을 새로 arm하지 않음
-- GitHub action-confirmation 카드에서 사용자의 승인을 기다리는 시간은 23분 active time에서 제외
-- Stop 후 ChatGPT가 idle로 돌아오면 기존 GitHub control / same-sequence retry / fresh-authorization 경로가 다시 continuation을 결정
-- GitHub control/sequence는 watchdog이 임의로 변경하지 않음
+```text
+Rerun prompt
+-> ChatGPT 정상 응답 종료
+-> 다음 content tick에서 GitHub control 즉시 1회 refresh
+-> continue면 다음 prompt 즉시 자동 제출
+```
 
-## 기존 수정 유지
+이 경로에서는 일반 public polling 간격이나 `retryDelaySeconds`를 기다리지 않습니다.
 
-- same-sequence의 새 `updated_at`은 fresh authorization
-- lifetime `Max sends` 제한 없음
-- `Sent`는 진단 통계만
-- unchanged control generation만 `Retries / sequence`로 제한
-- public GitHub REST rate limit은 watcher Stop이 아니라 pause/resume
-- `GitHub 승인 후 자동 계속`은 승인 카드 대기 중 retry를 억제하고 수동 승인 후 자동 재개하며 승인 UI 자체는 클릭하지 않음
+안전 경계는 유지합니다.
 
-## 다음 확인
+- terminal `complete` / `needs_user` / `blocked`: 다음 구현 prompt를 보내지 않음, watcher는 Watching 유지
+- sequence regression: 차단
+- 사용자 직접 Stop: 정상 completion으로 보지 않아 즉시 auto-chain하지 않음
+- 23분 watchdog Stop: 정상 completion이 아니라 re-armed recovery 경로 사용
+- GitHub server-side rate-limit pause: 우회하지 않음
+- completion refresh는 1회만 소비하여 API 오류 시 2초 hammer loop 방지
+- normal continuation은 `pendingIsRetry=false`라 retry budget을 소비하지 않음
 
-1. `chrome://extensions`에서 ChatGPT Rerun **v0.2.14 Reload**
-2. 기존 SimpleVTT ChatGPT 탭으로 돌아감
-3. watcher를 Watching으로 유지/Start
-4. 정상 작업이 20분 전에 종료되는 기존 규칙을 우선 확인
-5. watchdog은 실제 23분 stuck case 또는 local-only 축소 threshold probe로 확인
-6. threshold 도달 시 Rerun-owned 응답의 Stop이 한 번 자동 클릭되는지 확인
-7. Stop 뒤 watcher가 계속 Watching이고 Start 재클릭 없이 continuation이 가능한지 확인
-8. GitHub 승인 대기 시간은 watchdog에서 제외되는지 확인
-9. watcher를 Stop한 일반 수동 응답은 watchdog이 끊지 않는지 확인
+## 기존 보호 유지
+
+- lifetime `Max sends` 없음
+- same-sequence fresh `updated_at` authorization 지원
+- abnormal unchanged-generation retry 보호 유지
+- watchdog 강제종료 전 retry/pending re-arm
+- GitHub 승인 대기 중 Rerun retry 억제, 승인 자체는 수동
+- fresh-chat ownership handoff와 user draft 보호 유지
 
 ## 검증 상태
 
-- v0.2.14 remote source/regression assertions: COMMITTED
-- manifest/package: `0.2.14`
-- exact latest full npm suite: NOT_RUN — 이 runtime에 exact GitHub checkout이 없음
-- live 23-minute forced Stop: PENDING
-- live approval-card behavior: PENDING
+- v0.2.16 product source: COMMITTED / SOURCE-VERIFIED
+- source regression assertions: COMMITTED
+- approval-detector test regex correction: targeted Node probe PASS (`true`)
+- exact latest full `npm run check` / `npm test`: NOT_RUN — 현재 실행 환경에서 `github.com` DNS 해석 실패로 exact checkout 불가
+- live normal-completion chaining: PENDING
+
+## 지금 확인할 것
+
+1. `chrome://extensions`에서 ChatGPT Rerun **v0.2.16 Reload**
+2. 연결된 탭에서 watcher를 `Watching`으로 유지
+3. Rerun 응답 하나를 정상적으로 끝까지 두기
+4. 응답 종료 뒤 90/120초 기다리지 않고 다음 prompt가 거의 바로 자동 제출되는지 확인
+5. 직접 Stop을 눌렀을 때는 즉시 재시작하지 않는지 확인
 
 STATUS는 presentation-only이며 자동화 판단에는 사용하지 않습니다.

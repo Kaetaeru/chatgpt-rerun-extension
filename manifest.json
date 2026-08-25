@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Rerun",
-  "version": "0.2.17",
+  "version": "0.2.18",
   "minimum_chrome_version": "116",
-  "description": "Reset same-sequence retry history immediately when a Rerun response completes normally.",
+  "description": "Recover exhausted chats by handing off when the current ChatGPT composer stays unavailable.",
   "permissions": ["storage", "activeTab", "sidePanel", "scripting"],
   "host_permissions": [
     "https://api.github.com/*",

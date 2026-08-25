@@ -2,190 +2,130 @@
 
 ## Goal
 
-ChatGPT Rerun v0.2는 브라우저 전체에 하나의 전역 Rerun을 두지 않는다. **각 ChatGPT 탭은 자기 설정과 자기 런타임을 가진 독립 세션**이다.
-
-또한 대화가 너무 길어져 현재 채팅에서 계속 작업하기 어려울 때, 이전 대화 본문을 복사하지 않고 **GitHub를 source of truth로 사용해 새 ChatGPT 채팅으로 같은 run/sequence watcher ownership을 이관**할 수 있다.
+ChatGPT Rerun v0.2 keeps one independent watcher/runtime per ChatGPT tab while GitHub remains the durable workflow source of truth. A long workflow may remain on one `sequence` across many separate ChatGPT executions.
 
 ## Per-tab storage
 
-각 Chrome tab ID마다 세 키를 사용한다.
-
 ```text
-tabConfig:<tabId>   # owner/repo/branch/path/token/poll/retry/prompt/approval-aware mode
-tabRuntime:<tabId>  # enabled/run/sequence/retry/stop/handoff runtime
-tabDraft:<tabId>    # Side Panel에 입력 중인 값
+tabConfig:<tabId>   # repo/branch/control/poll/retry/prompt/approval mode
+tabRuntime:<tabId>  # watcher/run/sequence/retry/handoff runtime
+tabDraft:<tabId>    # Side Panel draft
 ```
 
-따라서:
+Start/Stop affects only the current tab. Two enabled tabs cannot own the same owner/repo/branch/control stream simultaneously.
 
-- tab A의 Start/Stop은 tab B에 영향을 주지 않는다.
-- tab A와 tab B는 서로 다른 GitHub 저장소, branch, control path를 동시에 실행할 수 있다.
-- Side Panel을 닫았다 다시 열어도 해당 tab ID의 draft를 복원한다.
-- 탭을 닫으면 그 tab ID의 로컬 세션 키는 제거된다.
+## Normal execution chaining — v0.2.16
 
-## Tab-specific Side Panel
+The normal workflow cadence is completion-driven, not retry-driven.
 
-manifest에는 Side Panel 리소스를 패키징하지만, background service worker는 global panel을 비활성화한다.
+```text
+Rerun submits prompt
+  -> ChatGPT generation becomes active
+  -> generation finishes normally
+  -> content script sees Stop control disappear
+  -> immediate one-shot GitHub control refresh
+  -> latest continue: submit next Rerun prompt immediately
+  -> latest terminal state: wait while watcher remains enabled
+```
 
-사용자가 ChatGPT 탭에서 확장 아이콘을 클릭하면:
+Details:
 
-1. 해당 tab ID에 `popup.html`을 `chrome.sidePanel.setOptions({ tabId, ... })`로 설정한다.
-2. `chrome.sidePanel.open({ tabId })`로 그 탭 전용 Side Panel을 연다.
-3. 같은 `popup.html` 경로라도 tab ID가 다르면 Chrome에서 별도 panel instance로 취급된다.
+- Content polling still has a 2-second base tick.
+- Once an active Stop control has been observed, disappearance is handled on the next tick; the 15-second dispatch-start grace no longer delays a genuinely observed generation ending.
+- The completion refresh bypasses the normal local GitHub poll-cache interval once. It does not disable server-side rate-limit protection.
+- The refreshed control is authoritative. `complete`, `needs_user`, `blocked`, and sequence regression remain blockers.
+- A valid refreshed `continue` is a **normal continuation**, not an unchanged-generation retry. It bypasses `retryDelaySeconds` / `maxRetriesPerSequence` and claims with `pendingIsRetry=false`.
+- The immediate completion marker is consumed after one background response, so persistent GitHub errors cannot create a 2-second API hammer loop.
+
+### What is not normal completion
+
+- If the user directly clicks ChatGPT Stop, the trusted click marks that generation as manually interrupted. It does not immediately auto-chain.
+- If the 23-minute watchdog programmatically clicks Stop, `generationWatchdogFired` excludes it from the normal-completion path. Watchdog recovery uses its re-armed abnormal-recovery path.
+- Prompt dispatch failures continue to use guarded retry/handoff behavior.
+
+## GitHub polling and retry roles
+
+Regular unauthenticated polling remains conservative for GitHub rate-limit safety. That cadence is for observing external control changes while idle, not for pacing successful Rerun executions.
+
+`retryDelaySeconds` and `maxRetriesPerSequence` protect abnormal unchanged-generation recovery. They are not the delay between successful normal executions.
+
+There is no lifetime send cap. `Sent` / `runCount` is diagnostic only.
+
+## GitHub approval-aware resume
+
+A GitHub action-confirmation card may appear in an existing or fresh ChatGPT conversation.
+
+When **GitHub 승인 후 자동 계속** is enabled:
+
+- Rerun detects the visible confirmation UI only to suppress its own polling/retry while approval is pending.
+- Rerun does not click `허용하기`, `Allow`, OAuth, repository-access, or admin approval controls.
+- After the user manually approves and the card disappears, normal content polling resumes.
+- Approval waiting time is excluded from the 23-minute generation watchdog budget.
+
+## 23-minute stuck-generation watchdog — v0.2.14/v0.2.15
+
+Normal assistant policy remains checkpoint around 18 minutes and end before 20 minutes.
+
+If a Rerun-owned generation nevertheless remains actively generating for 23 active minutes:
+
+1. verify watcher ownership is still enabled;
+2. exclude approval-wait time;
+3. clear stale pending claim and reset same-sequence retry count;
+4. click the visible/actionable ChatGPT Stop once;
+5. keep watcher ownership alive;
+6. recover through the guarded abnormal-recovery path rather than normal-completion fast chaining.
+
+The watchdog is armed only by Rerun-submitted prompts and does not target unrelated manual ChatGPT responses.
+
+## Continue in new chat
+
+`Continue in new chat` transfers watcher ownership, not GitHub task identity.
+
+1. Read latest GitHub control.
+2. Mark old tab `handoffPending`.
+3. Open one new ChatGPT tab.
+4. Copy tab config/runtime ownership.
+5. Stop old watcher and enable new watcher.
+6. Automatically submit a handoff prompt containing owner/repo, branch, control path, run_id, sequence, status, and task_id.
+7. New chat re-reads GitHub Rerun state rather than relying on prior chat body.
+
+Handoff is allowed even when GitHub status is terminal. A terminal handoff restores context and waits; later `continue` resumes automatically.
+
+Fresh-chat handoff must not recursively open more chats if direct handoff prompt submission fails. User composer drafts remain protected.
 
 ## Same-stream collision guard
 
-독립 탭을 지원하더라도 **같은 GitHub control stream**을 두 탭이 동시에 실행하면 같은 sequence를 중복 전송할 수 있다.
-
-stream identity는 다음 네 값으로 계산한다.
+Stream identity is:
 
 ```text
 owner / repo / branch / control path
 ```
 
-Start 또는 new-chat handoff 시 다른 enabled tab이 같은 stream을 이미 점유하고 있으면 시작을 거부한다.
-
-## Continue in new chat
-
-Side Panel의 **Continue in new chat** 버튼은 현재 대화가 너무 길어졌거나 새 컨텍스트에서 이어가고 싶을 때 사용한다.
-
-v0.2.7부터 이 동작은 **GitHub work status와 독립적인 watcher ownership transfer**다. 따라서 `continue`뿐 아니라 `complete`, `needs_user`, `blocked`에서도 새 채팅으로 watcher를 이관할 수 있다.
-
-동작 순서:
-
-1. 현재 tab의 config/runtime을 읽는다.
-2. GitHub control을 다시 읽어 최신 run/sequence/status/task를 확보한다.
-3. 기존 tab을 `handoffPending`으로 만들어 polling/추가 전송을 일시 정지한다.
-4. 새 `https://chatgpt.com/` 탭을 연다.
-5. 새 탭 로딩과 content script 준비를 확인한다.
-6. config/runtime을 새 tab ID의 storage key로 복사한다.
-7. 기존 tab의 watcher를 중지하고 새 tab으로 ownership을 넘긴다.
-8. 새 탭에 owner/repo, branch, control path, run_id, sequence, status, task_id가 포함된 handoff prompt를 자동 전송한다.
-9. 최신 status가 `continue`면 새 채팅은 GitHub STATE에서 실제 작업을 재개한다.
-10. 최신 status가 `complete`, `needs_user`, `blocked`면 새 채팅은 GitHub context만 복구하고 구현을 시작하지 않은 채 종료한다. 새 탭 watcher는 계속 polling한다.
-11. 이후 GitHub가 유효한 `continue`가 되면 Start를 다시 누르지 않아도 새 탭에서 표준 resume prompt가 자동 전송된다.
-
-새 채팅으로 옮기는 것 자체는 GitHub sequence를 증가시키지 않는다.
-
-## GitHub app approval in fresh chats
-
-새 ChatGPT 대화나 기존 대화의 write action에서 GitHub 앱 작업 승인 카드가 나타날 수 있다.
-
-Rerun은 이 승인 카드의 `허용하기`/`Allow` 버튼이나 드롭다운을 자동 클릭하지 않는다. GitHub OAuth, repository-access, 조직 관리자 승인 UI도 자동화하지 않는다.
-
-v0.2.13의 Side Panel에는 **GitHub 승인 후 자동 계속** 옵션이 있다.
-
-- 옵션 OFF: 기존 동작을 유지한다.
-- 옵션 ON: content script가 GitHub action-confirmation 카드가 현재 DOM에 보이는 동안 Rerun의 `POLL`/retry를 잠시 보내지 않는다.
-- 사용자가 직접 승인하면 ChatGPT가 action을 계속 수행하고 승인 카드가 사라진다.
-- 카드가 사라지면 다음 content tick(기본 약 2초)부터 Rerun polling이 자동 재개된다.
-- 따라서 승인 대기 시간이 retry delay를 넘어가도 동일 control을 별도 resume prompt로 중복 전송하지 않는다.
-- 이 기능은 assistant 답변 내용을 읽어 승인 여부를 추측하지 않고, 실제 상호작용 가능한 GitHub 승인 UI의 존재만 감지한다.
-
-## 23-minute stuck-generation watchdog
-
-v0.2.14부터 Rerun이 직접 자동 제출한 ChatGPT generation에는 브라우저 fail-safe가 적용된다.
-
-- assistant 프로토콜의 정상 규칙은 여전히 약 18분 checkpoint, 20분 전에 응답 종료다.
-- content script는 Rerun prompt가 실제 dispatch evidence를 남긴 시점에 generation watchdog을 arm한다.
-- watcher가 `Watching`인 동안 해당 Rerun-owned generation의 visible/actionable Stop 버튼이 계속 존재하면 active generating time을 누적한다.
-- active generating time이 23분을 넘으면 Stop 버튼을 한 번 클릭해 stuck generation을 강제 종료한다.
-- GitHub action-confirmation 카드에서 사용자의 승인을 기다리는 시간은 active time에서 제외한다.
-- watcher가 Stop되면 watchdog state도 즉시 reset한다.
-- Rerun이 제출하지 않은 일반 수동 ChatGPT 응답은 watchdog 대상이 아니다.
-- Stop 뒤 ChatGPT가 idle로 돌아오면 기존 GitHub control/retry/fresh-authorization 로직이 다음 continuation 여부를 다시 결정한다.
-- 이 watchdog은 assistant의 20분 규칙을 23분으로 늘리는 기능이 아니라, 20분 종료가 오류/프리즈로 실패했을 때 3분 grace 뒤 복구하는 안전망이다.
-
-책임 분리는 다음과 같다.
-
-```text
-Rerun extension: 새 탭 생성 + watcher ownership 이관 + GitHub-backed handoff prompt 전달 + 승인 대기 retry 억제 + stuck-generation 23분 fail-safe Stop
-ChatGPT app permission: GitHub action confirmation 표시와 사용자의 승인 선택
-GitHub OAuth/admin: 실제 저장소 접근 범위와 조직 승인
-```
-
-## Handoff prompt
-
-handoff prompt에는 최소한 다음 정보가 직접 포함된다.
-
-- `owner/repo`
-- branch
-- control path
-- handoff 시점의 `run_id`
-- handoff 시점의 `sequence`
-- handoff 시점의 `status`
-- handoff 시점의 `task_id`
-
-새 채팅은 이전 대화 내용을 전제로 하지 않는다. 먼저 GitHub의 `.chatgpt-rerun` 문서를 읽고 실제 최신 상태를 reconcile한다.
-
-- 최신 `continue`: STATE의 미완료 지점과 Next Exact Action부터 재개한다.
-- 최신 terminal: 구현을 시작하지 않고 context만 복구한 뒤 watcher를 유지한다.
-
-## Handoff race protection
-
-새 탭이 열리는 동안 기존 탭이 같은 sequence를 한 번 더 전송하면 안 된다.
-
-따라서 handoff 시작 직후 기존 runtime에 `handoffPending=true`를 기록한다. background의 normal poll은 이 상태에서 아무 프롬프트도 보내지 않는다.
-
-- 새 탭 준비 전에 handoff가 실패하면 기존 tab의 `handoffPending`을 해제한다.
-- 새 tab으로 ownership이 이전된 뒤 handoff prompt 전송이 실패하면 새 tab은 `handoff_send_failed`로 정지한다.
-- 성공하면 새 tab의 `handoffPending`을 해제하고 정상 polling을 시작한다.
-- terminal GitHub status는 더 이상 handoff 거부 사유가 아니다.
-
-## What this does not do
-
-현재 구현은 ChatGPT 답변 본문을 읽어 "토큰 제한" 문구를 탐지하지 않는다.
-
-사용자가 대화가 길어졌다고 판단할 때는 **Continue in new chat**을 명시적으로 누르는 방식이 유지된다. Rerun은 앱 승인 카드나 OAuth/관리자 승인 UI를 자동 클릭하지 않는다. 23분 watchdog도 assistant 출력 내용을 파싱하지 않고, Rerun-owned generation의 실제 Stop control 상태와 경과 시간만 본다.
+Start or handoff refuses a second enabled owner for the same stream.
 
 ## Manual verification
 
-### Tab isolation
+### Immediate normal continuation
 
-1. ChatGPT tab A와 B를 연다.
-2. 각각 확장 아이콘을 눌러 Side Panel을 연다.
-3. A에서 Owner/Repo 값을 입력한다.
-4. B에서 다른 값을 입력한다.
-5. 탭을 오가며 값이 섞이지 않는지 확인한다.
-6. A를 Start하고 B의 상태가 Stopped로 남는지 확인한다.
-7. B에서 다른 control stream을 Start해 두 세션이 독립적으로 polling하는지 확인한다.
-8. B를 A와 같은 stream으로 바꾸면 충돌 오류가 나는지 확인한다.
+1. Reload v0.2.16.
+2. Keep watcher Watching on a control stream intentionally left at `continue`.
+3. Let a Rerun response finish normally.
+4. Verify the next prompt starts on the next completion cycle rather than after regular polling/retry delay.
+5. Change control to a terminal state and verify the chain stops while watcher remains Watching.
+6. Manually Stop a Rerun generation and verify it does not use immediate normal chaining.
 
-### New-chat handoff — continue
+### Watchdog recovery
 
-1. 실행 중인 탭에서 GitHub status가 `continue`일 때 **Continue in new chat**을 누른다.
-2. 새 ChatGPT 탭이 열리는지 확인한다.
-3. 기존 탭은 `handed_off_to_tab_<id>`로 중지하는지 확인한다.
-4. 새 탭에 status까지 포함된 handoff prompt가 **자동 제출**되는지 확인한다.
-5. 새 채팅이 GitHub 문서를 읽고 현재 미완료 checkpoint부터 재개하는지 확인한다.
+Verify a controlled watchdog Stop re-arms recovery and does not freeze at `retry_limit`.
 
-### New-chat handoff — terminal
+### Approval-aware resume
 
-1. watcher가 Watching이고 GitHub status가 `needs_user`, `complete`, 또는 `blocked`인 상태에서 **Continue in new chat**을 누른다.
-2. handoff가 거부되지 않고 새 탭이 열리는지 확인한다.
-3. 새 탭의 handoff prompt가 자동 제출되고 repo/run context를 복구하는지 확인한다.
-4. 실제 구현 task는 시작하지 않는지 확인한다.
-5. 새 탭 watcher가 계속 Watching인지 확인한다.
-6. 이후 같은 sequence 또는 새 sequence를 `continue`로 바꿨을 때 새 탭에서 자동 재개되는지 확인한다.
+Verify approval is still manual, duplicate Rerun retry is suppressed while the card is visible, and polling resumes after approval.
 
-### GitHub approval-aware resume
+### New-chat handoff
 
-1. Side Panel에서 **GitHub 승인 후 자동 계속**을 체크하고 Save connection을 누른다.
-2. GitHub write action이 `ChatGPT가 GitHub을(를) 사용하도록 허용할까요?` 카드를 띄우게 한다.
-3. 승인 카드를 누르지 않은 채 retry delay보다 오래 기다려도 Rerun resume prompt가 중복 전송되지 않는지 확인한다.
-4. 승인 버튼이 Rerun에 의해 자동 클릭되지 않는지 확인한다.
-5. 사용자가 직접 `허용하기` 또는 `대화에서 허용하기`를 선택한다.
-6. ChatGPT action이 계속되고 카드가 사라진 뒤 Rerun watcher가 Start 재클릭 없이 자동으로 polling/continuation을 이어가는지 확인한다.
-
-### 23-minute generation watchdog
-
-1. watcher가 Watching인 Rerun 탭에서 Rerun prompt가 자동 제출되어 generation이 시작되게 한다.
-2. 정상 케이스는 20분 전에 종료되어 watchdog이 개입하지 않는지 확인한다.
-3. controlled stuck-generation 테스트에서는 active generating time이 23분에 도달하면 Stop이 한 번 자동 클릭되는지 확인한다.
-4. 승인 카드 대기 시간을 포함시켜 그 시간이 23분 누적에서 제외되는지 확인한다.
-5. watcher를 Stop한 뒤 일반 수동 ChatGPT generation에는 watchdog이 개입하지 않는지 확인한다.
-6. forced Stop 뒤 watcher가 그대로 살아 있고 이후 `continue`가 다시 실행 가능한지 확인한다.
+Verify one new tab receives ownership and an automatically submitted GitHub-backed handoff prompt, with no duplicate watcher.
 
 ## Chrome version
 
-Tab-specific Side Panel을 명시적으로 열기 위해 `chrome.sidePanel.open({ tabId })`를 사용하므로 minimum Chrome version은 116으로 설정한다.
+Tab-specific Side Panel uses `chrome.sidePanel.open({ tabId })`; minimum Chrome version remains 116.

@@ -6,65 +6,55 @@
 
 | Item | Current |
 |---|---|
-| Last updated | `2026-08-25T20:11:45Z` (`2026-08-26 05:11:45 KST`) |
+| Last updated | `2026-08-25T21:17:00Z` (`2026-08-26 06:17:00 KST`) |
 | Run | `chatgpt-rerun-v02-20260816-01` |
 | Sequence | `9` |
 | GitHub work status | `needs_user` |
 | Current task | `V02-009` |
-| Extension version to verify | **0.2.17** |
+| Extension version to verify | **0.2.18** |
 | Dogfood target | `Kaetaeru/SimpleVTT @ work/v1-composite` |
 | Browser verification | PENDING RELOAD |
 
-## v0.2.17 — 정상 완료면 Same-sequence retries 즉시 0
+## v0.2.18 — 현재 대화가 소진되면 새 대화로 handoff
 
-v0.2.16의 즉시 chaining은 유지하면서 retry 상태 의미를 바로잡았습니다.
+확인된 문제는 새 탭 ownership 코드 자체가 아니라, 현재 대화에서 composer를 못 찾았을 때 `content.js`가 그냥 `return`해 버리는 분기였습니다.
 
 ```text
-Rerun prompt
--> ChatGPT 정상 응답 종료
--> Same-sequence retries = 0/N 즉시 초기화
--> GitHub control 즉시 1회 refresh
--> continue면 다음 prompt 즉시 자동 제출
+GitHub continue
+-> 현재 ChatGPT idle
+-> composer 없음
+-> 이전: 아무 것도 안 하고 계속 Watching
+-> v0.2.18: 최대 5초 렌더링 대기
+-> 여전히 composer 없음
+-> 기존 HANDOFF_NEW_CHAT 재사용
+-> 새 ChatGPT 탭 1개 생성 + watcher ownership 이전 + handoff prompt 자동 제출
 ```
-
-정상 실행이 성공했다면 이전 abnormal retry 이력은 더 이상 unresolved 상태가 아니므로 다음 prompt ACK까지 남겨두지 않습니다. refreshed control이 `complete`, `needs_user`, `blocked`라 다음 prompt가 없어도 counter는 이미 0이어야 합니다.
 
 안전 경계는 유지합니다.
 
-- `Sent` / `runCount`: 정상 완료로 초기화하지 않음; lifetime telemetry 유지
-- terminal `complete` / `needs_user` / `blocked`: 다음 구현 prompt를 보내지 않음, watcher는 Watching 유지
-- sequence regression: 차단
-- 사용자 직접 Stop: 정상 completion으로 보지 않음
-- 23분 watchdog Stop: 별도 recovery re-arm 경로 사용
-- GitHub server-side rate-limit pause: 우회하지 않음
-- completion refresh는 1회만 소비하여 API 오류 시 2초 hammer loop 방지
-- normal continuation은 `pendingIsRetry=false`라 이후 ACK도 retry counter를 0으로 유지
-
-## 기존 보호 유지
-
-- lifetime `Max sends` 없음
-- same-sequence fresh `updated_at` authorization 지원
-- abnormal unchanged-generation retry 보호 유지
-- watchdog 강제종료 전 retry/pending re-arm
-- GitHub 승인 대기 중 Rerun retry 억제, 승인 자체는 수동
-- fresh-chat ownership handoff와 user draft 보호 유지
+- composer가 잠깐 늦게 렌더링되는 경우를 위해 5초 먼저 기다림
+- 기존 fresh-chat handoff만 재사용; 별도 두 번째 handoff 시스템 없음
+- direct handoff 실패 시 재귀적으로 새 탭을 계속 열지 않고 safe-stop
+- 사용자 draft 보호 유지
+- 정상 완료 즉시 chaining 유지
+- 정상 완료 시 Same-sequence retries 즉시 `0/N` 유지
+- 23분 watchdog / GitHub 승인 대기 / rate-limit 보호 유지
 
 ## 검증 상태
 
-- v0.2.17 product source: COMMITTED / SOURCE-VERIFIED
-- v0.2.17 retry-reset source assertion: COMMITTED
-- targeted helper probe: **PASS** — `sameSequenceRetryCount 3 -> 0`, `runCount 17` preserved
-- exact latest full `npm run check` / `npm test`: NOT_RUN — 현재 실행 환경에서 GitHub DNS 해석 실패로 exact checkout 불가
-- live `Same-sequence retries -> 0/N`: PENDING
-- live immediate normal-completion chaining: PENDING
+- v0.2.18 product source: COMMITTED / SOURCE-VERIFIED
+- missing-composer regression assertion: COMMITTED / SOURCE-VERIFIED
+- manifest/package: `0.2.18`
+- exact latest full `npm run check` / `npm test`: NOT_RUN — 컨테이너가 `raw.githubusercontent.com` DNS를 해석하지 못해 checkout 전에 실패
+- live fresh-chat recovery: PENDING
 
 ## 지금 확인할 것
 
-1. 최신 branch를 pull한 뒤 `chrome://extensions`에서 ChatGPT Rerun **v0.2.17 Reload**
-2. 연결된 탭에서 watcher를 `Watching`으로 유지
-3. Rerun 응답 하나를 정상적으로 끝까지 두기
-4. 응답이 정상 종료되는 순간 `Same-sequence retries`가 **`0/N`**으로 초기화되는지 확인
-5. `continue`라면 이어서 90/120초 기다리지 않고 다음 prompt가 거의 바로 자동 제출되는지 확인
-6. 직접 Stop을 눌렀을 때는 정상 성공으로 초기화/즉시 chaining되지 않는지 확인
+1. 최신 `agent/mvp-autoresume`을 pull
+2. `chrome://extensions`에서 ChatGPT Rerun **v0.2.18 Reload**
+3. 기존 SimpleVTT ChatGPT 탭도 **F5 새로고침**
+4. watcher가 `Watching`인지 확인
+5. 현재 대화가 더 이상 입력 가능한 composer를 제공하지 않는 상황에서 최대 5초 뒤 새 ChatGPT 탭 하나가 열리는지 확인
+6. 새 탭에 GitHub-backed handoff prompt가 자동 제출되고 watcher ownership이 새 탭으로 넘어가는지 확인
 
 STATUS는 presentation-only이며 자동화 판단에는 사용하지 않습니다.

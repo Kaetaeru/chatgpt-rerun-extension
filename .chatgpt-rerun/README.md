@@ -34,10 +34,12 @@ v0.2.4부터 Chrome 탭의 Start/Stop과 GitHub control 상태를 서로 다른 
 - `control.status=continue`: GitHub 쪽 작업 시작/재개 신호다. watcher가 켜져 있고 안전 조건을 만족하면 자동 resume prompt를 보낸다.
 - `complete`, `needs_user`, `blocked`: 현재 GitHub 작업의 dispatch 대기 상태다. **이 상태만으로 Chrome watcher를 끄지 않는다.** watcher는 계속 polling한다.
 - terminal 상태 뒤 GitHub가 다시 `continue`가 되면, 같은 sequence라도 terminal -> continue 전환을 새로운 실행 허가로 보고 즉시 재개할 수 있어야 한다.
-- retry limit, sequence regression 같은 dispatch guard도 watcher 자체를 끄지 않고 계속 관찰한다. 새 run/새 유효 상태가 오면 다시 평가한다.
-- **workflow 전체의 lifetime send 횟수에는 상한을 두지 않는다.** `Sent`/`runCount`는 진단용 누적 통계일 뿐 dispatch 또는 fresh-chat handoff를 차단하지 않는다. 동일한 control generation의 반복만 per-sequence retry 안전장치로 제한한다.
+- **Rerun이 자동 제출한 ChatGPT generation이 정상적으로 끝나면 다음 기본 poll interval을 기다리지 않는다.** content script가 completion을 감지한 그 tick에서 GitHub control을 한 번 authoritative refresh하고, 최신 status가 `continue`면 같은 sequence라도 retry delay/count를 거치지 않는 정상 continuation으로 다음 prompt를 즉시 제출한다.
+- 사용자가 직접 ChatGPT Stop을 누른 경우는 정상 completion으로 취급하지 않는다. 23분 watchdog의 강제 Stop도 정상 completion 빠른 경로를 사용하지 않고 별도 recovery/retry 경로로 남긴다.
+- retry limit, sequence regression 같은 dispatch guard도 watcher 자체를 끄지 않고 계속 관찰한다. **retry delay/count는 정상 completion 사이의 workflow cadence가 아니라 전송 실패·강제중단·unchanged generation 같은 비정상 recovery용 안전장치다.** 새 run/새 유효 상태가 오면 다시 평가한다.
+- **workflow 전체의 lifetime send 횟수에는 상한을 두지 않는다.** `Sent`/`runCount`는 진단용 누적 통계일 뿐 dispatch 또는 fresh-chat handoff를 차단하지 않는다.
 - `GitHub 승인 후 자동 계속`이 켜진 탭에서는 ChatGPT의 GitHub action-confirmation 카드가 보이는 동안 content script가 Rerun polling/retry를 잠시 멈춘다. **승인 버튼은 자동 클릭하지 않는다.** 사용자가 직접 승인해서 카드가 사라지면 다음 content tick부터 polling과 continuation을 자동 재개한다.
-- **Rerun이 자동 제출한 ChatGPT generation이 활성 상태로 23분 이상 계속되면 content script가 현재 ChatGPT Stop 버튼을 한 번 눌러 fail-safe 종료한다.** 이 watchdog은 watcher가 켜진 Rerun-owned generation에만 적용되며 일반 수동 ChatGPT 응답에는 적용하지 않는다. GitHub action-confirmation 카드에서 사용자의 결정을 기다리는 시간은 23분 active-generation 시간에서 제외한다.
+- **Rerun이 자동 제출한 ChatGPT generation이 활성 상태로 23분 이상 계속되면 content script가 현재 ChatGPT Stop 버튼을 한 번 눌러 fail-safe 종료한다.** 이 watchdog은 watcher가 켜진 Rerun-owned generation에만 적용되며 일반 수동 ChatGPT 응답에는 적용하지 않는다. GitHub action-confirmation 카드에서 사용자의 결정을 기다리는 시간은 23분 active-generation 시간에서 제외한다. watchdog Stop 직전에는 stale pending claim과 same-sequence retry counter를 re-arm해서 recovery가 `retry_limit`에 영구 고정되지 않게 한다.
 - 사용자 composer draft 보호, prompt 전송 실패, bootstrap/handoff 실패처럼 브라우저 안전을 위해 명시적 중지가 필요한 경우는 예외다.
 - 탭이 닫히면 그 tab ID의 watcher/config/runtime은 제거된다. 확장프로그램이 꺼져 있으면 polling도 없다.
 
@@ -89,10 +91,10 @@ STATUS에는 최소한 다음 정보를 유지한다.
 3. 18분 이후에는 현재 결과를 안전한 체크포인트로 정리하고 `STATE.md`의 완료 내용, 검증 결과, 미완료 항목, `Next Exact Action`을 우선 갱신한다.
 4. 현재 task가 20분 안에 검증 완료되지 않으면 `control.json`의 현재 `continue` + 같은 sequence를 유지한다. 완료되지 않은 task를 억지로 verified 처리하거나 다음 sequence로 넘기지 않는다.
 5. 18분 체크포인트 또는 종료 전 STATUS 내용이 바뀌었다면 사람용 현황판도 갱신한다.
-6. **20분 deadline 전에 응답을 종료한다.** 확장프로그램의 same-sequence retry가 다음 실행을 만들고, 다음 실행은 STATE 체크포인트에서 이어간다.
+6. **20분 deadline 전에 응답을 종료한다.** 정상 종료가 감지되면 확장프로그램은 GitHub control을 즉시 한 번 refresh하고, 최신 status가 `continue`면 STATE 체크포인트에서 다음 execution을 바로 시작한다. 정상 continuation에 120초 retry delay를 적용하지 않는다.
 7. deadline을 넘길 가능성이 큰 단일 명령/도구 호출은 직전에 시작하지 않는다. 예상 시간이 불명확하면 더 작은 단위로 분할한다.
 8. 시간 제한으로 종료하는 것은 실패가 아니다. STATE에 `time_budget_checkpoint`로 기록하고 같은 sequence에서 안전하게 재개한다.
-9. **23분 generation watchdog은 20분 규칙을 대체하지 않는 브라우저 fail-safe다.** assistant가 오류/프리즈로 20분 규칙을 지키지 못하고 Rerun-owned generation의 Stop 버튼이 계속 활성 상태로 남아 있을 때만, 3분 grace 뒤 강제로 Stop을 눌러 다음 Rerun continuation이 회복할 수 있게 한다. GitHub 승인 대기 시간은 이 23분 계산에서 제외한다.
+9. **23분 generation watchdog은 20분 규칙을 대체하지 않는 브라우저 fail-safe다.** assistant가 오류/프리즈로 20분 규칙을 지키지 못하고 Rerun-owned generation의 Stop 버튼이 계속 활성 상태로 남아 있을 때만, 3분 grace 뒤 강제로 Stop을 눌러 다음 Rerun continuation이 회복할 수 있게 한다. GitHub 승인 대기 시간은 이 23분 계산에서 제외하며, forced Stop은 정상-completion 즉시 경로가 아니라 re-armed recovery 경로를 따른다.
 
 ## v0.2 dogfood execution rules
 
@@ -113,6 +115,7 @@ STATUS에는 최소한 다음 정보를 유지한다.
 13. terminal GitHub status를 Chrome watcher Stop으로 해석하지 않는다.
 14. GitHub action-confirmation UI의 존재 여부는 승인 대기 보호를 위해 감지할 수 있지만, 앱 승인 카드나 OAuth/관리자 승인 버튼을 자동 클릭하지 않는다.
 15. 23분 generation watchdog은 Rerun이 자동 제출한 generation만 강제 종료할 수 있고, watcher가 꺼지면 즉시 reset되어야 한다.
+16. 정상 Rerun generation 종료는 `afterGenerationComplete` 1회 refresh로 처리하고, 최신 `continue`는 즉시 normal continuation으로 제출한다. 사용자의 명시적 Stop과 watchdog Stop은 이 빠른 경로에서 제외한다.
 
 ## Per-tab and new-chat invariants
 
@@ -121,6 +124,7 @@ STATUS에는 최소한 다음 정보를 유지한다.
 - 동일 owner/repo/branch/control path를 이미 감시 중인 다른 탭이 있으면 두 번째 Start는 거부한다.
 - watcher가 켜져 있으면 `complete`, `needs_user`, `blocked`에서도 polling을 계속한다.
 - terminal -> `continue` 전환은 같은 sequence라도 즉시 재개 가능해야 한다.
+- 정상 Rerun generation이 종료되고 최신 control이 `continue`면 다음 execution은 regular poll/retry interval을 기다리지 않고 즉시 시작해야 한다.
 - `Continue in new chat` handoff 중 기존 탭은 `handoffPending`으로 normal polling을 잠시 멈춘다.
 - handoff 성공 시 새 탭이 같은 GitHub run/sequence의 watcher ownership을 이어받고 기존 탭 watcher는 중지한다.
 - 대화가 바뀌었다는 이유만으로 GitHub sequence를 증가시키지 않는다.

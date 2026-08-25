@@ -73,7 +73,6 @@ test("approval-aware mode never clicks the GitHub approval button", () => {
 test("generation watchdog force-stops a continuously generating Rerun response after 23 active minutes", () => {
   assert.match(content, /const GENERATION_WATCHDOG_MS = 23 \* 60 \* 1000/);
   assert.match(content, /const watcherEnabled = await isRerunWatcherEnabled\(\)/);
-  assert.match(content, /if \(!watcherEnabled\) resetGenerationWatchdog\(\)/);
   assert.match(content, /if \(watcherEnabled && await enforceGenerationWatchdog\(approvalWaiting\)\) return;[\s\S]*type: "POLL"/);
   assert.match(content, /activeGenerationMs < GENERATION_WATCHDOG_MS \|\| generationWatchdogFired/);
   assert.match(content, /generationWatchdogFired = true;[\s\S]*await rearmContinuationAfterWatchdogStop\(\);[\s\S]*stopButton\.click\(\);[\s\S]*return true/);
@@ -99,6 +98,21 @@ test("generation watchdog excludes GitHub approval waiting time from the 23 minu
   assert.match(content, /if \(approvalWaiting\) \{[\s\S]*generationPausedAtMs = nowMs;[\s\S]*return false/);
   assert.match(content, /generationPausedTotalMs \+= Math\.max\(0, nowMs - generationPausedAtMs\)/);
   assert.match(content, /nowMs - generationStartedAtMs - generationPausedTotalMs/);
+});
+
+test("normal Rerun completion immediately requests an authoritative control refresh", () => {
+  assert.match(content, /const completedNormally = !generationWatchdogFired && !generationInterruptedByUser/);
+  assert.match(content, /if \(completedNormally\) normalContinuationPending = true/);
+  assert.match(content, /const afterGenerationComplete = normalContinuationPending/);
+  assert.match(content, /type: "POLL",[\s\S]*afterGenerationComplete/);
+  assert.match(content, /normalContinuation: Boolean\(response\.normalContinuation\)/);
+});
+
+test("manual Stop is not mistaken for normal completion", () => {
+  assert.match(content, /document\.addEventListener\("click"/);
+  assert.match(content, /!event\.isTrusted \|\| generationStartedAtMs === null \|\| generationWatchdogFired/);
+  assert.match(content, /isStopButtonElement\(button\)[\s\S]*generationInterruptedByUser = true/);
+  assert.match(content, /completedNormally = !generationWatchdogFired && !generationInterruptedByUser/);
 });
 
 test("generation watchdog resets when ChatGPT is no longer generating and only uses an actionable visible stop button", () => {

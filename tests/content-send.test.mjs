@@ -100,9 +100,10 @@ test("generation watchdog excludes GitHub approval waiting time from the 23 minu
   assert.match(content, /nowMs - generationStartedAtMs - generationPausedTotalMs/);
 });
 
-test("normal Rerun completion immediately requests an authoritative control refresh", () => {
+test("normal Rerun completion clears retry history before requesting the next continuation", () => {
   assert.match(content, /const completedNormally = !generationWatchdogFired && !generationInterruptedByUser/);
-  assert.match(content, /if \(completedNormally\) normalContinuationPending = true/);
+  assert.match(content, /if \(completedNormally\) \{[\s\S]*await resetSameSequenceRetryCount\(\);[\s\S]*normalContinuationPending = true;[\s\S]*\}/);
+  assert.match(content, /async function resetSameSequenceRetryCount\(\)[\s\S]*sameSequenceRetryCount: 0/);
   assert.match(content, /const afterGenerationComplete = normalContinuationPending/);
   assert.match(content, /type: "POLL",[\s\S]*afterGenerationComplete/);
   assert.match(content, /normalContinuation: Boolean\(response\.normalContinuation\)/);
@@ -124,7 +125,7 @@ test("manual Stop is not mistaken for normal completion", () => {
 
 test("generation watchdog resets when ChatGPT is no longer generating and only uses an actionable visible stop button", () => {
   assert.match(content, /const GENERATION_START_GRACE_MS = 15_000/);
-  assert.match(content, /resetGenerationWatchdog\(\);[\s\S]*if \(completedNormally\) normalContinuationPending = true/);
+  assert.match(content, /resetGenerationWatchdog\(\);[\s\S]*if \(completedNormally\) \{[\s\S]*normalContinuationPending = true;[\s\S]*\}/);
   assert.match(content, /button\.disabled \|\| button\.getAttribute\("aria-disabled"\) === "true"/);
   assert.match(content, /button\.getClientRects\(\)\.length === 0/);
   assert.match(content, /function isChatIdle\(\) \{[\s\S]*return !findStopButton\(\)/);

@@ -16,65 +16,55 @@ Restore the original continuous Rerun behavior without weakening failure safegua
 
 ## Root cause confirmed
 
-The workflow had conflated two different events:
+The workflow had conflated successful normal execution completion with abnormal unchanged-generation retry/recovery. `retryDelaySeconds=120` and conservative unauthenticated GitHub polling were therefore pacing normal work, even though those controls were introduced only as safety/recovery mechanisms.
 
-1. successful normal execution completion;
-2. abnormal unchanged-generation retry/recovery.
-
-Current defaults retained `retryDelaySeconds=120`, and unauthenticated regular GitHub polling had been made deliberately conservative for rate-limit safety. Because an unchanged same-sequence `continue` was evaluated through the retry path after a normal answer ended, normal long-running work could pause for the retry interval instead of chaining immediately.
-
-This was a regression in workflow cadence, not an intended product behavior.
+Normal workflow cadence must instead be completion-driven.
 
 ## Work completed
 
-### v0.2.15 — watchdog recovery re-arm retained
+### v0.2.15 watchdog recovery re-arm
 
-Before the 23-minute watchdog clicks ChatGPT Stop, content runtime clears:
+Before the 23-minute watchdog clicks ChatGPT Stop, content runtime clears `sameSequenceRetryCount` and stale pending claim fields. A watchdog Stop can therefore recover instead of remaining permanently at `retry_limit`.
 
-- `sameSequenceRetryCount`;
-- `pendingSequence`;
-- `pendingRunId`;
-- `pendingIsRetry`.
-
-This prevents a forced Stop from leaving the watcher permanently at `retry_limit`.
-
-### v0.2.16 — normal completion lifecycle
+### v0.2.16 normal completion lifecycle
 
 `content.js` now distinguishes normal completion from interruption:
 
-- generation tracking remains armed only after actual Rerun prompt dispatch evidence;
-- `generationObservedActive` records that a visible/actionable ChatGPT Stop control was actually seen;
-- after an active Stop control has been seen, its disappearance is processed on the next 2-second content tick instead of waiting the 15-second dispatch-start grace;
-- trusted user clicks on the Stop control set `generationInterruptedByUser=true`;
-- watchdog Stop sets `generationWatchdogFired=true` before its programmatic click;
-- only a completion with neither interruption flag sets `normalContinuationPending=true`;
+- generation tracking is armed only after actual Rerun prompt dispatch evidence;
+- `generationObservedActive` records that the ChatGPT Stop control was actually visible;
+- once active generation was observed, Stop disappearance is processed on the next 2-second content tick instead of waiting the 15-second startup grace;
+- trusted user Stop clicks set `generationInterruptedByUser=true`;
+- watchdog Stop has `generationWatchdogFired=true` before the programmatic click;
+- only a non-manual, non-watchdog completion sets `normalContinuationPending=true`;
 - the next `POLL` carries `afterGenerationComplete=true`;
 - the completion marker is consumed after one background response so persistent API errors cannot create a 2-second request hammer loop.
 
-`background.js` now treats the completion signal as a distinct one-shot path:
+`background.js` now treats that completion as a distinct one-shot path:
 
-- `POLL` receives `afterGenerationComplete`;
-- completion polling bypasses the normal **local** GitHub poll cache interval once and fetches authoritative control;
+- `POLL` receives the completion flag;
+- completion polling bypasses the normal **local** GitHub poll-cache interval once and fetches authoritative control;
 - active GitHub server-side rate-limit pause remains respected;
-- terminal `complete` / `needs_user` / `blocked`, pending-claim, and sequence-regression guards execute before the fast continuation path;
-- valid refreshed `continue` returns `normalContinuation=true` even if ordinary unchanged-generation retry timing/count would otherwise wait or be exhausted;
-- `CLAIM_SEQUENCE` for that path uses `pendingIsRetry=false`;
-- ACK therefore resets/keeps same-sequence retry count at zero instead of consuming abnormal retry budget.
+- terminal `complete` / `needs_user` / `blocked`, pending claim, and sequence regression remain ahead of the fast continuation path;
+- valid refreshed `continue` returns `normalContinuation=true` even when ordinary unchanged-generation retry timing/count would otherwise wait or be exhausted;
+- `CLAIM_SEQUENCE` for normal continuation records `pendingIsRetry=false`, so ACK does not consume abnormal retry budget.
 
 The ordinary retry delay/count path remains unchanged for abnormal recovery.
 
 ## Regression assertions
 
-Updated source tests pin:
+Source assertions now pin:
 
 - completion `POLL { afterGenerationComplete: true }`;
 - one-shot local cache bypass;
 - normal continuation claim with `pendingIsRetry=false`;
 - terminal and sequence-regression ordering before fast continuation;
 - trusted manual Stop exclusion;
-- watchdog Stop exclusion/re-arm;
+- watchdog Stop exclusion and re-arm;
 - observed-active completion bypassing startup grace;
+- completion marker consumption after one response;
 - no lifetime max-runs gate.
+
+A test-only escaping error in the approval-detector source assertion was discovered during final review. A standalone Node probe reproduced the mismatch (`false`); the assertion was corrected and the equivalent probe now returns **`true`**. This was a test regex correction, not a product-code behavior change.
 
 ## Validation status
 
@@ -84,13 +74,14 @@ Updated source tests pin:
 | v0.2.16 content completion path | COMMITTED / SOURCE-VERIFIED | Normal/manual/watchdog distinction present. |
 | v0.2.16 background immediate refresh | COMMITTED / SOURCE-VERIFIED | Completion bypasses local poll cache once. |
 | v0.2.16 normal claim | COMMITTED / SOURCE-VERIFIED | `pendingIsRetry=false`; terminal/regression guards preserved. |
-| v0.2.16 source regression assertions | COMMITTED | `content-send` and `watcher-flow` updated. |
+| v0.2.16 source regression assertions | COMMITTED | content-send and watcher-flow updated. |
+| approval assertion targeted regex probe | PASS TARGETED | Corrected source-regex matcher returns `true`. |
 | manifest/package version | COMMITTED | `0.2.16`. |
 | exact latest `npm run check` / `npm test` | NOT_RUN | Exact checkout could not be materialized because this runtime failed DNS resolution for `github.com`: `Could not resolve host: github.com`. |
 | live immediate chaining | NOT_RUN | Requires Reload and actual browser observation. |
 | live manual/watchdog Stop boundaries | NOT_RUN | Requires browser observation. |
 
-No full-suite PASS is claimed.
+No full-suite or browser PASS is claimed.
 
 ## Next Exact Action
 

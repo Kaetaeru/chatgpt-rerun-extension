@@ -2,7 +2,7 @@
 
 ## Goal
 
-Validate ChatGPT Rerun v0.2.16 with the original continuous-work UX restored: **after a Rerun-owned response finishes normally, immediately refresh GitHub control once and, if the latest state is still `continue`, submit the next prompt without the regular poll interval or retry delay.**
+Validate ChatGPT Rerun v0.2.17 with the original continuous-work UX restored: **after a Rerun-owned response finishes normally, clear same-sequence retry history immediately, refresh GitHub control once, and if the latest state is still `continue`, submit the next prompt without the regular poll interval or retry delay.**
 
 Keep all previously added protections: tab isolation, fresh-chat recovery, rate-limit handling, unlimited lifetime sends, manual GitHub approval with approval-aware resume, and the 23-minute stuck-generation watchdog.
 
@@ -12,7 +12,7 @@ Keep all previously added protections: tab isolation, fresh-chat recovery, rate-
 - Sequence: `9`
 - Task: `V02-009`
 - Desired control status while browser verification is pending: `needs_user`
-- Extension version to verify: `0.2.16`
+- Extension version to verify: `0.2.17`
 
 ## Stable verified baseline
 
@@ -37,26 +37,31 @@ Do not repeat V02-001 through V02-008 unless a new regression directly invalidat
 - [ ] Approval-aware mode suppresses Rerun retry during GitHub confirmation, never clicks approval, and resumes after manual approval.
 - [ ] Watchdog Stop re-arms same-sequence recovery rather than freezing at `retry_limit`.
 - [ ] A Rerun-owned generation that remains active for 23 active minutes is force-stopped once; approval wait and unrelated manual responses are excluded.
-- [ ] **Normal Rerun completion immediately performs one authoritative GitHub control refresh.**
-- [ ] **Refreshed `continue` dispatches the next prompt without waiting regular polling or `retryDelaySeconds`.**
+- [ ] **Normal Rerun completion resets `sameSequenceRetryCount` to 0 immediately, before the next prompt is dispatched.**
+- [ ] **The Side Panel therefore shows `Same-sequence retries = 0/N` after a successful completion, including when refreshed GitHub control is terminal and no next prompt is sent.**
+- [ ] Normal Rerun completion immediately performs one authoritative GitHub control refresh.
+- [ ] Refreshed `continue` dispatches the next prompt without waiting regular polling or `retryDelaySeconds`.
 - [ ] Manual user Stop and watchdog Stop do not enter the normal-completion fast path.
 - [ ] Terminal control and sequence regression still block immediate chaining.
-- [ ] Browser evidence for v0.2.16 is recorded.
+- [ ] Browser evidence for v0.2.17 is recorded.
 
-## v0.2.16 design invariants
+## v0.2.17 design invariants
 
 1. Normal execution cadence is completion-driven, not retry-driven.
-2. `content.js` arms generation tracking only after actual Rerun dispatch evidence.
-3. Once an active Stop control has been observed, disappearance marks completion on the next base content tick (about 2 seconds).
-4. A trusted user click on Stop sets manual interruption and suppresses normal chaining.
-5. A watchdog programmatic Stop has `generationWatchdogFired=true` and suppresses normal chaining.
-6. Normal completion sends one `POLL { afterGenerationComplete: true }`.
-7. Background bypasses only its local poll cache for that one completion refresh; an active GitHub server-side rate-limit pause is still honored.
-8. `complete`, `needs_user`, `blocked`, pending ownership, and sequence regression are checked before normal continuation.
-9. Valid refreshed `continue` returns `normalContinuation=true` even if ordinary unchanged-generation retry delay/count would wait or be exhausted.
-10. Normal-continuation claim uses `pendingIsRetry=false`; ACK therefore does not consume retry budget.
-11. Completion refresh is consumed after one background response so API errors cannot produce a 2-second GitHub hammer loop.
-12. `retryDelaySeconds` / `maxRetriesPerSequence` remain abnormal-recovery safeguards only.
+2. `sameSequenceRetryCount` represents unresolved abnormal retries for the current execution lineage; a successful normal response completion clears it immediately.
+3. The retry counter reset does not wait for the next prompt ACK. This matters when refreshed control is `complete`, `needs_user`, or `blocked` and no next prompt is dispatched.
+4. Normal completion does not clear the lifetime diagnostic `runCount` / `Sent` value.
+5. `content.js` arms generation tracking only after actual Rerun dispatch evidence.
+6. Once an active Stop control has been observed, disappearance marks completion on the next base content tick (about 2 seconds).
+7. A trusted user click on Stop sets manual interruption and suppresses normal chaining/reset-as-success.
+8. A watchdog programmatic Stop has `generationWatchdogFired=true` and follows its explicit recovery re-arm path instead of being classified as normal success.
+9. Normal completion sends one `POLL { afterGenerationComplete: true }` after clearing retry history.
+10. Background bypasses only its local poll cache for that one completion refresh; an active GitHub server-side rate-limit pause is still honored.
+11. `complete`, `needs_user`, `blocked`, pending ownership, and sequence regression are checked before normal continuation.
+12. Valid refreshed `continue` returns `normalContinuation=true` even if ordinary unchanged-generation retry delay/count would wait or be exhausted.
+13. Normal-continuation claim uses `pendingIsRetry=false`; its ACK keeps the retry counter at zero.
+14. Completion refresh is consumed after one background response so API errors cannot produce a 2-second GitHub hammer loop.
+15. `retryDelaySeconds` / `maxRetriesPerSequence` remain abnormal-recovery safeguards only.
 
 ## Validation baseline
 
@@ -67,22 +72,23 @@ Do not repeat V02-001 through V02-008 unless a new regression directly invalidat
 - v0.2.14 23-minute watchdog: committed/source-verified.
 - v0.2.15 watchdog recovery re-arm: committed/source-verified.
 - v0.2.16 immediate normal-completion chaining: committed/source-verified.
-- `tests/content-send.test.mjs` and `tests/watcher-flow.test.mjs`: v0.2.16 source regression assertions committed.
-- Approval detector source-regex assertion escape was corrected after a standalone Node probe reproduced the mismatch; corrected probe result: **PASS (`true`)**.
-- Exact latest `npm run check` / `npm test`: **NOT_RUN**. This execution environment could not materialize the exact branch because `github.com` DNS resolution failed (`Could not resolve host: github.com`).
+- v0.2.17 immediate successful-completion retry reset: committed/source-verified.
+- `tests/content-send.test.mjs`: v0.2.17 source assertion requires `resetSameSequenceRetryCount()` before `normalContinuationPending=true`.
+- Exact latest `npm run check` / `npm test`: **NOT_RUN**. This execution environment still cannot materialize the exact branch because GitHub DNS resolution fails (`Could not resolve host: raw.githubusercontent.com` / `github.com`).
 - Build: N/A; unpacked Manifest V3 extension.
 
 ## Current browser gate
 
-1. Reload unpacked ChatGPT Rerun **v0.2.16** in `chrome://extensions`.
+1. Pull/reload unpacked ChatGPT Rerun **v0.2.17** in `chrome://extensions`.
 2. Return to a connected watcher, preferably `Kaetaeru/SimpleVTT @ work/v1-composite` when its control is intentionally `continue`.
 3. Keep watcher `Watching`.
 4. Let one Rerun response finish normally without clicking Stop.
-5. Expected: after active Stop disappears, the next content tick forces one GitHub control refresh; if latest control remains `continue`, the next prompt is automatically submitted immediately instead of waiting 90/120 seconds.
-6. Verify terminal control prevents the next implementation prompt while watcher stays Watching.
-7. Verify manual Stop does not immediately auto-chain.
-8. Verify controlled watchdog Stop recovers through the re-armed abnormal path, not the normal fast path.
-9. Record only actually observed live evidence before marking V02-009 complete.
+5. Expected: `Same-sequence retries` resets to **`0/N` immediately after normal completion**, before/independent of the next prompt ACK.
+6. Expected: after active Stop disappears, the same content cycle forces one GitHub control refresh; if latest control remains `continue`, the next prompt is automatically submitted without waiting 90/120 seconds.
+7. Verify a terminal control leaves the retry counter at zero while preventing the next implementation prompt and keeping watcher Watching.
+8. Verify manual Stop does not get classified as successful completion.
+9. Verify controlled watchdog Stop recovers through its re-armed abnormal path, not the normal success path.
+10. Record only actually observed live evidence before marking V02-009 complete.
 
 ## Constraints
 

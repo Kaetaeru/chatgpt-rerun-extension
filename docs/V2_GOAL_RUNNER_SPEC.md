@@ -91,7 +91,9 @@ Goal setup itself must not start implementation or modify the target repository.
 
 Once the Goal Contract is accepted, the extension creates one executor prompt and stores it in `chrome.storage.local`.
 
-That exact prompt is reused for every normal iteration of the run. Iteration count and checkpoint do not rewrite the prompt.
+That exact prompt is reused for every normal iteration of the run. Iteration count and checkpoint do not rewrite the stored frozen prompt.
+
+The one exception is automatic fresh-chat recovery: the first execution dispatched in the transferred chat may append a one-time **Resume Capsule** containing the last verified checkpoint. The stored `frozenPrompt` itself is not mutated, and after that first successfully acknowledged dispatch all later iterations return to the exact frozen prompt.
 
 The prompt contains:
 
@@ -104,7 +106,7 @@ The prompt contains:
 - a requirement to avoid repeating verified work and repeated HEAD/history archaeology;
 - the result-file contract.
 
-Conversation context and repository evidence carry normal iteration progress. The extension keeps a compact checkpoint for UI and fresh-chat recovery, not to continuously regenerate the executor prompt.
+Conversation context and repository evidence carry normal iteration progress. The extension keeps a compact checkpoint for UI and one-time fresh-chat recovery, not to continuously regenerate the executor prompt.
 
 ## Result-file protocol
 
@@ -134,7 +136,9 @@ Allowed statuses:
 - `NEEDS_USER`
 - `CONFLICT`
 
-The extension validates the file structure and active `goal_id`. It also remembers `result_id` and the artifact identity so the same result cannot be consumed twice.
+Every execution must create a fresh result artifact even though the filename is reused. ChatGPT must generate a new `result_id`, write the actual final status for that execution, reopen/verify the newly written JSON, and return the attachment belonging to that newly verified file. A completed execution must contain `"status": "COMPLETE"`; an older attachment with the same filename must never be relinked as the current result.
+
+The extension validates the file structure and active `goal_id`. It keeps a bounded run-scoped history of processed `result_id` values in addition to attachment identity tracking, so a non-consecutive replay such as `A -> B -> A` is rejected instead of becoming current again. The artifact reader also refuses to re-expose already processed result IDs.
 
 ### Result behavior
 
@@ -143,6 +147,7 @@ The extension validates the file structure and active `goal_id`. It also remembe
 - `NEEDS_USER`: pause for the user.
 - `CONFLICT`: pause and require resolution.
 - missing or invalid result JSON: treat as interrupted, never success.
+- previously processed result ID: ignore it and wait for a genuinely new execution result.
 
 ## Generated artifact resolution
 
@@ -160,7 +165,7 @@ V2.1.6 uses an authenticated artifact resolver:
 
 This preserves one validation/state-transition path: the artifact resolver obtains bytes, while existing V2 normalization still decides whether a goal/result is valid.
 
-For execution results, the extension still snapshots matching attachment identities before dispatch and remembers processed `result_id` values so an older result cannot be accepted as the new execution's response.
+For execution results, the extension snapshots matching attachment identities before dispatch and remembers processed `result_id` values for the run so an older result cannot be accepted as the new execution's response.
 
 Artifact resolution failures are diagnostic only and are stored separately at `v2:artifact:<tabId>`. They do not authorize state transitions. The Side Panel shows an exact `Artifact reader: ...` error instead of silently displaying `Waiting goal JSON` forever.
 
@@ -186,9 +191,14 @@ iteration
 lastCheckpoint
 lastResult
 lastResultId
+processedResultIds
 lastSentAt
 waitingApproval
-handoff state
+handoffPending
+handoffUsed
+handoffFromTabId
+handoffToTabId
+resumeCapsulePending
 ```
 
 Repository-side Rerun sequence/control files are not required for normal V2 cadence.
@@ -230,11 +240,11 @@ A future Direct GitHub transport can use credentials explicitly granted to Rerun
 
 ## New conversation handoff
 
-If the current conversation loses its composer, Rerun transfers Goal Runner ownership to one fresh ChatGPT tab. The same Goal Contract and frozen prompt move with the run.
+If the current conversation loses its composer, Rerun may transfer Goal Runner ownership to **one** fresh ChatGPT tab for that run. The same Goal Contract, frozen prompt, processed-result history, and checkpoint move with the run.
 
-Fresh-chat recovery must never recursively open unlimited tabs if the handoff fails.
+The automatic handoff is run-scoped and single-use. `handoffUsed` is persisted before creating the new tab, so a failed transfer cannot enter a retry loop that opens unlimited tabs. A transferred chat also carries `handoffUsed=true`; if that chat later loses its composer as well, Rerun pauses as `NEEDS_USER` instead of opening another automatic chat.
 
-A later milestone should inject the compact `lastCheckpoint` once at handoff time so a new conversation can resume with less repository rediscovery while keeping normal executor iterations frozen.
+When a checkpoint exists, the transferred runtime sets `resumeCapsulePending=true`. The first execution claim in the new chat receives the frozen executor prompt plus a one-time Resume Capsule containing `lastCheckpoint`. The capsule is cleared only after the dispatch is acknowledged, so a failed dispatch can retry without losing the checkpoint. Normal iterations after that use the untouched frozen executor prompt again.
 
 ## Explicit removals from V1
 
@@ -255,11 +265,11 @@ V2.1 JSON protocol is ready for browser validation when:
 1. `목표 세우기` sends the setup prompt;
 2. the next user-requested goal produces a matching goal JSON artifact;
 3. the authenticated artifact resolver obtains the JSON and the existing content protocol imports it;
-4. every execution reuses the same frozen executor prompt;
+4. every normal execution reuses the same frozen executor prompt, with only the documented one-time fresh-chat Resume Capsule exception;
 5. a newly created result JSON controls CONTINUE / COMPLETE / NEEDS_USER / CONFLICT;
-6. old/stale goal and result artifacts are rejected or ignored;
+6. old/stale goal and result artifacts, including non-consecutive result-ID replays, are rejected or ignored;
 7. assistant prose is not read for control state;
 8. GitHub approvals remain manual and do not break the loop;
-9. composer exhaustion still performs a single fresh-chat handoff;
+9. composer exhaustion performs at most one automatic fresh-chat handoff per run and a transferred chat cannot recursively hand off again;
 10. the 23-minute watchdog remains recovery-only;
 11. an artifact-resolution failure produces a visible diagnostic instead of an unexplained permanent wait.

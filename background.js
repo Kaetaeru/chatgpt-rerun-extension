@@ -2,7 +2,9 @@ import {
   DEFAULT_CONFIG,
   DEFAULT_RUNTIME,
   buildExecutorPrompt,
-  normalizeConfig,
+  buildGoalSetupPrompt,
+  normalizeGoalFile,
+  normalizeResultFile,
   tabConfigKey,
   tabRuntimeKey,
   validateConfig
@@ -34,10 +36,10 @@ async function handleMessage(message, sender) {
       return getTabState(requireMessageTabId(message));
     case "GET_CURRENT_STATE":
       return getTabState(requireSenderTabId(sender));
-    case "SAVE_CONFIG":
-      return saveConfig(requireMessageTabId(message), message.config);
-    case "START_GOAL":
-      return startGoal(requireMessageTabId(message));
+    case "BEGIN_GOAL_SETUP":
+      return beginGoalSetup(requireMessageTabId(message));
+    case "IMPORT_GOAL_FILE":
+      return importGoalFile(requireSenderTabId(sender), message.value);
     case "RESUME_GOAL":
       return resumeGoal(requireMessageTabId(message));
     case "PAUSE_GOAL":
@@ -50,8 +52,8 @@ async function handleMessage(message, sender) {
       return ackDispatch(requireSenderTabId(sender));
     case "RELEASE_EXECUTION":
       return releaseExecution(requireSenderTabId(sender), message.reason);
-    case "REPORT_RESULT":
-      return reportResult(requireSenderTabId(sender), message.result);
+    case "REPORT_RESULT_FILE":
+      return reportResultFile(requireSenderTabId(sender), message.value);
     case "REPORT_INTERRUPTED":
       return reportInterrupted(requireSenderTabId(sender), message.reason);
     case "SET_APPROVAL_WAIT":
@@ -73,48 +75,81 @@ async function getTabState(tabId) {
   };
 }
 
-async function saveConfig(tabId, rawConfig) {
-  const config = normalizeConfig(rawConfig);
-  await chrome.storage.local.set({ [tabConfigKey(tabId)]: config });
-  return { config };
+async function beginGoalSetup(tabId) {
+  await ensureContentScript(tabId);
+  const setupNonce = crypto.randomUUID();
+  const runtime = {
+    ...DEFAULT_RUNTIME,
+    status: "goal_setup",
+    phase: "awaiting_goal_file",
+    setupNonce,
+    setupPending: true
+  };
+  await chrome.storage.local.set({
+    [tabConfigKey(tabId)]: { ...DEFAULT_CONFIG },
+    [tabRuntimeKey(tabId)]: runtime
+  });
+
+  const response = await chrome.tabs.sendMessage(tabId, {
+    type: "RERUN_V2_SEND_DIRECT",
+    prompt: buildGoalSetupPrompt(setupNonce)
+  });
+  if (!response?.sent) {
+    const detail = response?.error || "Could not send the goal-setup prompt.";
+    await chrome.storage.local.set({
+      [tabRuntimeKey(tabId)]: { ...runtime, status: "paused", phase: "paused", setupPending: false, lastError: detail }
+    });
+    throw new Error(detail);
+  }
+  return { runtime };
 }
 
-async function startGoal(tabId) {
-  await ensureContentScript(tabId);
-  const { config } = await getTabState(tabId);
-  validateConfig(config);
-  const conflict = await findConflictingRun(tabId, config);
+async function importGoalFile(tabId, rawValue) {
+  const { runtime } = await getTabState(tabId);
+  if (!runtime.setupPending || runtime.phase !== "awaiting_goal_file" || !runtime.setupNonce) {
+    throw new Error("No active goal-setup request exists in this tab.");
+  }
+
+  const contract = normalizeGoalFile(rawValue, runtime.setupNonce);
+  const conflict = await findConflictingRun(tabId, contract.config);
   if (conflict !== null) {
     throw new Error(`The same repository/branch Goal Runner is already active in tab ${conflict}.`);
   }
 
-  const runtime = {
+  const runId = crypto.randomUUID();
+  const nextRuntime = {
     ...DEFAULT_RUNTIME,
     enabled: true,
     status: "running",
     phase: "ready",
-    runId: crypto.randomUUID()
+    runId,
+    goalId: contract.goalId,
+    frozenPrompt: buildExecutorPrompt(contract.config, { runId, goalId: contract.goalId })
   };
-  await chrome.storage.local.set({ [tabRuntimeKey(tabId)]: runtime });
+  await chrome.storage.local.set({
+    [tabConfigKey(tabId)]: contract.config,
+    [tabRuntimeKey(tabId)]: nextRuntime
+  });
   await wakeTab(tabId);
-  return { runtime };
+  return { config: contract.config, runtime: nextRuntime };
 }
 
 async function resumeGoal(tabId) {
   await ensureContentScript(tabId);
   const { config, runtime } = await getTabState(tabId);
   validateConfig(config);
+  if (!runtime.runId || !runtime.goalId || !runtime.frozenPrompt) {
+    throw new Error("No paused Goal Runner exists in this tab.");
+  }
   const conflict = await findConflictingRun(tabId, config);
   if (conflict !== null) {
     throw new Error(`The same repository/branch Goal Runner is already active in tab ${conflict}.`);
   }
-  if (!runtime.runId) throw new Error("No paused Goal Runner exists in this tab.");
-
   const next = {
     ...runtime,
     enabled: true,
     status: "running",
-    phase: "ready",
+    phase: runtime.phase === "generating" ? "generating" : "ready",
     lastError: null,
     waitingApproval: false
   };
@@ -143,6 +178,7 @@ async function stopGoal(tabId) {
     enabled: false,
     status: "stopped",
     phase: "idle",
+    setupPending: false,
     waitingApproval: false,
     handoffPending: false,
     lastError: null
@@ -157,7 +193,7 @@ async function claimExecution(tabId) {
     return { claimed: false, reason: "not_ready" };
   }
   validateConfig(config);
-
+  if (!runtime.frozenPrompt || !runtime.goalId) throw new Error("Goal executor prompt is unavailable.");
   const next = {
     ...runtime,
     phase: "dispatching",
@@ -165,10 +201,7 @@ async function claimExecution(tabId) {
     lastError: null
   };
   await chrome.storage.local.set({ [tabRuntimeKey(tabId)]: next });
-  return {
-    claimed: true,
-    prompt: buildExecutorPrompt(config, runtime)
-  };
+  return { claimed: true, prompt: runtime.frozenPrompt, goalId: runtime.goalId };
 }
 
 async function ackDispatch(tabId) {
@@ -198,37 +231,30 @@ async function releaseExecution(tabId, reason) {
   return { released: true, runtime: next };
 }
 
-async function reportResult(tabId, rawResult) {
+async function reportResultFile(tabId, rawValue) {
   const { runtime } = await getTabState(tabId);
-  const resultRunId = String(rawResult?.runId || "");
-  const resultExecution = Number(rawResult?.execution);
-  const status = String(rawResult?.status || "").toUpperCase();
-  const checkpoint = String(rawResult?.checkpoint || "").trim();
-  if (resultRunId !== runtime.runId || resultExecution !== Number(runtime.iteration)) {
-    throw new Error("Stale RERUN_RESULT does not match the active run/execution.");
-  }
-  if (!checkpoint) throw new Error("RERUN_RESULT checkpoint is required.");
-  if (!["CONTINUE", "COMPLETE", "NEEDS_USER", "CONFLICT"].includes(status)) {
-    throw new Error(`Unsupported RERUN_RESULT status: ${status || "<missing>"}`);
-  }
+  if (!runtime.runId || !runtime.goalId) throw new Error("No active Goal Runner exists.");
+  const result = normalizeResultFile(rawValue, runtime.goalId);
+  if (result.resultId === runtime.lastResultId) return { ignored: true, runtime };
 
   const common = {
     ...runtime,
-    lastCheckpoint: checkpoint,
-    lastResult: status,
+    lastCheckpoint: result.checkpoint,
+    lastResult: result.status,
+    lastResultId: result.resultId,
     lastError: null,
     waitingApproval: false,
     dispatchClaimedAt: null
   };
 
   let next;
-  if (status === "CONTINUE") {
+  if (result.status === "CONTINUE") {
     next = runtime.enabled && runtime.status !== "paused"
       ? { ...common, enabled: true, status: "running", phase: "ready" }
       : { ...common, enabled: false, status: "paused", phase: "paused" };
-  } else if (status === "COMPLETE") {
+  } else if (result.status === "COMPLETE") {
     next = { ...common, enabled: false, status: "complete", phase: "complete" };
-  } else if (status === "NEEDS_USER") {
+  } else if (result.status === "NEEDS_USER") {
     next = { ...common, enabled: false, status: "needs_user", phase: "paused" };
   } else {
     next = { ...common, enabled: false, status: "conflict", phase: "paused" };
@@ -264,9 +290,7 @@ async function setApprovalWait(tabId, waiting) {
 
 async function handoffToNewChat(oldTabId) {
   const { config, runtime } = await getTabState(oldTabId);
-  if (!runtime.enabled || runtime.handoffPending) {
-    return { handedOff: false, reason: "not_active" };
-  }
+  if (!runtime.enabled || runtime.handoffPending) return { handedOff: false, reason: "not_active" };
 
   await chrome.storage.local.set({
     [tabRuntimeKey(oldTabId)]: { ...runtime, handoffPending: true }
@@ -291,7 +315,6 @@ async function handoffToNewChat(oldTabId) {
       dispatchClaimedAt: null,
       lastError: null
     };
-
     await chrome.storage.local.set({
       [tabConfigKey(newTab.id)]: config,
       [tabRuntimeKey(newTab.id)]: newRuntime,
@@ -324,10 +347,8 @@ async function findConflictingRun(tabId, config) {
     if (!match || !runtime?.enabled) continue;
     const otherTabId = Number(match[1]);
     if (otherTabId === tabId) continue;
-    const otherConfig = normalizeConfig(all[tabConfigKey(otherTabId)] || {});
-    if (otherConfig.repository === config.repository && otherConfig.branch === config.branch) {
-      return otherTabId;
-    }
+    const otherConfig = { ...DEFAULT_CONFIG, ...(all[tabConfigKey(otherTabId)] || {}) };
+    if (otherConfig.repository === config.repository && otherConfig.branch === config.branch) return otherTabId;
   }
   return null;
 }

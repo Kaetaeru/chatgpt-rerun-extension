@@ -3,7 +3,7 @@
 ## Scope
 
 - Branch: `agent/v2-goal-runner`
-- Audited HEAD at start: `0f175b3dbb86c39e00c5b5f72a720800f086fec9`
+- Audited product HEAD at start: `0f175b3dbb86c39e00c5b5f72a720800f086fec9`
 - Canonical authority: `docs/V2_GOAL_RUNNER_SPEC.md`, root `README.md`
 - Goal: classify every V2.1 acceptance item with observed evidence and identify specification/implementation conflicts without treating source inspection as browser PASS.
 
@@ -20,6 +20,8 @@ npm test      -> PASS, 22/22 tests
 
 The repository tests are primarily unit/source-structure assertions. They are not treated as browser E2E evidence where the README explicitly requires live browser behavior.
 
+Audit commit `bf8775b1df8437e90f81617fcfcf84f68c2b298b` changed only this audit document, so no product or test source changed after those command results.
+
 ## V2.1 acceptance matrix
 
 | # | Acceptance | Status | Evidence |
@@ -27,14 +29,14 @@ The repository tests are primarily unit/source-structure assertions. They are no
 | 1 | `목표 세우기` sends setup prompt | PASS | Observed in the active Rerun V2 run: the nonce-bound setup prompt was delivered before goal authoring; source path is `BEGIN_GOAL_SETUP -> buildGoalSetupPrompt -> RERUN_V2_SEND_DIRECT`. |
 | 2 | next requested goal produces matching goal JSON | PASS | Observed in the active run: `rerun-goal-dfa25a6d-cd90-47b5-a548-c92b014a9756.json` was generated with matching setup nonce / goal ID and correct repo/branch. `normalizeGoalFile` and tests independently enforce the binding. |
 | 3 | authenticated artifact resolver obtains/imports goal JSON | PASS | Observed in the active run: the generated artifact was exposed as a `sandbox:/mnt/data/...` file and the run automatically advanced to the frozen executor. `content.js` explicitly skips raw `sandbox:` URLs, so this transition requires the V2.1.6 artifact bridge/resolver path or an equivalent resolved URL; current source wires MAIN-world resolver -> blob bridge -> existing import protocol. |
-| 4 | every execution reuses same frozen executor prompt | PENDING LIVE CONTINUATION | Source/unit evidence passes (`buildExecutorPrompt` identity and stored `runtime.frozenPrompt`). One live `CONTINUE` iteration is being used to verify actual prompt reuse rather than source-only PASS. |
-| 5 | new result JSON controls CONTINUE / COMPLETE / NEEDS_USER / CONFLICT | PASS (dynamic runtime harness) | Exact `background.js` was executed with mocked Chrome storage/message APIs. All four statuses reached their specified runtime states. Live `CONTINUE` is additionally being dogfooded by this audit run. |
+| 4 | every execution reuses same frozen executor prompt | PASS | Live continuation evidence: the prior audit execution returned a valid `CONTINUE` result, and the next Rerun-owned execution arrived with the same Run ID, Goal ID, repository/branch, GOAL, ACCEPTANCE, canonical authority, execution contract, and result-file contract. This matches the source/unit evidence that `runtime.frozenPrompt` is reused without iteration/checkpoint regeneration. |
+| 5 | new result JSON controls CONTINUE / COMPLETE / NEEDS_USER / CONFLICT | PASS | Exact `background.js` was executed with mocked Chrome storage/message APIs and all four statuses reached their specified runtime states. In addition, this active run consumed a newly generated `CONTINUE` result and immediately produced the next executor execution, providing live evidence for the normal continuation path. |
 | 6 | old/stale goal/result artifacts rejected or ignored | **FAIL** | Non-consecutive result replay is accepted. Dynamic reproduction: process result IDs `A -> B`, then submit `A` again with a new attachment/message identity; because runtime stores only `lastResultId`, replayed `A` is accepted and can transition the run to COMPLETE. Goal nonce binding is sound, but processed result IDs are not remembered as required. |
 | 7 | assistant prose is not read for control state | PASS (source/unit) | Machine state transitions consume structured goal/result JSON. Existing tests pass and no assistant-text control parser exists. The MAIN-world resolver searches message data only to locate the expected generated filename/artifact identity, not to derive control status. |
-| 8 | GitHub approvals stay manual and do not break loop | BLOCKED BROWSER E2E | Source and tests confirm approval-card detection and no approval-button click path. Actual approval-card behavior requires live ChatGPT/GitHub confirmation UI observation. |
+| 8 | GitHub approvals stay manual and do not break loop | BLOCKED BROWSER E2E | Source and tests confirm approval-card detection and no approval-button click path. Actual approval-card behavior requires live ChatGPT/GitHub confirmation UI observation, which was not available in this execution. |
 | 9 | composer exhaustion performs a single fresh-chat handoff | **FAIL** | Dynamic/source reproduction shows a transferred tab with `handoffFromTabId` is still allowed to call `HANDOFF_NEW_CHAT` again. `handoffToNewChat` guards only `enabled` and `handoffPending`; there is no one-hop/recursion guard. Repeated missing composers can therefore create a chain of fresh tabs. |
 | 10 | 23-minute watchdog remains recovery-only | **FAIL** | Approval wait accounting is in content-script memory (`approvalPausedAtMs`, `approvalPausedTotalMs`) rather than persisted runtime state. Dynamic reproduction: reload content during a long manual approval wait, end approval one second later, and the watchdog immediately fires because pre-reload approval-wait time is counted as active generation. This violates the requirement that approval waiting time be excluded. |
-| 11 | artifact-resolution failure shows visible diagnostic | BLOCKED BROWSER E2E | Source/unit evidence passes: artifact failures write `v2:artifact:<tabId>` and Side Panel renders `Artifact reader: ...`. A live forced resolver failure/visible panel observation has not yet been performed in this execution environment. |
+| 11 | artifact-resolution failure shows visible diagnostic | BLOCKED BROWSER E2E | Source/unit evidence passes: artifact failures write `v2:artifact:<tabId>` and Side Panel renders `Artifact reader: ...`. A live forced resolver failure/visible panel observation was not available in this execution, so this is not promoted to PASS. |
 
 ## Material findings
 
@@ -72,8 +74,6 @@ The 22 passing tests do not cover the three reproduced failure paths above:
 
 They should be added as regressions when the product defects are fixed.
 
-## Remaining audit actions
+## Audit closure
 
-- Consume one live `CONTINUE` result from this audit and compare the next executor prompt to the current frozen prompt (acceptance 4, plus live CONTINUE evidence for acceptance 5).
-- Record the result in this document.
-- Browser-only acceptance 8 and 11 remain explicitly BLOCKED unless live confirmation UI / forced artifact failure can be observed; they must not be promoted to PASS from source tests alone.
+All V2.1 acceptance items 1-11 now have an evidence-based `PASS`, `FAIL`, or `BLOCKED` classification. The audit goal is complete even though V2.1.6 itself is not fully conformant: acceptance 6, 9, and 10 are confirmed FAILs, while 8 and 11 require browser E2E before they can be promoted beyond BLOCKED. No browser-only behavior was marked PASS from source inspection alone.

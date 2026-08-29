@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Rerun V2",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "minimum_chrome_version": "116",
   "description": "Build a goal from a ChatGPT-generated JSON contract, then keep ChatGPT working until that goal is complete or blocked.",
   "permissions": ["storage", "activeTab", "sidePanel", "scripting"],
@@ -23,8 +23,14 @@
   "content_scripts": [
     {
       "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
-      "js": ["content.js", "preview-reader.js"],
+      "js": ["content.js", "artifact-reader.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+      "js": ["page-artifact-reader.js"],
+      "run_at": "document_idle",
+      "world": "MAIN"
     }
   ]
 }

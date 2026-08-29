@@ -21,9 +21,10 @@ test("assistant prose is not parsed for Goal Runner control", () => {
   assert.match(content, /REPORT_RESULT_FILE/);
 });
 
-test("executor prompt is frozen once goal JSON is accepted", () => {
+test("executor prompt stays frozen except for one fresh-chat resume capsule", () => {
   assert.match(background, /frozenPrompt: buildExecutorPrompt/);
-  assert.match(background, /prompt: runtime\.frozenPrompt/);
+  assert.match(background, /runtime\.resumeCapsulePending[\s\S]*buildFreshChatResumePrompt\(runtime\.frozenPrompt, runtime\.lastCheckpoint\)[\s\S]*runtime\.frozenPrompt/);
+  assert.match(background, /resumeCapsulePending: false/);
   assert.doesNotMatch(background, /buildExecutorPrompt\(config, runtime\)/);
 });
 
@@ -36,6 +37,7 @@ test("result attachment must be new for the active execution", () => {
   assert.match(content, /activeResultBaseline = snapshotResultAttachmentKeys\(claim\.goalId\)/);
   assert.match(content, /baseline\?\.has\(candidate\.key\)/);
   assert.match(content, /seenJsonAttachmentKeys\.has\(candidate\.key\)/);
+  assert.match(background, /processedResultIds\.includes\(result\.resultId\)/);
 });
 
 test("side panel actions and refresh always resolve the currently active ChatGPT tab", () => {
@@ -58,8 +60,11 @@ test("manual ChatGPT Stop pauses the goal", () => {
   assert.match(content, /if \(manualStopRequested\)[\s\S]*type: "PAUSE_GOAL"/);
 });
 
-test("missing composer uses one fresh-chat ownership handoff", () => {
+test("missing composer uses exactly one automatic fresh-chat ownership handoff", () => {
   assert.match(content, /findComposer\(\) \|\| await waitForComposer\(5_000\)/);
   assert.match(content, /type: "HANDOFF_NEW_CHAT"/);
+  assert.match(background, /handoffUsed \|\| runtime\.handoffFromTabId !== null/);
+  assert.match(background, /reason: "handoff_already_used"/);
   assert.match(background, /handoffFromTabId: oldTabId/);
+  assert.match(background, /resumeCapsulePending: Boolean/);
 });

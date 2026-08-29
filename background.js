@@ -10,6 +10,8 @@ import {
   validateConfig
 } from "./goal.js";
 
+const MAX_GENERATED_JSON_BYTES = 1024 * 1024;
+
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 });
@@ -40,6 +42,9 @@ async function handleMessage(message, sender) {
       return beginGoalSetup(requireMessageTabId(message));
     case "IMPORT_GOAL_FILE":
       return importGoalFile(requireSenderTabId(sender), message.value);
+    case "FETCH_JSON_URL":
+      requireSenderTabId(sender);
+      return fetchGeneratedJsonUrl(message.url);
     case "RESUME_GOAL":
       return resumeGoal(requireMessageTabId(message));
     case "PAUSE_GOAL":
@@ -132,6 +137,30 @@ async function importGoalFile(tabId, rawValue) {
   });
   await wakeTab(tabId);
   return { config: contract.config, runtime: nextRuntime };
+}
+
+async function fetchGeneratedJsonUrl(value) {
+  const url = new URL(String(value || ""));
+  const allowed = url.protocol === "https:" && (
+    url.hostname === "chatgpt.com" ||
+    url.hostname === "chat.openai.com" ||
+    url.hostname === "files.oaiusercontent.com" ||
+    url.hostname.endsWith(".oaiusercontent.com")
+  );
+  if (!allowed) throw new Error("Rerun rejected an unexpected generated-file host.");
+
+  const response = await fetch(url.href, {
+    method: "GET",
+    credentials: "include",
+    cache: "no-store"
+  });
+  if (!response.ok) throw new Error(`Generated JSON fetch failed with HTTP ${response.status}`);
+  const text = await response.text();
+  if (!text.trim()) throw new Error("Generated JSON file was empty.");
+  if (new TextEncoder().encode(text).byteLength > MAX_GENERATED_JSON_BYTES) {
+    throw new Error("Generated JSON file exceeded the 1 MiB limit.");
+  }
+  return { value: JSON.parse(text) };
 }
 
 async function resumeGoal(tabId) {

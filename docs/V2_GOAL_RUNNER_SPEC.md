@@ -17,7 +17,7 @@ User describes the next goal
         ↓
 ChatGPT creates rerun-goal-<nonce>.json
         ↓
-Extension validates + stores Goal Contract
+Extension resolves + validates + stores Goal Contract
         ↓
 Frozen executor prompt
         ↓
@@ -83,7 +83,7 @@ The extension accepts the file only when:
 - repository uses `owner/repo` form;
 - goal is non-empty.
 
-This prevents an older goal JSON attachment from silently replacing the current goal.
+This prevents an older goal JSON artifact from silently replacing the current goal.
 
 Goal setup itself must not start implementation or modify the target repository.
 
@@ -134,7 +134,7 @@ Allowed statuses:
 - `NEEDS_USER`
 - `CONFLICT`
 
-The extension validates the file structure and active `goal_id`. It also remembers `result_id` and the attachment identity so the same result cannot be consumed twice.
+The extension validates the file structure and active `goal_id`. It also remembers `result_id` and the artifact identity so the same result cannot be consumed twice.
 
 ### Result behavior
 
@@ -144,11 +144,27 @@ The extension validates the file structure and active `goal_id`. It also remembe
 - `CONFLICT`: pause and require resolution.
 - missing or invalid result JSON: treat as interrupted, never success.
 
-## Attachment detection
+## Generated artifact resolution
 
-The content script looks for newly appearing downloadable `.json` anchors in the ChatGPT page. It derives filenames from download attributes, labels, visible file names, or URL path names and fetches the attachment with the current ChatGPT credentials.
+A ChatGPT-generated file may be represented in assistant output by a `sandbox:/mnt/data/...` link that is not itself fetchable by an extension content script. Rerun therefore does not treat the visible sandbox URL or a preview DOM as the source of truth for file bytes.
 
-For execution results, the extension snapshots matching attachments before dispatch and accepts only a matching attachment that appears after dispatch. Previously seen attachments are ignored.
+V2.1.6 uses an authenticated artifact resolver:
+
+1. `page-artifact-reader.js` runs in the page `MAIN` world.
+2. It reads the logged-in ChatGPT session and obtains the current access token plus the account ID when the session exposes one.
+3. It reads the current conversation and finds the message containing the exact expected goal/result filename.
+4. It resolves that message's sandbox/message identity through ChatGPT's generated-file download route, with file-ID download routes as fallback.
+5. It only accepts final content from ChatGPT/OpenAI generated-file hosts and limits parsed JSON to 1 MiB.
+6. `artifact-reader.js` receives the resolved object without receiving the access token, creates a temporary `blob:` URL, and exposes it through a hidden synthetic file node.
+7. The existing `content.js` attachment parser consumes that blob and remains the only component that invokes `IMPORT_GOAL_FILE` or `REPORT_RESULT_FILE`.
+
+This preserves one validation/state-transition path: the artifact resolver obtains bytes, while existing V2 normalization still decides whether a goal/result is valid.
+
+For execution results, the extension still snapshots matching attachment identities before dispatch and remembers processed `result_id` values so an older result cannot be accepted as the new execution's response.
+
+Artifact resolution failures are diagnostic only and are stored separately at `v2:artifact:<tabId>`. They do not authorize state transitions. The Side Panel shows an exact `Artifact reader: ...` error instead of silently displaying `Waiting goal JSON` forever.
+
+The Side Panel ensures the normal content script plus both artifact-reader worlds are present on an already-open ChatGPT tab, so reloading the extension does not require a page refresh to restore a pending artifact read.
 
 This is intentionally separate from assistant-message prose parsing.
 
@@ -237,12 +253,13 @@ V2 normal operation removes:
 V2.1 JSON protocol is ready for browser validation when:
 
 1. `목표 세우기` sends the setup prompt;
-2. the next user-requested goal produces a matching goal JSON attachment;
-3. the extension automatically imports that file and starts the run;
+2. the next user-requested goal produces a matching goal JSON artifact;
+3. the authenticated artifact resolver obtains the JSON and the existing content protocol imports it;
 4. every execution reuses the same frozen executor prompt;
 5. a newly created result JSON controls CONTINUE / COMPLETE / NEEDS_USER / CONFLICT;
-6. old/stale goal and result attachments are rejected or ignored;
+6. old/stale goal and result artifacts are rejected or ignored;
 7. assistant prose is not read for control state;
 8. GitHub approvals remain manual and do not break the loop;
 9. composer exhaustion still performs a single fresh-chat handoff;
-10. the 23-minute watchdog remains recovery-only.
+10. the 23-minute watchdog remains recovery-only;
+11. an artifact-resolution failure produces a visible diagnostic instead of an unexplained permanent wait.

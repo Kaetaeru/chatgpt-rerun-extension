@@ -11,6 +11,7 @@
     'button[aria-label*="stop"]',
     'button[aria-label*="중지"]'
   ];
+
   let ticking = false;
   let generationStartedAtMs = null;
   let generationObservedActive = false;
@@ -18,6 +19,12 @@
   let approvalPausedTotalMs = 0;
   let watchdogFired = false;
   let manualStopRequested = false;
+  let activeResultBaseline = null;
+  const seenJsonAttachmentKeys = new Set();
+
+  for (const candidate of listJsonAttachmentCandidates()) {
+    seenJsonAttachmentKeys.add(candidate.key);
+  }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "RERUN_V2_PING") {
@@ -27,6 +34,16 @@
     if (message?.type === "RERUN_V2_WAKE") {
       sendResponse({ ready: true });
       void tick();
+      return;
+    }
+    if (message?.type === "RERUN_V2_SEND_DIRECT") {
+      sendDirectPrompt(String(message.prompt || ""))
+        .then(() => sendResponse({ sent: true }))
+        .catch((error) => sendResponse({
+          sent: false,
+          error: error instanceof Error ? error.message : String(error)
+        }));
+      return true;
     }
   });
 
@@ -46,6 +63,11 @@
       const state = await chrome.runtime.sendMessage({ type: "GET_CURRENT_STATE" });
       if (!state?.ok) return;
       const runtime = state.runtime || {};
+
+      if (runtime.phase === "awaiting_goal_file") {
+        await importGoalFileIfAvailable(runtime);
+        return;
+      }
 
       if (runtime.phase === "dispatching") {
         const claimedAt = Date.parse(String(runtime.dispatchClaimedAt || ""));
@@ -86,12 +108,14 @@
       const claim = await chrome.runtime.sendMessage({ type: "CLAIM_EXECUTION" });
       if (!claim?.ok || !claim.claimed) return;
       try {
+        activeResultBaseline = snapshotResultAttachmentKeys(claim.goalId);
         const startedAt = Date.now();
         await sendPrompt(composer, claim.prompt);
         const ack = await chrome.runtime.sendMessage({ type: "ACK_DISPATCH" });
         if (!ack?.ok || !ack.acknowledged) throw new Error("dispatch_ack_failed");
         armGenerationTracking(startedAt);
       } catch (error) {
+        activeResultBaseline = null;
         await chrome.runtime.sendMessage({
           type: "RELEASE_EXECUTION",
           reason: error instanceof Error ? error.message : String(error)
@@ -104,10 +128,26 @@
     }
   }
 
+  async function importGoalFileIfAvailable(runtime) {
+    const nonce = String(runtime.setupNonce || "");
+    if (!nonce) return;
+    const candidate = findNewJsonAttachment(`rerun-goal-${nonce}.json`);
+    if (!candidate) return;
+    try {
+      const value = await readJsonAttachment(candidate);
+      const response = await chrome.runtime.sendMessage({ type: "IMPORT_GOAL_FILE", value });
+      if (!response?.ok) throw new Error(response?.error || "goal_file_import_failed");
+      seenJsonAttachmentKeys.add(candidate.key);
+    } catch {
+      // File cards can appear before their download URL becomes readable. Retry on the next tick.
+    }
+  }
+
   async function observeGeneration(runtime) {
     if (generationStartedAtMs === null) {
       const persistedStart = Date.parse(String(runtime.lastSentAt || ""));
       armGenerationTracking(Number.isFinite(persistedStart) ? persistedStart : Date.now());
+      if (!activeResultBaseline) activeResultBaseline = snapshotResultAttachmentKeys(runtime.goalId);
     }
 
     const approvalCard = findGitHubApprovalCard();
@@ -148,14 +188,104 @@
       return;
     }
 
-    const assistantText = await waitForLatestAssistantResult(6_000, runtime.runId, runtime.iteration);
-    const result = parseRerunResult(assistantText);
+    const resultFile = await waitForResultFile(runtime.goalId, 10_000);
     resetGenerationTracking();
-    if (!result || result.runId !== runtime.runId || result.execution !== Number(runtime.iteration)) {
-      await chrome.runtime.sendMessage({ type: "REPORT_INTERRUPTED", reason: "missing_rerun_result" });
+    if (!resultFile) {
+      await chrome.runtime.sendMessage({ type: "REPORT_INTERRUPTED", reason: "missing_result_json" });
       return;
     }
-    await chrome.runtime.sendMessage({ type: "REPORT_RESULT", result });
+    const response = await chrome.runtime.sendMessage({ type: "REPORT_RESULT_FILE", value: resultFile.value });
+    if (!response?.ok) {
+      await chrome.runtime.sendMessage({ type: "REPORT_INTERRUPTED", reason: response?.error || "invalid_result_json" });
+      return;
+    }
+    seenJsonAttachmentKeys.add(resultFile.candidate.key);
+  }
+
+  async function waitForResultFile(goalId, timeoutMs) {
+    const startedAt = Date.now();
+    const expectedName = `rerun-result-${String(goalId || "")}.json`;
+    while (Date.now() - startedAt < timeoutMs) {
+      const candidate = findNewJsonAttachment(expectedName, activeResultBaseline);
+      if (candidate) {
+        try {
+          return { candidate, value: await readJsonAttachment(candidate) };
+        } catch {
+          // The attachment may not be readable yet.
+        }
+      }
+      await sleep(200);
+    }
+    return null;
+  }
+
+  function snapshotResultAttachmentKeys(goalId) {
+    const expectedName = `rerun-result-${String(goalId || "")}.json`;
+    return new Set(
+      listJsonAttachmentCandidates()
+        .filter((candidate) => candidate.fileName === expectedName)
+        .map((candidate) => candidate.key)
+    );
+  }
+
+  function findNewJsonAttachment(expectedName, baseline = null) {
+    for (const candidate of listJsonAttachmentCandidates()) {
+      if (candidate.fileName !== expectedName) continue;
+      if (seenJsonAttachmentKeys.has(candidate.key)) continue;
+      if (baseline?.has(candidate.key)) continue;
+      return candidate;
+    }
+    return null;
+  }
+
+  function listJsonAttachmentCandidates() {
+    const candidates = [];
+    for (const anchor of document.querySelectorAll('a[href]')) {
+      const fileName = attachmentFileName(anchor);
+      if (!fileName || !fileName.toLowerCase().endsWith(".json")) continue;
+      const href = anchor.href || anchor.getAttribute("href") || "";
+      if (!href) continue;
+      candidates.push({
+        href,
+        fileName,
+        key: `${href}|${fileName}`
+      });
+    }
+    return candidates;
+  }
+
+  function attachmentFileName(anchor) {
+    const sources = [
+      anchor.getAttribute("download"),
+      anchor.getAttribute("aria-label"),
+      anchor.textContent,
+      decodeHrefTail(anchor.getAttribute("href"))
+    ];
+    for (const source of sources) {
+      const match = String(source || "").match(/([A-Za-z0-9._-]+\.json)\b/i);
+      if (match) return match[1];
+    }
+    return "";
+  }
+
+  function decodeHrefTail(href) {
+    try {
+      const url = new URL(String(href || ""), location.href);
+      return decodeURIComponent(url.pathname.split("/").at(-1) || "");
+    } catch {
+      return String(href || "");
+    }
+  }
+
+  async function readJsonAttachment(candidate) {
+    const response = await fetch(candidate.href, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store"
+    });
+    if (!response.ok) throw new Error(`attachment_fetch_${response.status}`);
+    const text = await response.text();
+    return JSON.parse(text);
   }
 
   function armGenerationTracking(startedAtMs) {
@@ -174,44 +304,7 @@
     approvalPausedTotalMs = 0;
     watchdogFired = false;
     manualStopRequested = false;
-  }
-
-  function parseRerunResult(text) {
-    const source = String(text || "");
-    const marker = source.lastIndexOf("RERUN_RESULT");
-    if (marker < 0) return null;
-    const tail = source.slice(marker);
-    const runIdMatch = tail.match(/^run_id:\s*(\S+)\s*$/im);
-    const executionMatch = tail.match(/^execution:\s*(\d+)\s*$/im);
-    const statusMatch = tail.match(/^status:\s*(CONTINUE|COMPLETE|NEEDS_USER|CONFLICT)\s*$/im);
-    const checkpointMatch = tail.match(/^checkpoint:\s*(.+)\s*$/im);
-    if (!runIdMatch || !executionMatch || !statusMatch || !checkpointMatch) return null;
-    return {
-      runId: runIdMatch[1],
-      execution: Number(executionMatch[1]),
-      status: statusMatch[1].toUpperCase(),
-      checkpoint: checkpointMatch[1].trim().replace(/\s+/g, " ")
-    };
-  }
-
-  async function waitForLatestAssistantResult(timeoutMs, runId, execution) {
-    const startedAt = Date.now();
-    let last = "";
-    while (Date.now() - startedAt < timeoutMs) {
-      last = readLatestAssistantText();
-      const parsed = parseRerunResult(last);
-      if (parsed && parsed.runId === runId && parsed.execution === Number(execution)) return last;
-      await sleep(150);
-    }
-    return last;
-  }
-
-  function readLatestAssistantText() {
-    const nodes = Array.from(document.querySelectorAll(
-      '[data-message-author-role="assistant"], article[data-turn="assistant"]'
-    ));
-    const node = nodes.at(-1);
-    return node?.innerText || node?.textContent || "";
+    activeResultBaseline = null;
   }
 
   function findGitHubApprovalCard() {
@@ -222,12 +315,19 @@
       for (let depth = 0; node && depth < 10; depth += 1, node = node.parentElement) {
         const text = normalizeText(node.textContent);
         if (!text || text.length > 1600 || !text.includes("GitHub")) continue;
-        if (/ChatGPT가\s*GitHub.*사용하도록\s*허용할까요/i.test(text) || /allow\s+ChatGPT\s+to\s+use\s+GitHub/i.test(text)) {
-          return node;
-        }
+        if (/ChatGPT가\s*GitHub.*사용하도록\s*허용할까요/i.test(text) || /allow\s+ChatGPT\s+to\s+use\s+GitHub/i.test(text)) return node;
       }
     }
     return null;
+  }
+
+  async function sendDirectPrompt(prompt) {
+    if (!prompt.trim()) throw new Error("direct_prompt_empty");
+    if (!isChatIdle()) throw new Error("chat_is_generating");
+    const composer = findComposer() || await waitForComposer(5_000);
+    if (!composer) throw new Error("composer_unavailable");
+    if (readComposerText(composer).trim()) throw new Error("composer_not_empty");
+    await sendPrompt(composer, prompt);
   }
 
   function findComposer() {

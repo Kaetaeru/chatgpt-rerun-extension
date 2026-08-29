@@ -39,6 +39,12 @@ test("resolved JSON is exposed as a blob for the existing content protocol", () 
   assert.doesNotMatch(isolated, /REPORT_RESULT_FILE/);
 });
 
+test("artifact reader waits instead of re-exposing any processed result id", () => {
+  assert.match(isolated, /runtime\.processedResultIds/);
+  assert.match(isolated, /processedResultIds\.includes\(resultId\)/);
+  assert.match(isolated, /Waiting for a new result JSON from the active execution/);
+});
+
 test("side panel restores all readers on already-open ChatGPT tabs", () => {
   assert.match(popup, /ensureRerunScripts\(tabId\)/);
   assert.match(popup, /files: \["page-artifact-reader\.js"\]/);

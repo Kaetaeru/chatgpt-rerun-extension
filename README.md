@@ -71,7 +71,7 @@ The file includes a unique `result_id`, one of the four statuses, and a short fa
 
 Every execution must create a **fresh result artifact**, even though the filename is reused. The executor prompt explicitly requires ChatGPT to generate a new `result_id`, write the actual final status for that execution, reopen the just-written JSON to verify `goal_id`, `result_id`, `status`, and `checkpoint`, and return that newly verified attachment. If the execution is complete, the file must actually contain `"status": "COMPLETE"`.
 
-The extension snapshots matching artifacts before each dispatch and also persists a bounded run-scoped history of processed result IDs. This rejects non-consecutive replays such as `A -> B -> A`, not only the immediately previous result. The artifact reader checks that processed-ID history before exposing a generated result blob, while the background runtime remains the final validation boundary.
+The extension snapshots matching artifacts before each dispatch and also persists the full run-scoped history of processed result IDs. This rejects non-consecutive replays such as `A -> B -> A`, not only the immediately previous result. The artifact reader checks that processed-ID history before exposing a generated result blob, while the background runtime remains the final validation boundary.
 
 The content script does **not** read assistant-message prose to determine Rerun state.
 
@@ -126,7 +126,7 @@ Important runtime data includes:
 - frozen executor prompt;
 - iteration count;
 - last checkpoint / last result ID;
-- bounded processed-result ID history;
+- full-run processed-result ID history;
 - approval wait state;
 - single-use fresh-chat handoff state;
 - one-time Resume Capsule pending state.

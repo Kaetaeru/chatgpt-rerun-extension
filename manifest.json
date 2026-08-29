@@ -1,12 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "ChatGPT Rerun",
-  "version": "0.2.18",
+  "name": "ChatGPT Rerun V2",
+  "version": "2.0.0",
   "minimum_chrome_version": "116",
-  "description": "Recover exhausted chats by handing off when the current ChatGPT composer stays unavailable.",
+  "description": "Keep ChatGPT working toward one repository goal until it is complete, blocked, or needs the user.",
   "permissions": ["storage", "activeTab", "sidePanel", "scripting"],
   "host_permissions": [
-    "https://api.github.com/*",
     "https://chatgpt.com/*",
     "https://chat.openai.com/*"
   ],
@@ -15,7 +14,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "ChatGPT Rerun"
+    "default_title": "ChatGPT Rerun V2"
   },
   "side_panel": {
     "default_path": "popup.html"

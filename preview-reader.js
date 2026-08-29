@@ -54,7 +54,10 @@
       const value = await waitForPreviewJson(baseline, mode, expectedId, expectedFilename, PREVIEW_WAIT_MS);
       if (!value) throw new Error(`Found ${expectedFilename}, but no validated JSON preview appeared.`);
 
-      if (mode === "result" && String(value.result_id || "") === String(runtime.lastResultId || "")) return;
+      if (mode === "result" && String(value.result_id || "") === String(runtime.lastResultId || "")) {
+        nextAttemptAt = Date.now() + RETRY_MS;
+        return;
+      }
 
       const response = await chrome.runtime.sendMessage({
         type: mode === "goal" ? "IMPORT_GOAL_FILE" : "REPORT_RESULT_FILE",

@@ -8,7 +8,7 @@ Current development branch:
 agent/v2-goal-runner
 ```
 
-Current extension version: **2.1.6**.
+Current extension version: **2.1.7**.
 
 The previous V1 implementation remains preserved on `agent/mvp-autoresume`.
 
@@ -57,7 +57,7 @@ same executor prompt
        CONFLICT   -> pause
 ```
 
-Iteration count and checkpoint do not rewrite the normal executor prompt.
+Iteration count and checkpoint do not rewrite the stored executor prompt. The only exception is the first execution after an automatic fresh-chat handoff: Rerun may append a one-time Resume Capsule containing the previous `lastCheckpoint`. Once that dispatch is acknowledged, later executions return to the untouched frozen prompt.
 
 ## JSON result protocol
 
@@ -69,13 +69,15 @@ rerun-result-<goal_id>.json
 
 The file includes a unique `result_id`, one of the four statuses, and a short factual checkpoint.
 
-The extension snapshots matching artifacts before each dispatch and accepts only a new result produced for the active execution. Previously processed result IDs are ignored.
+Every execution must create a **fresh result artifact**, even though the filename is reused. The executor prompt explicitly requires ChatGPT to generate a new `result_id`, write the actual final status for that execution, reopen the just-written JSON to verify `goal_id`, `result_id`, `status`, and `checkpoint`, and return that newly verified attachment. If the execution is complete, the file must actually contain `"status": "COMPLETE"`.
+
+The extension snapshots matching artifacts before each dispatch and also persists a bounded run-scoped history of processed result IDs. This rejects non-consecutive replays such as `A -> B -> A`, not only the immediately previous result. The artifact reader checks that processed-ID history before exposing a generated result blob, while the background runtime remains the final validation boundary.
 
 The content script does **not** read assistant-message prose to determine Rerun state.
 
 ## Generated JSON artifact resolution
 
-V2.1.6 resolves ChatGPT-generated files through ChatGPT's authenticated file path instead of relying on a readable `sandbox:` URL, DOM-only download attributes, or automatic preview clicks.
+V2.1.7 resolves ChatGPT-generated files through ChatGPT's authenticated file path instead of relying on a readable `sandbox:` URL, DOM-only download attributes, or automatic preview clicks.
 
 The resolver has two cooperating parts:
 
@@ -91,7 +93,7 @@ For an expected `rerun-goal-<nonce>.json` or `rerun-result-<goal_id>.json`, the 
 - accepts the final content only from ChatGPT/OpenAI generated-file hosts;
 - parses at most 1 MiB of JSON.
 
-The isolated reader then exposes the parsed object as a temporary `blob:` URL attached to a hidden synthetic file node. Existing `content.js` consumes that node and continues to perform the normal nonce, goal ID, result ID and schema validation. The artifact reader therefore does not create a second Goal Runner state machine.
+The isolated reader then exposes the parsed object as a temporary `blob:` URL attached to a hidden synthetic file node. Existing `content.js` consumes that node and continues to perform the normal nonce, goal ID, result ID and schema validation. Already processed result IDs are held back instead of being re-exposed as the active execution's result. The artifact reader therefore does not create a second Goal Runner state machine.
 
 If artifact resolution fails, a separate `v2:artifact:<tabId>` diagnostic is stored. The Side Panel surfaces the exact failure as `Artifact reader: ...` instead of silently remaining at `Waiting goal JSON`.
 
@@ -124,8 +126,10 @@ Important runtime data includes:
 - frozen executor prompt;
 - iteration count;
 - last checkpoint / last result ID;
+- bounded processed-result ID history;
 - approval wait state;
-- fresh-chat handoff state.
+- single-use fresh-chat handoff state;
+- one-time Resume Capsule pending state.
 
 Artifact-reader diagnostics use a separate `v2:artifact:<tabId>` key and do not authorize runtime state transitions.
 
@@ -155,9 +159,11 @@ If a Rerun-owned generation remains active for 23 active minutes, the watchdog c
 
 ## New conversation handoff
 
-If the current conversation loses its composer, Rerun opens one fresh ChatGPT tab and transfers Goal Runner ownership once.
+If the current conversation loses its composer, Rerun may open **one** fresh ChatGPT tab and transfer Goal Runner ownership.
 
-The current implementation transfers the Goal Contract and frozen executor prompt. A later V2 milestone will inject the latest checkpoint once as a Resume Capsule on fresh-chat handoff so a new conversation can avoid unnecessary repository rediscovery without changing normal same-prompt iterations.
+The transfer carries the Goal Contract, untouched frozen executor prompt, processed-result history, and `lastCheckpoint`. When a checkpoint exists, the first execution in the new chat receives a one-time Resume Capsule so it can continue from the verified checkpoint without repeating completed work. The capsule is cleared only after dispatch acknowledgement; later iterations use the normal frozen prompt again.
+
+Automatic handoff is run-scoped and single-use. The runtime marks `handoffUsed` before creating the new tab. If handoff itself fails, Rerun pauses instead of repeatedly opening tabs. The transferred chat also has `handoffUsed=true`; if it later loses its composer, Rerun pauses as `NEEDS_USER` rather than recursively opening another chat.
 
 ## Side Panel
 
@@ -189,12 +195,15 @@ The V2 source tests cover:
 
 - goal-setup nonce binding;
 - goal JSON schema validation;
-- frozen executor prompt identity across iterations;
+- frozen executor prompt identity across normal iterations;
+- fresh result artifact instructions and explicit COMPLETE status matching;
 - result JSON validation;
+- non-consecutive processed-result replay rejection;
 - no assistant-prose control parsing;
 - new-result baseline/seen filtering;
 - authenticated MAIN-world artifact resolution and Team account context;
 - conversation/sandbox resolution plus file-ID fallback routes;
+- processed-result filtering in the artifact reader;
 - blob handoff into the existing content protocol;
 - artifact-reader reinjection for already-open ChatGPT tabs;
 - visible artifact diagnostics;
@@ -202,9 +211,10 @@ The V2 source tests cover:
 - active-tab Side Panel isolation;
 - manual Stop -> pause;
 - GitHub approval wait without auto-click;
-- missing-composer fresh-chat handoff.
+- single-use missing-composer fresh-chat handoff;
+- one-time checkpoint Resume Capsule on the first handoff dispatch.
 
-Browser E2E is still required because ChatGPT's internal authenticated file endpoints are service implementation details and may evolve.
+Browser E2E is still required because ChatGPT's internal authenticated file endpoints and page/composer behavior are service implementation details and may evolve.
 
 ## Browser test
 
@@ -215,8 +225,9 @@ Browser E2E is still required because ChatGPT's internal authenticated file endp
 5. When ChatGPT asks for the next goal, describe the desired repository outcome normally.
 6. Confirm ChatGPT creates `rerun-goal-<nonce>.json` and the Side Panel changes from `Waiting goal JSON` to `Running` automatically in the correct tab only.
 7. If it does not, record the exact `Artifact reader: ...` diagnostic shown in the Side Panel.
-8. Confirm the first executor turn creates `rerun-result-<goal_id>.json`.
+8. Confirm each executor turn creates a fresh `rerun-result-<goal_id>.json` with a new `result_id` and a status matching that turn's actual outcome.
 9. For `CONTINUE`, confirm the exact frozen executor prompt is submitted again without GitHub polling delay.
 10. Verify COMPLETE / NEEDS_USER / CONFLICT pause or stop correctly.
+11. Exercise a fresh-chat handoff and confirm the first new-chat dispatch includes the previous checkpoint once, later dispatches do not, and a second automatic handoff is not opened.
 
 See `docs/V2_GOAL_RUNNER_SPEC.md` for the full protocol.

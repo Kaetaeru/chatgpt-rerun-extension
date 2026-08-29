@@ -12,7 +12,6 @@ import {
 } from "./goal.js";
 
 const MAX_GENERATED_JSON_BYTES = 1024 * 1024;
-const MAX_PROCESSED_RESULT_IDS = 64;
 
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -272,7 +271,7 @@ async function reportResultFile(tabId, rawValue) {
   const result = normalizeResultFile(rawValue, runtime.goalId);
   const processedResultIds = normalizeProcessedResultIds(runtime);
   if (processedResultIds.includes(result.resultId)) return { ignored: true, runtime };
-  const nextProcessedResultIds = [...processedResultIds, result.resultId].slice(-MAX_PROCESSED_RESULT_IDS);
+  const nextProcessedResultIds = [...processedResultIds, result.resultId];
 
   const common = {
     ...runtime,
@@ -421,7 +420,7 @@ function normalizeProcessedResultIds(runtime) {
     : [];
   const lastResultId = String(runtime.lastResultId || "").trim();
   if (lastResultId && !ids.includes(lastResultId)) ids.push(lastResultId);
-  return ids.slice(-MAX_PROCESSED_RESULT_IDS);
+  return ids;
 }
 
 async function ensureContentScript(tabId) {

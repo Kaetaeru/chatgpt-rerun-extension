@@ -2,78 +2,54 @@
 <html lang="ko">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ChatGPT Rerun</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>ChatGPT Rerun V2</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <main>
       <header>
         <div>
-          <h1>ChatGPT Rerun</h1>
-          <p id="statusLine">Stopped</p>
+          <h1>Rerun V2</h1>
+          <p>Goal Runner</p>
         </div>
-        <span id="statusDot" aria-hidden="true"></span>
+        <span id="statusBadge">Idle</span>
       </header>
 
-      <p class="notice">Start/Stop은 현재 ChatGPT 탭의 GitHub watcher만 켜고 끕니다. GitHub의 `continue / complete / needs_user / blocked` 상태와는 독립적입니다. watcher가 켜져 있으면 terminal 상태에서도 설정된 주기로 계속 확인하고, GitHub가 다시 `continue`가 되면 자동 재개합니다.</p>
-
-      <section class="setupBox">
-        <strong>현재 채팅을 Rerun에 연결</strong>
-        <p>새 탭은 저장소 좌표를 상속하지 않고 <strong>Unconnected</strong>로 시작합니다. 연결 프롬프트는 Side Panel 값을 추측에 사용하지 않고, 이 채팅이 GitHub 앱으로 실제 사용한 repository와 branch를 확인합니다. 아직 실제 GitHub 프로젝트를 사용하지 않았다면 아무 파일도 쓰지 않고 `UNCONNECTED`라고 알려줍니다.</p>
-        <p>대상이 하나로 확인되면 Rerun 5문서를 생성/보완한 뒤 채팅에 repository, branch, control path, run/status/task, 프로젝트 목표를 연결 결과로 명확히 알려줍니다.</p>
-        <button id="connectPrompt" class="secondary wide">Rerun 연결 프롬프트</button>
+      <section class="card">
+        <label>Repository
+          <input id="repository" placeholder="owner/repo" autocomplete="off" />
+        </label>
+        <label>Branch
+          <input id="branch" placeholder="main" autocomplete="off" />
+        </label>
+        <label>Goal
+          <textarea id="goal" rows="6" placeholder="달성할 최종 목표를 적으세요."></textarea>
+        </label>
+        <label>Acceptance <span>optional</span>
+          <textarea id="acceptance" rows="4" placeholder="완료 조건. 비우면 저장소의 공식 acceptance와 관련 검증을 사용합니다."></textarea>
+        </label>
+        <label>Canonical authority <span>optional</span>
+          <textarea id="authorityPaths" rows="3" placeholder="예: AGENTS.md, docs/V1_PLAN.md, issue #123"></textarea>
+        </label>
+        <p class="hint">Rerun은 별도 프로젝트 PLAN을 만들지 않습니다. 저장소의 공식 규칙·기획이 Goal보다 우선합니다.</p>
       </section>
 
-      <section>
-        <div class="grid two">
-          <label>Owner<input id="owner" autocomplete="off" placeholder="연결 결과의 owner" /></label>
-          <label>Repository<input id="repo" autocomplete="off" placeholder="연결 결과의 repository" /></label>
-        </div>
-        <label>Branch<input id="branch" autocomplete="off" placeholder="main" /></label>
-        <input id="maxRuns" type="hidden" />
-        <label>Control file<input id="path" autocomplete="off" /></label>
-        <label>Resume prompt<textarea id="resumePrompt" rows="4"></textarea></label>
-        <div class="grid two">
-          <label>Poll seconds<input id="pollIntervalSeconds" type="number" min="5" /></label>
-          <label>Retry after seconds<input id="retryDelaySeconds" type="number" min="10" /></label>
-        </div>
-        <div class="grid two">
-          <label>Retries / sequence<input id="maxRetriesPerSequence" type="number" min="0" max="10" /></label>
-          <label>GitHub token <span class="muted">optional · recommended</span><input id="githubToken" type="password" autocomplete="off" /></label>
-        </div>
-        <label class="checkboxRow"><input id="approvalAwareResume" type="checkbox" /> GitHub 승인 후 자동 계속</label>
-        <p class="hint">켜면 ChatGPT의 GitHub 작업 승인 카드가 보이는 동안 Rerun의 polling/재전송을 잠시 멈춥니다. 승인 버튼은 자동으로 누르지 않습니다. 사용자가 직접 승인한 뒤 카드가 사라지면 자동으로 계속합니다. 변경 후 Save connection을 눌러 적용하세요.</p>
-        <p class="hint">Rerun은 전체 작업의 send 횟수를 제한하지 않습니다. 동일한 control generation이 바뀌지 않은 채 반복 전송되는 경우에만 `Retries / sequence` 안전장치가 적용됩니다.</p>
-        <p class="hint">GitHub token을 넣으면 인증된 conditional polling을 사용해 5초까지 빠르게 감시할 수 있습니다. 토큰이 없으면 GitHub의 60회/시간 비인증 한도를 넘지 않도록 watcher 수에 따라 polling을 자동으로 느리게 조정합니다. GitHub가 rate limit을 반환해도 watcher는 꺼지지 않고 reset/retry 시각까지 자동 대기한 뒤 다시 시작합니다.</p>
-        <p class="hint">처음에는 Owner / Repository / Branch가 비어 있는 것이 정상입니다. `Rerun 연결 프롬프트`가 채팅에 출력한 CONNECTED 결과를 확인한 뒤 그 좌표를 입력하고 Save한 다음 Start해서 watcher를 켭니다. 같은 GitHub control stream은 동시에 한 탭만 감시할 수 있습니다. 표준 control이 없는 저장소에서 좌표를 직접 입력하고 Start한 경우의 자동 bootstrap은 fallback으로 유지됩니다.</p>
-      </section>
-
-      <section class="runtime">
-        <div><span>Chrome tab</span><strong id="tabId">-</strong></div>
-        <div><span>Repository connection</span><strong id="connectionState">Unconnected</strong></div>
-        <div><span>Tab watcher</span><strong id="tabWatcher">Stopped</strong></div>
+      <section class="runtime card">
+        <div><span>Status</span><strong id="runtimeStatus">Idle</strong></div>
+        <div><span>Iteration</span><strong id="iteration">0</strong></div>
         <div><span>Run</span><strong id="runId">-</strong></div>
-        <div><span>Sequence</span><strong id="sequence">-</strong></div>
-        <div><span>GitHub work status</span><strong id="githubStatus">-</strong></div>
-        <div><span>GitHub approvals</span><strong id="approvalMode">Manual</strong></div>
-        <div><span>Sent</span><strong id="runCount">0</strong></div>
-        <div><span>Same-sequence retries</span><strong id="retryCount">0</strong></div>
-        <div><span>Last sent</span><strong id="lastSentAt">-</strong></div>
-        <div><span>API polling</span><strong id="apiPolling">-</strong></div>
-      </section>
-
-      <section class="handoffBox">
-        <strong>대화 컨텍스트가 부족할 때</strong>
-        <p>현재 대화가 너무 길어졌거나 더 이상 이어가기 어렵다면 새 ChatGPT 탭을 열고 같은 GitHub run/sequence에서 재개합니다. 이전 대화 본문은 복사하지 않고 GitHub STATE를 source of truth로 사용합니다.</p>
-        <button id="handoff" class="secondary wide">Continue in new chat</button>
+        <div><span>Approval</span><strong id="approval">-</strong></div>
+        <div class="wide"><span>Last checkpoint</span><strong id="checkpoint">-</strong></div>
       </section>
 
       <p id="errorBox" class="error" hidden></p>
 
       <footer>
-        <button id="save" class="secondary">Save connection</button>
-        <button id="sessionToggle" class="primary" aria-label="Start GitHub watcher on this tab" aria-pressed="false">Start</button>
+        <button id="save" class="secondary">Save</button>
+        <button id="pause" class="secondary">Pause</button>
+        <button id="stop" class="danger">Stop</button>
+        <button id="start" class="primary">Start</button>
       </footer>
     </main>
     <script type="module" src="popup.js"></script>

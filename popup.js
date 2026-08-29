@@ -3,15 +3,13 @@ const setupButton = document.getElementById("setupGoal");
 const resumeButton = document.getElementById("resume");
 const pauseButton = document.getElementById("pause");
 const stopButton = document.getElementById("stop");
-let tabId = null;
 
-const tab = await getActiveChatTab();
-tabId = tab.id;
 await refresh();
 setInterval(() => void refresh(), 1000);
 
 setupButton.addEventListener("click", async () => {
   try {
+    const tabId = await getActiveChatTabId();
     const response = await chrome.runtime.sendMessage({ type: "BEGIN_GOAL_SETUP", tabId });
     if (!response?.ok) throw new Error(response?.error || "Goal setup failed");
     await refresh();
@@ -22,6 +20,7 @@ setupButton.addEventListener("click", async () => {
 
 resumeButton.addEventListener("click", async () => {
   try {
+    const tabId = await getActiveChatTabId();
     const response = await chrome.runtime.sendMessage({ type: "RESUME_GOAL", tabId });
     if (!response?.ok) throw new Error(response?.error || "Resume failed");
     await refresh();
@@ -32,6 +31,7 @@ resumeButton.addEventListener("click", async () => {
 
 pauseButton.addEventListener("click", async () => {
   try {
+    const tabId = await getActiveChatTabId();
     const response = await chrome.runtime.sendMessage({ type: "PAUSE_GOAL", tabId });
     if (!response?.ok) throw new Error(response?.error || "Pause failed");
     await refresh();
@@ -42,6 +42,7 @@ pauseButton.addEventListener("click", async () => {
 
 stopButton.addEventListener("click", async () => {
   try {
+    const tabId = await getActiveChatTabId();
     const response = await chrome.runtime.sendMessage({ type: "STOP_GOAL", tabId });
     if (!response?.ok) throw new Error(response?.error || "Stop failed");
     await refresh();
@@ -51,34 +52,39 @@ stopButton.addEventListener("click", async () => {
 });
 
 async function refresh() {
-  const state = await getState();
-  const { config, runtime } = state;
+  try {
+    const tabId = await getActiveChatTabId();
+    const state = await getState(tabId);
+    const { config, runtime } = state;
 
-  setText("repository", config.repository || "-");
-  setText("branch", config.branch || "-");
-  setText("goal", config.goal || "아직 목표가 없습니다.");
-  setText("acceptance", config.acceptance || "-");
-  setText("authorityPaths", config.authorityPaths || "-");
-  setText("runtimeStatus", runtime.status || "idle");
-  setText("statusBadge", displayStatus(runtime));
-  setText("iteration", String(runtime.iteration || 0));
-  setText("runId", runtime.runId || "-");
-  setText("goalId", runtime.goalId || "-");
-  setText("approval", runtime.waitingApproval ? "Waiting for manual approval" : "-");
-  setText("lastResult", runtime.lastResult || "-");
-  setText("checkpoint", runtime.lastCheckpoint || "-");
+    setText("repository", config.repository || "-");
+    setText("branch", config.branch || "-");
+    setText("goal", config.goal || "아직 목표가 없습니다.");
+    setText("acceptance", config.acceptance || "-");
+    setText("authorityPaths", config.authorityPaths || "-");
+    setText("runtimeStatus", runtime.status || "idle");
+    setText("statusBadge", displayStatus(runtime));
+    setText("iteration", String(runtime.iteration || 0));
+    setText("runId", runtime.runId || "-");
+    setText("goalId", runtime.goalId || "-");
+    setText("approval", runtime.waitingApproval ? "Waiting for manual approval" : "-");
+    setText("lastResult", runtime.lastResult || "-");
+    setText("checkpoint", runtime.lastCheckpoint || "-");
 
-  const busy = ["dispatching", "generating"].includes(runtime.phase);
-  setupButton.disabled = busy;
-  resumeButton.disabled = !runtime.runId || !["paused", "needs_user", "conflict", "stopped"].includes(runtime.status);
-  pauseButton.disabled = !runtime.enabled;
-  stopButton.disabled = !runtime.runId || runtime.status === "stopped";
+    const busy = ["dispatching", "generating"].includes(runtime.phase);
+    setupButton.disabled = busy;
+    resumeButton.disabled = !runtime.runId || !["paused", "needs_user", "conflict", "stopped"].includes(runtime.status);
+    pauseButton.disabled = !runtime.enabled;
+    stopButton.disabled = !runtime.runId || runtime.status === "stopped";
 
-  if (runtime.lastError) showError(runtime.lastError);
-  else hideError();
+    if (runtime.lastError) showError(runtime.lastError);
+    else hideError();
+  } catch (error) {
+    showError(error);
+  }
 }
 
-async function getState() {
+async function getState(tabId) {
   const response = await chrome.runtime.sendMessage({ type: "GET_TAB_STATE", tabId });
   if (!response?.ok) throw new Error(response?.error || "Could not load Rerun V2 state.");
   return response;
@@ -93,6 +99,10 @@ function displayStatus(runtime) {
 
 function setText(id, value) {
   document.getElementById(id).textContent = value;
+}
+
+async function getActiveChatTabId() {
+  return (await getActiveChatTab()).id;
 }
 
 async function getActiveChatTab() {

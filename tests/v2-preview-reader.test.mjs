@@ -19,6 +19,12 @@ test("file-id-only cards remain readable through ChatGPT preview", () => {
   assert.match(preview, /readValidatedPreviewJson/);
 });
 
+test("friendly link labels still match JSON files by sandbox href filename", () => {
+  assert.match(preview, /filenameFromHref\(node\.getAttribute\?\.\("href"\)\)/);
+  assert.match(preview, /raw\.startsWith\("sandbox:"\)/);
+  assert.match(preview, /path\.split\("\/"\)\.pop\(\)/);
+});
+
 test("goal preview is nonce-bound before import", () => {
   assert.match(preview, /value\.kind !== "chatgpt-rerun-goal"/);
   assert.match(preview, /value\.setup_nonce/);

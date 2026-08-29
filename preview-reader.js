@@ -183,12 +183,27 @@
       if (!isVisible(node)) continue;
       const labels = [
         node.getAttribute?.("download"), node.getAttribute?.("title"), node.getAttribute?.("aria-label"),
-        node.getAttribute?.("data-filename"), node.getAttribute?.("data-file-name"), normalizeText(node.textContent)
+        node.getAttribute?.("data-filename"), node.getAttribute?.("data-file-name"),
+        filenameFromHref(node.getAttribute?.("href")), normalizeText(node.textContent)
       ].map((value) => normalizeText(value).toLowerCase()).filter(Boolean);
       if (!labels.some((label) => label === wanted || label.includes(wanted))) continue;
       matches.push(node);
     }
     return matches.at(-1) || null;
+  }
+
+  function filenameFromHref(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    try {
+      if (raw.startsWith("sandbox:")) {
+        const path = raw.slice("sandbox:".length).split(/[?#]/, 1)[0];
+        return decodeURIComponent(path.split("/").pop() || "");
+      }
+      return decodeURIComponent(new URL(raw, location.href).pathname.split("/").pop() || "");
+    } catch {
+      return "";
+    }
   }
 
   function chooseClickTarget(node) {

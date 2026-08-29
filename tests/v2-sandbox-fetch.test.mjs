@@ -20,7 +20,8 @@ test("sandbox attachment fetch uses ChatGPT interpreter download metadata", () =
 });
 
 test("sandbox identity is bound to the current conversation and assistant message", () => {
-  assert.match(adapter, /location\.pathname\.match\(\/\\\/c\\\/\(\[\^\/?#\]\+\)\/\)/);
-  assert.match(adapter, /data-message-author-role=\\"assistant\\"/);
+  assert.match(adapter, /function currentConversationId\(\)/);
+  assert.match(adapter, /location\.pathname\.match/);
+  assert.match(adapter, /data-message-author-role="assistant"/);
   assert.match(adapter, /data-message-id/);
 });

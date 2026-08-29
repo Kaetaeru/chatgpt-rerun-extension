@@ -138,7 +138,7 @@ Allowed statuses:
 
 Every execution must create a fresh result artifact even though the filename is reused. ChatGPT must generate a new `result_id`, write the actual final status for that execution, reopen/verify the newly written JSON, and return the attachment belonging to that newly verified file. A completed execution must contain `"status": "COMPLETE"`; an older attachment with the same filename must never be relinked as the current result.
 
-The extension validates the file structure and active `goal_id`. It keeps a bounded run-scoped history of processed `result_id` values in addition to attachment identity tracking, so a non-consecutive replay such as `A -> B -> A` is rejected instead of becoming current again. The artifact reader also refuses to re-expose already processed result IDs.
+The extension validates the file structure and active `goal_id`. It keeps the full run-scoped history of processed `result_id` values in addition to attachment identity tracking, so a non-consecutive replay such as `A -> B -> A` is rejected instead of becoming current again. The artifact reader also refuses to re-expose already processed result IDs.
 
 ### Result behavior
 
@@ -153,7 +153,7 @@ The extension validates the file structure and active `goal_id`. It keeps a boun
 
 A ChatGPT-generated file may be represented in assistant output by a `sandbox:/mnt/data/...` link that is not itself fetchable by an extension content script. Rerun therefore does not treat the visible sandbox URL or a preview DOM as the source of truth for file bytes.
 
-V2.1.6 uses an authenticated artifact resolver:
+V2.1.7 uses an authenticated artifact resolver:
 
 1. `page-artifact-reader.js` runs in the page `MAIN` world.
 2. It reads the logged-in ChatGPT session and obtains the current access token plus the account ID when the session exposes one.
@@ -165,7 +165,7 @@ V2.1.6 uses an authenticated artifact resolver:
 
 This preserves one validation/state-transition path: the artifact resolver obtains bytes, while existing V2 normalization still decides whether a goal/result is valid.
 
-For execution results, the extension snapshots matching attachment identities before dispatch and remembers processed `result_id` values for the run so an older result cannot be accepted as the new execution's response.
+For execution results, the extension snapshots matching attachment identities before dispatch and remembers processed `result_id` values for the full run so an older result cannot be accepted as the new execution's response.
 
 Artifact resolution failures are diagnostic only and are stored separately at `v2:artifact:<tabId>`. They do not authorize state transitions. The Side Panel shows an exact `Artifact reader: ...` error instead of silently displaying `Waiting goal JSON` forever.
 

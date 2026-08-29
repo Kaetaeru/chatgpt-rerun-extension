@@ -3,6 +3,7 @@ const setupButton = document.getElementById("setupGoal");
 const resumeButton = document.getElementById("resume");
 const pauseButton = document.getElementById("pause");
 const stopButton = document.getElementById("stop");
+const ensuredScriptTabs = new Set();
 
 await refresh();
 setInterval(() => void refresh(), 1000);
@@ -10,6 +11,7 @@ setInterval(() => void refresh(), 1000);
 setupButton.addEventListener("click", async () => {
   try {
     const tabId = await getActiveChatTabId();
+    await ensureRerunScripts(tabId);
     const response = await chrome.runtime.sendMessage({ type: "BEGIN_GOAL_SETUP", tabId });
     if (!response?.ok) throw new Error(response?.error || "Goal setup failed");
     await refresh();
@@ -21,6 +23,7 @@ setupButton.addEventListener("click", async () => {
 resumeButton.addEventListener("click", async () => {
   try {
     const tabId = await getActiveChatTabId();
+    await ensureRerunScripts(tabId);
     const response = await chrome.runtime.sendMessage({ type: "RESUME_GOAL", tabId });
     if (!response?.ok) throw new Error(response?.error || "Resume failed");
     await refresh();
@@ -56,6 +59,9 @@ async function refresh() {
     const tabId = await getActiveChatTabId();
     const state = await getState(tabId);
     const { config, runtime } = state;
+    if (["awaiting_goal_file", "ready", "dispatching", "generating"].includes(runtime.phase)) {
+      await ensureRerunScripts(tabId);
+    }
     const artifactDiagnostic = await getArtifactDiagnostic(tabId, runtime);
 
     setText("repository", config.repository || "-");
@@ -84,6 +90,20 @@ async function refresh() {
   } catch (error) {
     showError(error);
   }
+}
+
+async function ensureRerunScripts(tabId) {
+  if (ensuredScriptTabs.has(tabId)) return;
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["page-artifact-reader.js"],
+    world: "MAIN"
+  });
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["content.js", "artifact-reader.js"]
+  });
+  ensuredScriptTabs.add(tabId);
 }
 
 async function getState(tabId) {

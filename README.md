@@ -8,7 +8,7 @@ Current development branch:
 agent/v2-goal-runner
 ```
 
-Current extension version: **2.1.1**.
+Current extension version: **2.1.3**.
 
 The previous V1 implementation remains preserved on `agent/mvp-autoresume`.
 
@@ -72,6 +72,26 @@ The file includes a unique `result_id`, one of the four statuses, and a short fa
 The extension snapshots matching attachments before each dispatch and accepts only a new result attachment produced after that dispatch. Previously seen attachments are ignored.
 
 The content script does **not** read assistant-message prose to determine Rerun state.
+
+## Generated JSON file capture
+
+V2.1.3 uses the file-card handoff pattern already proven by Patient Oracle.
+
+A visible `sandbox:/mnt/data/...` link is treated only as one hint exposed by the ChatGPT file card. Rerun does not attempt to interpret or fetch the sandbox URL itself.
+
+Instead the content script searches the matching file card and its nearby DOM for the actual generated-file URL exposed through links or attributes such as:
+
+- `href` / `download`;
+- `data-download-url`;
+- `data-file-url`;
+- `data-url`;
+- `data-href` / `data-src`.
+
+It also checks child elements and nearby parents because ChatGPT may place the filename and the real download URL on different elements of the same file card.
+
+Fetchable HTTPS URLs are handed to the extension background worker. The worker accepts only HTTPS URLs on ChatGPT/OpenAI generated-file hosts (`chatgpt.com`, `chat.openai.com`, and `*.oaiusercontent.com`), fetches the JSON, and returns the parsed object to the tab. Blob URLs can still be read directly by the content script.
+
+This replaces the removed V2.1.2 sandbox-specific adapter.
 
 ## Authority rule
 
@@ -158,7 +178,7 @@ npm test
 
 `npm test` runs only `tests/v2-*.test.mjs` on the V2 branch.
 
-The V2.1 source tests cover:
+The V2 source tests cover:
 
 - goal-setup nonce binding;
 - goal JSON schema validation;
@@ -166,13 +186,14 @@ The V2.1 source tests cover:
 - result JSON validation;
 - no assistant-prose control parsing;
 - new-attachment baseline/seen filtering;
+- Patient Oracle-style generated-file URL discovery and background handoff;
 - immediate `CONTINUE -> ready` transition;
 - active-tab Side Panel isolation;
 - manual Stop -> pause;
 - GitHub approval wait without auto-click;
 - missing-composer fresh-chat handoff.
 
-The implementation snapshot used for V2.1 passed syntax checks and the V2 JSON protocol test suite locally. Browser E2E is still required because ChatGPT's live file-card DOM and attachment URL behavior must be observed directly.
+Browser E2E is still required because ChatGPT's live file-card DOM and generated download URL behavior must be observed directly.
 
 ## Browser test
 

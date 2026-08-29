@@ -70,10 +70,14 @@
         throw new Error("generated_json_payload_missing");
       }
 
-      if (mode === "result" && String(value.value.result_id || "") === String(runtime.lastResultId || "")) {
-        await writeDiagnostic(mode, expectedId, "waiting", "Waiting for a new result JSON from the active execution.");
-        nextAttemptAt = Date.now() + RETRY_MS;
-        return;
+      if (mode === "result") {
+        const resultId = String(value.value.result_id || "");
+        const processedResultIds = Array.isArray(runtime.processedResultIds) ? runtime.processedResultIds : [];
+        if (resultId && (resultId === String(runtime.lastResultId || "") || processedResultIds.includes(resultId))) {
+          await writeDiagnostic(mode, expectedId, "waiting", "Waiting for a new result JSON from the active execution.");
+          nextAttemptAt = Date.now() + RETRY_MS;
+          return;
+        }
       }
 
       exposeBlob(expectedFilename, value.value);

@@ -22,10 +22,6 @@
   let activeResultBaseline = null;
   const seenJsonAttachmentKeys = new Set();
 
-  for (const candidate of listJsonAttachmentCandidates()) {
-    seenJsonAttachmentKeys.add(candidate.key);
-  }
-
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "RERUN_V2_PING") {
       sendResponse({ ready: true });

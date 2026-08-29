@@ -2,6 +2,7 @@ import {
   DEFAULT_CONFIG,
   DEFAULT_RUNTIME,
   buildExecutorPrompt,
+  buildFreshChatResumePrompt,
   buildGoalSetupPrompt,
   normalizeGoalFile,
   normalizeResultFile,
@@ -11,6 +12,7 @@ import {
 } from "./goal.js";
 
 const MAX_GENERATED_JSON_BYTES = 1024 * 1024;
+const MAX_PROCESSED_RESULT_IDS = 64;
 
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -223,6 +225,9 @@ async function claimExecution(tabId) {
   }
   validateConfig(config);
   if (!runtime.frozenPrompt || !runtime.goalId) throw new Error("Goal executor prompt is unavailable.");
+  const prompt = runtime.resumeCapsulePending
+    ? buildFreshChatResumePrompt(runtime.frozenPrompt, runtime.lastCheckpoint)
+    : runtime.frozenPrompt;
   const next = {
     ...runtime,
     phase: "dispatching",
@@ -230,7 +235,7 @@ async function claimExecution(tabId) {
     lastError: null
   };
   await chrome.storage.local.set({ [tabRuntimeKey(tabId)]: next });
-  return { claimed: true, prompt: runtime.frozenPrompt, goalId: runtime.goalId };
+  return { claimed: true, prompt, goalId: runtime.goalId };
 }
 
 async function ackDispatch(tabId) {
@@ -242,7 +247,8 @@ async function ackDispatch(tabId) {
     iteration: Number(runtime.iteration || 0) + 1,
     lastSentAt: new Date().toISOString(),
     dispatchClaimedAt: null,
-    waitingApproval: false
+    waitingApproval: false,
+    resumeCapsulePending: false
   };
   await chrome.storage.local.set({ [tabRuntimeKey(tabId)]: next });
   return { acknowledged: true, runtime: next };
@@ -264,13 +270,16 @@ async function reportResultFile(tabId, rawValue) {
   const { runtime } = await getTabState(tabId);
   if (!runtime.runId || !runtime.goalId) throw new Error("No active Goal Runner exists.");
   const result = normalizeResultFile(rawValue, runtime.goalId);
-  if (result.resultId === runtime.lastResultId) return { ignored: true, runtime };
+  const processedResultIds = normalizeProcessedResultIds(runtime);
+  if (processedResultIds.includes(result.resultId)) return { ignored: true, runtime };
+  const nextProcessedResultIds = [...processedResultIds, result.resultId].slice(-MAX_PROCESSED_RESULT_IDS);
 
   const common = {
     ...runtime,
     lastCheckpoint: result.checkpoint,
     lastResult: result.status,
     lastResultId: result.resultId,
+    processedResultIds: nextProcessedResultIds,
     lastError: null,
     waitingApproval: false,
     dispatchClaimedAt: null
@@ -320,9 +329,22 @@ async function setApprovalWait(tabId, waiting) {
 async function handoffToNewChat(oldTabId) {
   const { config, runtime } = await getTabState(oldTabId);
   if (!runtime.enabled || runtime.handoffPending) return { handedOff: false, reason: "not_active" };
+  if (runtime.handoffUsed || runtime.handoffFromTabId !== null) {
+    const next = {
+      ...runtime,
+      enabled: false,
+      status: "needs_user",
+      phase: "paused",
+      handoffPending: false,
+      handoffUsed: true,
+      lastError: "Fresh-chat handoff was already used for this run. Resume manually instead of opening another automatic chat."
+    };
+    await chrome.storage.local.set({ [tabRuntimeKey(oldTabId)]: next });
+    return { handedOff: false, reason: "handoff_already_used", runtime: next };
+  }
 
   await chrome.storage.local.set({
-    [tabRuntimeKey(oldTabId)]: { ...runtime, handoffPending: true }
+    [tabRuntimeKey(oldTabId)]: { ...runtime, handoffPending: true, handoffUsed: true }
   });
 
   let transferred = false;
@@ -339,8 +361,10 @@ async function handoffToNewChat(oldTabId) {
       phase: "ready",
       waitingApproval: false,
       handoffPending: false,
+      handoffUsed: true,
       handoffFromTabId: oldTabId,
       handoffToTabId: null,
+      resumeCapsulePending: Boolean(String(runtime.lastCheckpoint || "").trim()),
       dispatchClaimedAt: null,
       lastError: null
     };
@@ -353,6 +377,7 @@ async function handoffToNewChat(oldTabId) {
         status: "handed_off",
         phase: "idle",
         handoffPending: false,
+        handoffUsed: true,
         handoffToTabId: newTab.id
       }
     });
@@ -363,7 +388,15 @@ async function handoffToNewChat(oldTabId) {
     if (!transferred) {
       const { runtime: latest } = await getTabState(oldTabId);
       await chrome.storage.local.set({
-        [tabRuntimeKey(oldTabId)]: { ...latest, handoffPending: false }
+        [tabRuntimeKey(oldTabId)]: {
+          ...latest,
+          enabled: false,
+          status: "needs_user",
+          phase: "paused",
+          handoffPending: false,
+          handoffUsed: true,
+          lastError: "Fresh-chat handoff failed. Resume manually; Rerun will not open another automatic chat for this run."
+        }
       });
     }
   }
@@ -380,6 +413,15 @@ async function findConflictingRun(tabId, config) {
     if (otherConfig.repository === config.repository && otherConfig.branch === config.branch) return otherTabId;
   }
   return null;
+}
+
+function normalizeProcessedResultIds(runtime) {
+  const ids = Array.isArray(runtime.processedResultIds)
+    ? runtime.processedResultIds.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+  const lastResultId = String(runtime.lastResultId || "").trim();
+  if (lastResultId && !ids.includes(lastResultId)) ids.push(lastResultId);
+  return ids.slice(-MAX_PROCESSED_RESULT_IDS);
 }
 
 async function ensureContentScript(tabId) {

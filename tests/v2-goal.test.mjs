@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildExecutorPrompt,
+  buildFreshChatResumePrompt,
   buildGoalSetupPrompt,
   normalizeGoalFile,
   normalizeResultFile
@@ -34,7 +35,7 @@ test("goal file is accepted only for the active setup request", () => {
   assert.throws(() => normalizeGoalFile(value, "different"), /does not match/);
 });
 
-test("executor prompt is frozen across iterations and requires result JSON", () => {
+test("executor prompt stays frozen and requires a fresh verified result artifact", () => {
   const config = {
     repository: "Kaetaeru/SimpleVTT",
     branch: "work/v1-composite",
@@ -47,8 +48,20 @@ test("executor prompt is frozen across iterations and requires result JSON", () 
   assert.equal(first, later);
   assert.match(first, /repository-native authoritative instructions, plans, specifications, and acceptance criteria override the Rerun goal/i);
   assert.match(first, /rerun-result-goal-abc\.json/);
-  assert.match(first, /"kind": "chatgpt-rerun-result"/);
+  assert.match(first, /fresh result artifact for this execution/i);
+  assert.match(first, /never reuse, relink, or return a result artifact from a previous execution/i);
+  assert.match(first, /JSON MUST contain "status": "COMPLETE"/);
+  assert.match(first, /reopen it and verify that goal_id, result_id, status, and checkpoint/i);
   assert.doesNotMatch(first, /RERUN_RESULT\n/);
+});
+
+test("fresh-chat resume capsule is one-time material layered over the frozen prompt", () => {
+  const frozen = "FROZEN EXECUTOR";
+  const resumed = buildFreshChatResumePrompt(frozen, "  finished A   next B  ");
+  assert.match(resumed, /^FROZEN EXECUTOR/);
+  assert.match(resumed, /FRESH-CHAT RESUME CAPSULE/);
+  assert.match(resumed, /finished A next B/);
+  assert.equal(buildFreshChatResumePrompt(frozen, ""), frozen);
 });
 
 test("result file is validated by goal id and structured status", () => {

@@ -1,63 +1,88 @@
 # ChatGPT Rerun V2
 
-Rerun V2 is a Chrome extension that keeps a ChatGPT conversation working toward one repository goal until the goal is complete, needs the user, or conflicts with repository authority.
+Rerun V2 is a Chrome extension that keeps ChatGPT working toward one repository goal until that goal is complete, needs the user, or conflicts with repository authority.
 
-V2 is intentionally different from V1:
-
-- GitHub control polling is not the normal execution scheduler.
-- Target repositories do not need a Rerun-authored `PLAN.md`.
-- Successful iterations are driven by assistant completion, not retry timers.
-- The repository's own instructions/specifications remain authoritative over the Rerun goal.
-
-The previous V1 implementation remains preserved on `agent/mvp-autoresume`.
-
-## Branch
-
-Current V2 development branch:
+Current development branch:
 
 ```text
 agent/v2-goal-runner
 ```
 
-## Goal Loop
+Current extension version: **2.1.0**.
+
+The previous V1 implementation remains preserved on `agent/mvp-autoresume`.
+
+## Why V2 is different
+
+V2 deliberately removes the V1 behavior that made GitHub Rerun bookkeeping compete with the actual project:
+
+- GitHub control polling is not the normal execution scheduler.
+- Target repositories do not need a Rerun-authored `PLAN.md`.
+- There is no normal sequence / same-sequence retry cadence.
+- Repository-native plans, specs, issues and acceptance criteria remain authoritative over the Rerun Goal.
+- Rerun does not repeatedly ask ChatGPT to rediscover HEAD/history just to decide whether another turn should start.
+- Assistant prose is not used as the machine control protocol.
+
+## Goal setup
+
+The Side Panel has one primary entry point: **목표 세우기**.
 
 ```text
-Goal
-  -> executor prompt
+목표 세우기
+   ↓
+Rerun sends a goal-authoring prompt
+   ↓
+User's next message describes the desired outcome
+   ↓
+ChatGPT creates rerun-goal-<nonce>.json
+   ↓
+Extension validates and imports it automatically
+   ↓
+Goal Runner starts
+```
+
+The goal JSON contains repository, branch, goal, acceptance criteria and known canonical authority references. It is bound to the active setup request by a random nonce, so an older goal attachment cannot silently replace the new goal.
+
+## Goal loop
+
+After the goal JSON is accepted, Rerun creates one **frozen executor prompt** and reuses that exact prompt for normal iterations.
+
+```text
+same executor prompt
   -> ChatGPT works and verifies one useful increment
-  -> RERUN_RESULT
-       CONTINUE   -> immediately run again
+  -> rerun-result-<goal_id>.json
+       CONTINUE   -> immediately run the same prompt again
        COMPLETE   -> stop
        NEEDS_USER -> pause
        CONFLICT   -> pause
 ```
 
-The executor contract stays stable across iterations. Only the compact resume checkpoint changes.
+Iteration count and checkpoint do not rewrite the normal executor prompt.
+
+## JSON result protocol
+
+Every Rerun-owned execution is asked to create a downloadable UTF-8 JSON file named:
+
+```text
+rerun-result-<goal_id>.json
+```
+
+The file includes a unique `result_id`, one of the four statuses, and a short factual checkpoint.
+
+The extension snapshots matching attachments before each dispatch and accepts only a new result attachment produced after that dispatch. Previously seen attachments are ignored.
+
+The content script does **not** read assistant-message prose to determine Rerun state.
 
 ## Authority rule
 
 Highest authority first:
 
 1. current explicit user instruction;
-2. repository-native instructions, plans/specs and acceptance criteria;
-3. the Rerun Goal;
+2. repository-native instructions, plans/specifications and acceptance criteria;
+3. the Rerun Goal Contract;
 4. Rerun execution mechanics.
 
-Rerun must not invent a second project plan to resolve a conflict. If the goal and repository authority disagree, the iteration must end with `CONFLICT`.
-
-## Structured result
-
-Every Rerun-owned execution is asked to end with:
-
-```text
-RERUN_RESULT
-run_id: <current run id>
-execution: <current execution number>
-status: CONTINUE|COMPLETE|NEEDS_USER|CONFLICT
-checkpoint: <one concise factual line>
-```
-
-Run ID and execution number prevent an older assistant result from being mistaken for the current turn.
+Rerun must not invent a second project plan to resolve a conflict. If the goal and repository authority disagree, the result must be `CONFLICT` and the loop pauses.
 
 ## Runtime state
 
@@ -68,93 +93,89 @@ v2:config:<tabId>
 v2:runtime:<tabId>
 ```
 
-The extension stores the Goal, repository/branch, iteration count and last checkpoint locally. Normal cadence does not require repository-side Rerun `sequence`, `updated_at`, retry counters, or `control.json`.
+Important runtime data includes:
 
-## New conversation handoff
+- run ID / goal ID;
+- pending goal-setup nonce;
+- frozen executor prompt;
+- iteration count;
+- last checkpoint / last result ID;
+- approval wait state;
+- fresh-chat handoff state.
 
-If a valid Goal is ready but the current ChatGPT composer stays unavailable, Rerun opens one fresh ChatGPT tab, transfers Goal Runner ownership, and submits the same executor contract with the latest checkpoint.
+Normal cadence does not require repository-side Rerun `control.json`.
 
-It does not recursively open more tabs if a handoff itself fails.
+## GitHub approvals
+
+The V2 MVP currently lets ChatGPT use its connected GitHub app for repository work.
+
+Rerun may detect a visible GitHub action-confirmation card so it can pause its own loop and show `Waiting approval`, but it **does not click or synthetically approve** the card. After manual approval, the same execution can continue.
+
+HTML/DOM manipulation cannot grant the underlying permission. A future Direct GitHub transport can use credentials explicitly granted to Rerun, but that is a separate authentication path, not an approval bypass.
 
 ## 20 / 23 minute behavior
 
 The executor contract tells ChatGPT to finish/checkpoint within the normal 20-minute execution budget.
 
-If a Rerun-owned generation remains active for 23 active minutes, the browser watchdog clicks ChatGPT Stop once and treats the turn as interrupted. The Goal can then run again from the last verified checkpoint.
+If a Rerun-owned generation remains active for 23 active minutes, the watchdog clicks ChatGPT Stop once and treats the turn as interrupted. GitHub approval waiting time is excluded from the watchdog budget.
 
-Time spent waiting on a visible GitHub approval card is excluded from the watchdog budget.
+## New conversation handoff
 
-## GitHub approval behavior
+If the current conversation loses its composer, Rerun opens one fresh ChatGPT tab and transfers Goal Runner ownership once.
 
-The V2 MVP currently uses ChatGPT's connected GitHub app for repository work.
-
-Rerun may detect a visible GitHub action-confirmation card so it can pause its own loop and display `Waiting approval`, but it **does not click or synthetically approve** the card. After the user approves manually, the same ChatGPT execution can continue.
-
-HTML/DOM manipulation cannot grant the underlying ChatGPT/GitHub permission. Hiding or replacing the visible card would not change the service-side authorization decision.
-
-A future **Direct GitHub transport** may connect the extension to GitHub separately through credentials explicitly granted to Rerun. That is a separate integration rather than an approval-card bypass. It is intentionally deferred until Goal Loop browser behavior is proven because safe direct writes require credential handling, patch validation, conflict detection and branch-protection handling.
-
-See `docs/V2_GOAL_RUNNER_SPEC.md` for the full architecture.
+The current implementation transfers the Goal Contract and frozen executor prompt. A later V2 milestone will inject the latest checkpoint once as a Resume Capsule on fresh-chat handoff so a new conversation can avoid unnecessary repository rediscovery without changing normal same-prompt iterations.
 
 ## Side Panel
 
-The V2 panel asks for:
+The panel shows:
 
-- Repository (`owner/repo`)
-- Branch
-- Goal
-- optional acceptance criteria
-- optional canonical authority references
+- **목표 세우기**;
+- repository / branch loaded from goal JSON;
+- goal / acceptance / canonical authority;
+- status / iteration / run ID / goal ID;
+- approval wait;
+- last result / checkpoint;
+- Resume / Pause / Stop.
 
-Runtime display is intentionally small:
+There is no normal manual Goal form in V2.1.
 
-- status
-- iteration
-- run ID
-- approval wait
-- last checkpoint
+## Validation
 
-Controls:
-
-- **Start**: create a new Goal run.
-- **Resume**: resume a paused/needs-user/conflict run after the user has resolved the reason.
-- **Pause**: stop automatic next iterations without deleting the Goal checkpoint.
-- **Stop**: end the run in the current tab.
-
-A manual click on ChatGPT's own Stop button pauses the Goal instead of silently starting another iteration.
-
-## Local validation
-
-Current V2 MVP validation command:
+Local validation commands:
 
 ```bash
 npm run check
 npm test
 ```
 
-`npm test` intentionally runs `tests/v2-*.test.mjs`; the V1 tests remain historical evidence for the V1 branch and are not the V2 contract.
+`npm test` runs only `tests/v2-*.test.mjs` on the V2 branch.
 
-The V2 MVP source currently covers:
+The V2.1 source tests cover:
 
-- repository authority above Rerun Goal;
-- stable executor prompt;
-- structured result parsing;
-- stale result rejection by run/execution identity;
+- goal-setup nonce binding;
+- goal JSON schema validation;
+- frozen executor prompt identity across iterations;
+- result JSON validation;
+- no assistant-prose control parsing;
+- new-attachment baseline/seen filtering;
 - immediate `CONTINUE -> ready` transition;
-- Pause preservation during an in-flight execution;
-- manual ChatGPT Stop -> pause;
+- manual Stop -> pause;
 - GitHub approval wait without auto-click;
-- missing-composer fresh-chat ownership handoff;
-- 23-minute stuck-generation recovery.
+- missing-composer fresh-chat handoff.
 
-## Install for browser testing
+The implementation snapshot used for V2.1 passed syntax checks and the V2 JSON protocol test suite locally. Browser E2E is still required because ChatGPT's live file-card DOM and attachment URL behavior must be observed directly.
+
+## Browser test
 
 1. Check out `agent/v2-goal-runner` locally.
-2. Open `chrome://extensions`.
-3. Enable Developer mode.
-4. Load or Reload the unpacked extension directory.
-5. Refresh existing ChatGPT tabs after switching from V1 to V2 so the old V1 content script is removed from the page.
-6. Open the Rerun V2 Side Panel from a ChatGPT tab.
-7. Enter repository, branch and Goal, then Start.
+2. Open `chrome://extensions` and Reload the unpacked extension.
+3. Refresh the ChatGPT tab so older V1/V2 content scripts are removed.
+4. Open the Rerun V2 Side Panel.
+5. Click **목표 세우기**.
+6. When ChatGPT asks for the next goal, describe the desired repository outcome normally.
+7. Confirm ChatGPT creates `rerun-goal-<nonce>.json` and the Side Panel changes from `Waiting goal JSON` to `Running` automatically.
+8. Confirm the first executor turn creates `rerun-result-<goal_id>.json`.
+9. For `CONTINUE`, confirm the exact frozen executor prompt is submitted again without GitHub polling delay.
+10. Verify COMPLETE / NEEDS_USER / CONFLICT pause or stop correctly.
 
-V2 has not yet been declared browser-E2E complete. Source checks passing do not substitute for live ChatGPT DOM verification.
+See `docs/V2_GOAL_RUNNER_SPEC.md` for the full protocol.

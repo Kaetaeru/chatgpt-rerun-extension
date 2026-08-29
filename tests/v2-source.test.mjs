@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 const background = readFileSync(new URL("../background.js", import.meta.url), "utf8");
 const content = readFileSync(new URL("../content.js", import.meta.url), "utf8");
+const popup = readFileSync(new URL("../popup.js", import.meta.url), "utf8");
 
 test("goal setup is driven by a downloadable JSON file", () => {
   assert.match(background, /case "BEGIN_GOAL_SETUP"/);
@@ -35,6 +36,16 @@ test("result attachment must be new for the active execution", () => {
   assert.match(content, /activeResultBaseline = snapshotResultAttachmentKeys\(claim\.goalId\)/);
   assert.match(content, /baseline\?\.has\(candidate\.key\)/);
   assert.match(content, /seenJsonAttachmentKeys\.has\(candidate\.key\)/);
+});
+
+test("side panel actions and refresh always resolve the currently active ChatGPT tab", () => {
+  assert.doesNotMatch(popup, /let tabId = null/);
+  assert.match(popup, /setupButton\.addEventListener[\s\S]*const tabId = await getActiveChatTabId\(\)[\s\S]*BEGIN_GOAL_SETUP/);
+  assert.match(popup, /resumeButton\.addEventListener[\s\S]*const tabId = await getActiveChatTabId\(\)[\s\S]*RESUME_GOAL/);
+  assert.match(popup, /pauseButton\.addEventListener[\s\S]*const tabId = await getActiveChatTabId\(\)[\s\S]*PAUSE_GOAL/);
+  assert.match(popup, /stopButton\.addEventListener[\s\S]*const tabId = await getActiveChatTabId\(\)[\s\S]*STOP_GOAL/);
+  assert.match(popup, /async function refresh\(\)[\s\S]*const tabId = await getActiveChatTabId\(\)[\s\S]*getState\(tabId\)/);
+  assert.match(popup, /async function getState\(tabId\)[\s\S]*GET_TAB_STATE", tabId/);
 });
 
 test("approval card pauses only and is never automatically clicked", () => {

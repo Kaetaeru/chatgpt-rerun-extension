@@ -24,13 +24,16 @@ export const DEFAULT_RUNTIME = Object.freeze({
   lastCheckpoint: "",
   lastResult: null,
   lastResultId: null,
+  processedResultIds: [],
   lastError: null,
   lastSentAt: null,
   dispatchClaimedAt: null,
   waitingApproval: false,
   handoffPending: false,
+  handoffUsed: false,
   handoffFromTabId: null,
-  handoffToTabId: null
+  handoffToTabId: null,
+  resumeCapsulePending: false
 });
 
 export function tabConfigKey(tabId) {
@@ -102,7 +105,16 @@ export function buildExecutorPrompt(config, runtime) {
   const authority = config.authorityPaths || "Discover repository-native authoritative instructions/specifications only when needed. Do not create a Rerun project plan.";
   const fileName = `rerun-result-${goalId}.json`;
 
-  return `You are executing a ChatGPT Rerun V2 Goal Runner task.\n\nRun ID: ${runId}\nGoal ID: ${goalId}\nRepository: ${config.repository}\nBranch: ${config.branch}\n\nGOAL\n${config.goal}\n\nACCEPTANCE\n${acceptance}\n\nCANONICAL AUTHORITY\n${authority}\n\nEXECUTION CONTRACT\n- Continue working toward the GOAL.\n- Current explicit user instructions and repository-native authoritative instructions, plans, specifications, and acceptance criteria override the Rerun goal.\n- Never create or maintain a separate Rerun project plan in the target repository.\n- Do not redo work already verified by the conversation or repository evidence.\n- Inspect only the minimum repository state needed for the next useful action; do not spend the turn repeatedly rediscovering HEAD/history.\n- Choose the highest-priority unfinished action that materially advances the GOAL. Implement it and verify it.\n- If repository authority conflicts with the GOAL or required next action, stop rather than silently choosing one side.\n- Keep this execution within the normal 20-minute budget.\n\nRESULT FILE CONTRACT\nBefore finishing this response, create one downloadable UTF-8 JSON file named exactly:\n${fileName}\n\nThe file must be a JSON object with:\n{\n  "version": 2,\n  "kind": "${RESULT_FILE_KIND}",\n  "goal_id": "${goalId}",\n  "result_id": "a new unique id that has never been used for a previous execution",\n  "status": "CONTINUE|COMPLETE|NEEDS_USER|CONFLICT",\n  "checkpoint": "one concise factual resumable checkpoint"\n}\n\nUse CONTINUE when meaningful work remains, COMPLETE only when the GOAL and acceptance criteria are verified, NEEDS_USER when human input is required, and CONFLICT when repository authority conflicts with the goal or required next action.\nThe downloadable JSON file, not response prose, is the Rerun control signal.`;
+  return `You are executing a ChatGPT Rerun V2 Goal Runner task.\n\nRun ID: ${runId}\nGoal ID: ${goalId}\nRepository: ${config.repository}\nBranch: ${config.branch}\n\nGOAL\n${config.goal}\n\nACCEPTANCE\n${acceptance}\n\nCANONICAL AUTHORITY\n${authority}\n\nEXECUTION CONTRACT\n- Continue working toward the GOAL.\n- Current explicit user instructions and repository-native authoritative instructions, plans, specifications, and acceptance criteria override the Rerun goal.\n- Never create or maintain a separate Rerun project plan in the target repository.\n- Do not redo work already verified by the conversation or repository evidence.\n- Inspect only the minimum repository state needed for the next useful action; do not spend the turn repeatedly rediscovering HEAD/history.\n- Choose the highest-priority unfinished action that materially advances the GOAL. Implement it and verify it.\n- If repository authority conflicts with the GOAL or required next action, stop rather than silently choosing one side.\n- Keep this execution within the normal 20-minute budget.\n\nRESULT FILE CONTRACT\nBefore finishing this response, create one downloadable UTF-8 JSON file named exactly:\n${fileName}\n\nThe file must be a JSON object with:\n{\n  "version": 2,\n  "kind": "${RESULT_FILE_KIND}",\n  "goal_id": "${goalId}",\n  "result_id": "a new unique id that has never been used for a previous execution",\n  "status": "CONTINUE|COMPLETE|NEEDS_USER|CONFLICT",\n  "checkpoint": "one concise factual resumable checkpoint"\n}\n\nUse CONTINUE when meaningful work remains, COMPLETE only when the GOAL and acceptance criteria are verified, NEEDS_USER when human input is required, and CONFLICT when repository authority conflicts with the goal or required next action.\n- Every execution MUST create a fresh result artifact for this execution even though the filename is reused.\n- Generate a new unique result_id before writing the file; never reuse, relink, or return a result artifact from a previous execution.\n- Set status to the actual final status of THIS execution. If this execution is complete, the JSON MUST contain "status": "COMPLETE".\n- After writing the file, reopen it and verify that goal_id, result_id, status, and checkpoint exactly match the result you intend to return.\n- The downloadable attachment must correspond to that newly verified file, not a previous attachment with the same filename.\n- If the file cannot be freshly created and verified, do not claim COMPLETE.\nThe downloadable JSON file, not response prose, is the Rerun control signal.`;
+}
+
+export function buildFreshChatResumePrompt(frozenPrompt, checkpoint) {
+  const prompt = String(frozenPrompt || "");
+  if (!prompt.trim()) throw new Error("Frozen executor prompt is required.");
+  const normalizedCheckpoint = String(checkpoint || "").trim().replace(/\s+/g, " ");
+  if (!normalizedCheckpoint) return prompt;
+
+  return `${prompt}\n\nFRESH-CHAT RESUME CAPSULE\nThis capsule is injected once after automatic fresh-chat handoff. It does not replace repository authority or change the frozen executor contract.\nLast verified checkpoint from the previous conversation:\n${normalizedCheckpoint}\nContinue from this checkpoint without repeating already verified work. Inspect repository state only as needed to confirm what remains.`;
 }
 
 export function normalizeResultFile(value, expectedGoalId) {

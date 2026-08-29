@@ -8,7 +8,7 @@ Current development branch:
 agent/v2-goal-runner
 ```
 
-Current extension version: **2.1.3**.
+Current extension version: **2.1.6**.
 
 The previous V1 implementation remains preserved on `agent/mvp-autoresume`.
 
@@ -36,12 +36,12 @@ User's next message describes the desired outcome
    ↓
 ChatGPT creates rerun-goal-<nonce>.json
    ↓
-Extension validates and imports it automatically
+Extension resolves, validates and imports it automatically
    ↓
 Goal Runner starts
 ```
 
-The goal JSON contains repository, branch, goal, acceptance criteria and known canonical authority references. It is bound to the active setup request by a random nonce, so an older goal attachment cannot silently replace the new goal.
+The goal JSON contains repository, branch, goal, acceptance criteria and known canonical authority references. It is bound to the active setup request by a random nonce, so an older goal artifact cannot silently replace the new goal.
 
 ## Goal loop
 
@@ -69,29 +69,33 @@ rerun-result-<goal_id>.json
 
 The file includes a unique `result_id`, one of the four statuses, and a short factual checkpoint.
 
-The extension snapshots matching attachments before each dispatch and accepts only a new result attachment produced after that dispatch. Previously seen attachments are ignored.
+The extension snapshots matching artifacts before each dispatch and accepts only a new result produced for the active execution. Previously processed result IDs are ignored.
 
 The content script does **not** read assistant-message prose to determine Rerun state.
 
-## Generated JSON file capture
+## Generated JSON artifact resolution
 
-V2.1.3 uses the file-card handoff pattern already proven by Patient Oracle.
+V2.1.6 resolves ChatGPT-generated files through ChatGPT's authenticated file path instead of relying on a readable `sandbox:` URL, DOM-only download attributes, or automatic preview clicks.
 
-A visible `sandbox:/mnt/data/...` link is treated only as one hint exposed by the ChatGPT file card. Rerun does not attempt to interpret or fetch the sandbox URL itself.
+The resolver has two cooperating parts:
 
-Instead the content script searches the matching file card and its nearby DOM for the actual generated-file URL exposed through links or attributes such as:
+1. `page-artifact-reader.js` runs in Chrome's `MAIN` world so it can use the logged-in ChatGPT page session.
+2. `artifact-reader.js` runs in the extension's isolated world and bridges the resolved JSON into the existing V2 attachment protocol.
 
-- `href` / `download`;
-- `data-download-url`;
-- `data-file-url`;
-- `data-url`;
-- `data-href` / `data-src`.
+For an expected `rerun-goal-<nonce>.json` or `rerun-result-<goal_id>.json`, the MAIN-world resolver:
 
-It also checks child elements and nearby parents because ChatGPT may place the filename and the real download URL on different elements of the same file card.
+- reads `/api/auth/session`;
+- uses the session access token and, when present, the ChatGPT account ID used by Team workspaces;
+- reads the current conversation and finds the message that owns the exact expected filename;
+- resolves the generated artifact from its message/sandbox identity, with file-ID download routes as fallback;
+- accepts the final content only from ChatGPT/OpenAI generated-file hosts;
+- parses at most 1 MiB of JSON.
 
-Fetchable HTTPS URLs are handed to the extension background worker. The worker accepts only HTTPS URLs on ChatGPT/OpenAI generated-file hosts (`chatgpt.com`, `chat.openai.com`, and `*.oaiusercontent.com`), fetches the JSON, and returns the parsed object to the tab. Blob URLs can still be read directly by the content script.
+The isolated reader then exposes the parsed object as a temporary `blob:` URL attached to a hidden synthetic file node. Existing `content.js` consumes that node and continues to perform the normal nonce, goal ID, result ID and schema validation. The artifact reader therefore does not create a second Goal Runner state machine.
 
-This replaces the removed V2.1.2 sandbox-specific adapter.
+If artifact resolution fails, a separate `v2:artifact:<tabId>` diagnostic is stored. The Side Panel surfaces the exact failure as `Artifact reader: ...` instead of silently remaining at `Waiting goal JSON`.
+
+The Side Panel also ensures the MAIN-world resolver, the normal content script and the isolated artifact reader are injected into an already-open ChatGPT tab. Reloading the extension therefore does not require a page refresh just to restore the artifact reader for a pending goal.
 
 ## Authority rule
 
@@ -122,6 +126,8 @@ Important runtime data includes:
 - last checkpoint / last result ID;
 - approval wait state;
 - fresh-chat handoff state.
+
+Artifact-reader diagnostics use a separate `v2:artifact:<tabId>` key and do not authorize runtime state transitions.
 
 Normal cadence does not require repository-side Rerun `control.json`.
 
@@ -163,6 +169,7 @@ The panel shows:
 - status / iteration / run ID / goal ID;
 - approval wait;
 - last result / checkpoint;
+- artifact-reader failures when present;
 - Resume / Pause / Stop.
 
 There is no normal manual Goal form in V2.1.
@@ -185,25 +192,29 @@ The V2 source tests cover:
 - frozen executor prompt identity across iterations;
 - result JSON validation;
 - no assistant-prose control parsing;
-- new-attachment baseline/seen filtering;
-- Patient Oracle-style generated-file URL discovery and background handoff;
+- new-result baseline/seen filtering;
+- authenticated MAIN-world artifact resolution and Team account context;
+- conversation/sandbox resolution plus file-ID fallback routes;
+- blob handoff into the existing content protocol;
+- artifact-reader reinjection for already-open ChatGPT tabs;
+- visible artifact diagnostics;
 - immediate `CONTINUE -> ready` transition;
 - active-tab Side Panel isolation;
 - manual Stop -> pause;
 - GitHub approval wait without auto-click;
 - missing-composer fresh-chat handoff.
 
-Browser E2E is still required because ChatGPT's live file-card DOM and generated download URL behavior must be observed directly.
+Browser E2E is still required because ChatGPT's internal authenticated file endpoints are service implementation details and may evolve.
 
 ## Browser test
 
 1. Check out `agent/v2-goal-runner` locally.
 2. Open `chrome://extensions` and Reload the unpacked extension.
-3. Refresh the ChatGPT tab so older V1/V2 content scripts are removed.
-4. Open the Rerun V2 Side Panel.
-5. Open two ChatGPT tabs A and B. In A click **목표 세우기**, then switch to B and click **목표 세우기** again. Confirm each tab receives a different nonce and the Side Panel follows the active tab's independent state.
-6. When ChatGPT asks for the next goal, describe the desired repository outcome normally.
-7. Confirm ChatGPT creates `rerun-goal-<nonce>.json` and the Side Panel changes from `Waiting goal JSON` to `Running` automatically in the correct tab only.
+3. Open the Rerun V2 Side Panel on the target ChatGPT tab. An already-open pending tab should have the artifact readers restored automatically.
+4. Open two ChatGPT tabs A and B. In A click **목표 세우기**, then switch to B and click **목표 세우기** again. Confirm each tab receives a different nonce and the Side Panel follows the active tab's independent state.
+5. When ChatGPT asks for the next goal, describe the desired repository outcome normally.
+6. Confirm ChatGPT creates `rerun-goal-<nonce>.json` and the Side Panel changes from `Waiting goal JSON` to `Running` automatically in the correct tab only.
+7. If it does not, record the exact `Artifact reader: ...` diagnostic shown in the Side Panel.
 8. Confirm the first executor turn creates `rerun-result-<goal_id>.json`.
 9. For `CONTINUE`, confirm the exact frozen executor prompt is submitted again without GitHub polling delay.
 10. Verify COMPLETE / NEEDS_USER / CONFLICT pause or stop correctly.

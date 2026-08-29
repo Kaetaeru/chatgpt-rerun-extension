@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Rerun V2",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "minimum_chrome_version": "116",
-  "description": "Keep ChatGPT working toward one repository goal until it is complete, blocked, or needs the user.",
+  "description": "Build a goal from a ChatGPT-generated JSON contract, then keep ChatGPT working until that goal is complete or blocked.",
   "permissions": ["storage", "activeTab", "sidePanel", "scripting"],
   "host_permissions": [
     "https://chatgpt.com/*",

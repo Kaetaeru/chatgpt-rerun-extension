@@ -1,340 +1,228 @@
 (() => {
-  if (globalThis.__CHATGPT_RERUN_CONTENT_LOADED__) return;
-  globalThis.__CHATGPT_RERUN_CONTENT_LOADED__ = true;
+  if (globalThis.__CHATGPT_RERUN_V2_LOADED__) return;
+  globalThis.__CHATGPT_RERUN_V2_LOADED__ = true;
 
-  const BASE_TICK_MS = 2000;
-  const GENERATION_WATCHDOG_MS = 23 * 60 * 1000;
-  const GENERATION_START_GRACE_MS = 15_000;
-  const STOP_BUTTON_SELECTORS = [
+  const TICK_MS = 1500;
+  const START_GRACE_MS = 12_000;
+  const WATCHDOG_MS = 23 * 60 * 1000;
+  const STOP_SELECTORS = [
     'button[data-testid="stop-button"]',
     'button[aria-label*="Stop"]',
     'button[aria-label*="stop"]',
     'button[aria-label*="중지"]'
   ];
   let ticking = false;
-  let currentTabId = null;
   let generationStartedAtMs = null;
-  let generationPausedAtMs = null;
-  let generationPausedTotalMs = 0;
-  let generationWatchdogFired = false;
-  let generationInterruptedByUser = false;
   let generationObservedActive = false;
-  let normalContinuationPending = false;
+  let approvalPausedAtMs = null;
+  let approvalPausedTotalMs = 0;
+  let watchdogFired = false;
+  let manualStopRequested = false;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === "RERUN_PING") {
+    if (message?.type === "RERUN_V2_PING") {
       sendResponse({ ready: true });
       return;
     }
-
-    if (message?.type === "RERUN_WAKE") {
+    if (message?.type === "RERUN_V2_WAKE") {
       sendResponse({ ready: true });
       void tick();
-      return;
-    }
-
-    if (["RERUN_HANDOFF", "RERUN_BOOTSTRAP", "RERUN_CONNECT"].includes(message?.type)) {
-      sendDirectPrompt(String(message.prompt || ""))
-        .then(() => sendResponse({ sent: true }))
-        .catch((error) => sendResponse({
-          sent: false,
-          error: error instanceof Error ? error.message : String(error)
-        }));
-      return true;
     }
   });
 
   document.addEventListener("click", (event) => {
-    if (!event.isTrusted || generationStartedAtMs === null || generationWatchdogFired) return;
+    if (!event.isTrusted || generationStartedAtMs === null) return;
     const button = event.target instanceof Element ? event.target.closest("button") : null;
-    if (button && isStopButtonElement(button)) {
-      generationInterruptedByUser = true;
-    }
+    if (button && isStopButtonElement(button)) manualStopRequested = true;
   }, true);
 
-  void registerCurrentTab();
-  setInterval(tick, BASE_TICK_MS);
+  setInterval(tick, TICK_MS);
   void tick();
-
-  async function registerCurrentTab() {
-    try {
-      const response = await chrome.runtime.sendMessage({ type: "REGISTER_CHAT_TAB" });
-      if (response?.ok && Number.isSafeInteger(response.tabId)) {
-        currentTabId = response.tabId;
-      }
-    } catch {
-      // The background worker may be restarting. A later call can resolve it.
-    }
-    return currentTabId;
-  }
 
   async function tick() {
     if (ticking) return;
     ticking = true;
     try {
-      const watcherEnabled = await isRerunWatcherEnabled();
-      if (!watcherEnabled) {
-        resetGenerationWatchdog();
-        normalContinuationPending = false;
-      }
+      const state = await chrome.runtime.sendMessage({ type: "GET_CURRENT_STATE" });
+      if (!state?.ok) return;
+      const runtime = state.runtime || {};
 
-      const approvalWaiting = Boolean(findGitHubApprovalCard());
-      if (watcherEnabled && await enforceGenerationWatchdog(approvalWaiting)) return;
-      if (watcherEnabled && approvalWaiting && await isApprovalAwareResumeEnabled()) return;
-
-      const afterGenerationComplete = normalContinuationPending;
-      const response = await chrome.runtime.sendMessage({
-        type: "POLL",
-        afterGenerationComplete
-      });
-      if (response && afterGenerationComplete) {
-        normalContinuationPending = false;
-      }
-      if (!response?.ok) return;
-
-      if (response.action === "stop_when_idle") {
-        if (isChatIdle()) {
-          await chrome.runtime.sendMessage({
-            type: "STOP_SESSION",
-            reason: response.reason || "stopped"
-          });
+      if (runtime.phase === "dispatching") {
+        const claimedAt = Date.parse(String(runtime.dispatchClaimedAt || ""));
+        if (Number.isFinite(claimedAt) && Date.now() - claimedAt > 15_000) {
+          await chrome.runtime.sendMessage({ type: "RELEASE_EXECUTION", reason: "stale_dispatch_claim" });
         }
         return;
       }
 
-      if (response.action !== "continue") return;
+      if (runtime.phase === "generating") {
+        await observeGeneration(runtime);
+        return;
+      }
 
-      const { control, prompt } = response;
-      if (!control || !isChatIdle()) return;
+      resetGenerationTracking();
+      if (!runtime.enabled || runtime.status !== "running" || runtime.phase !== "ready") return;
+      if (!isChatIdle()) return;
+
+      const approvalCard = findGitHubApprovalCard();
+      if (approvalCard) {
+        await chrome.runtime.sendMessage({ type: "SET_APPROVAL_WAIT", waiting: true });
+        return;
+      }
+      if (runtime.waitingApproval) {
+        await chrome.runtime.sendMessage({ type: "SET_APPROVAL_WAIT", waiting: false });
+      }
 
       const composer = findComposer() || await waitForComposer(5_000);
       if (!composer) {
-        const handoff = await handoffAfterDispatchFailure();
-        if (handoff?.ok) return;
-
-        await chrome.runtime.sendMessage({
-          type: "STOP_SESSION",
-          reason: `auto_handoff_failed: ${handoff?.error || "ChatGPT composer remained unavailable after 5 seconds"}`
-        });
+        await chrome.runtime.sendMessage({ type: "HANDOFF_NEW_CHAT" });
+        return;
+      }
+      if (readComposerText(composer).trim()) {
+        await chrome.runtime.sendMessage({ type: "PAUSE_GOAL" });
         return;
       }
 
-      const existingComposerText = readComposerText(composer).trim();
-      const staleRerunPrompt = isSameRerunPrompt(existingComposerText, prompt);
-      if (existingComposerText && !staleRerunPrompt) {
-        await chrome.runtime.sendMessage({ type: "STOP_SESSION", reason: "composer_not_empty" });
-        return;
-      }
-
-      if (staleRerunPrompt) {
-        const handoff = await handoffAfterDispatchFailure();
-        if (handoff?.ok) return;
-
-        await chrome.runtime.sendMessage({
-          type: "STOP_SESSION",
-          reason: `auto_handoff_failed: ${handoff?.error || "stale Rerun prompt could not be handed off"}`
-        });
-        return;
-      }
-
-      const claim = await chrome.runtime.sendMessage({
-        type: "CLAIM_SEQUENCE",
-        runId: control.runId,
-        sequence: control.sequence,
-        normalContinuation: Boolean(response.normalContinuation)
-      });
+      const claim = await chrome.runtime.sendMessage({ type: "CLAIM_EXECUTION" });
       if (!claim?.ok || !claim.claimed) return;
-
       try {
-        await sendPrompt(composer, prompt);
-        await chrome.runtime.sendMessage({
-          type: "ACK_SEQUENCE",
-          runId: control.runId,
-          sequence: control.sequence
-        });
+        const startedAt = Date.now();
+        await sendPrompt(composer, claim.prompt);
+        const ack = await chrome.runtime.sendMessage({ type: "ACK_DISPATCH" });
+        if (!ack?.ok || !ack.acknowledged) throw new Error("dispatch_ack_failed");
+        armGenerationTracking(startedAt);
       } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
         await chrome.runtime.sendMessage({
-          type: "RELEASE_SEQUENCE",
-          runId: control.runId,
-          sequence: control.sequence
-        });
-
-        if (isConfirmedDispatchFailure(detail)) {
-          const handoff = await handoffAfterDispatchFailure();
-          if (handoff?.ok) return;
-
-          await chrome.runtime.sendMessage({
-            type: "STOP_SESSION",
-            reason: `auto_handoff_failed: ${handoff?.error || detail}`
-          });
-          return;
-        }
-
-        await chrome.runtime.sendMessage({
-          type: "STOP_SESSION",
-          reason: `send_failed: ${detail}`
+          type: "RELEASE_EXECUTION",
+          reason: error instanceof Error ? error.message : String(error)
         });
       }
     } catch {
-      // The background worker may be restarting. A later tick will retry.
+      // Background service worker may be restarting; next tick retries.
     } finally {
       ticking = false;
     }
   }
 
-  function armGenerationWatchdog(startedAtMs = Date.now()) {
-    generationStartedAtMs = startedAtMs;
-    generationPausedAtMs = null;
-    generationPausedTotalMs = 0;
-    generationWatchdogFired = false;
-    generationInterruptedByUser = false;
-    generationObservedActive = false;
-  }
-
-  async function enforceGenerationWatchdog(approvalWaiting, nowMs = Date.now()) {
-    if (generationStartedAtMs === null) return false;
-
-    if (approvalWaiting) {
-      if (generationPausedAtMs === null) {
-        generationPausedAtMs = nowMs;
-      }
-      return false;
+  async function observeGeneration(runtime) {
+    if (generationStartedAtMs === null) {
+      const persistedStart = Date.parse(String(runtime.lastSentAt || ""));
+      armGenerationTracking(Number.isFinite(persistedStart) ? persistedStart : Date.now());
     }
 
-    if (generationPausedAtMs !== null) {
-      generationPausedTotalMs += Math.max(0, nowMs - generationPausedAtMs);
-      generationPausedAtMs = null;
+    const approvalCard = findGitHubApprovalCard();
+    if (approvalCard) {
+      if (approvalPausedAtMs === null) approvalPausedAtMs = Date.now();
+      if (!runtime.waitingApproval) {
+        await chrome.runtime.sendMessage({ type: "SET_APPROVAL_WAIT", waiting: true });
+      }
+      return;
+    }
+
+    if (approvalPausedAtMs !== null) {
+      approvalPausedTotalMs += Math.max(0, Date.now() - approvalPausedAtMs);
+      approvalPausedAtMs = null;
+    }
+    if (runtime.waitingApproval) {
+      await chrome.runtime.sendMessage({ type: "SET_APPROVAL_WAIT", waiting: false });
     }
 
     const stopButton = findStopButton();
-    if (!stopButton) {
-      if (!generationObservedActive && nowMs - generationStartedAtMs < GENERATION_START_GRACE_MS) {
-        return false;
+    if (stopButton) {
+      generationObservedActive = true;
+      const activeMs = Math.max(0, Date.now() - generationStartedAtMs - approvalPausedTotalMs);
+      if (activeMs >= WATCHDOG_MS && !watchdogFired) {
+        watchdogFired = true;
+        stopButton.click();
+        await chrome.runtime.sendMessage({ type: "REPORT_INTERRUPTED", reason: "watchdog_23m" });
+        resetGenerationTracking();
       }
-      const completedNormally = !generationWatchdogFired && !generationInterruptedByUser;
-      resetGenerationWatchdog();
-      if (completedNormally) {
-        await resetSameSequenceRetryCount();
-        normalContinuationPending = true;
-      }
-      return false;
+      return;
     }
 
-    generationObservedActive = true;
-    const activeGenerationMs = Math.max(
-      0,
-      nowMs - generationStartedAtMs - generationPausedTotalMs
-    );
-    if (activeGenerationMs < GENERATION_WATCHDOG_MS || generationWatchdogFired) {
-      return false;
+    if (!generationObservedActive && Date.now() - generationStartedAtMs < START_GRACE_MS) return;
+
+    if (manualStopRequested) {
+      resetGenerationTracking();
+      await chrome.runtime.sendMessage({ type: "PAUSE_GOAL" });
+      return;
     }
 
-    generationWatchdogFired = true;
-    await rearmContinuationAfterWatchdogStop();
-    stopButton.click();
-    return true;
+    const assistantText = await waitForLatestAssistantResult(6_000, runtime.runId, runtime.iteration);
+    const result = parseRerunResult(assistantText);
+    resetGenerationTracking();
+    if (!result || result.runId !== runtime.runId || result.execution !== Number(runtime.iteration)) {
+      await chrome.runtime.sendMessage({ type: "REPORT_INTERRUPTED", reason: "missing_rerun_result" });
+      return;
+    }
+    await chrome.runtime.sendMessage({ type: "REPORT_RESULT", result });
   }
 
-  async function rearmContinuationAfterWatchdogStop() {
-    const tabId = currentTabId ?? await registerCurrentTab();
-    if (!Number.isSafeInteger(tabId)) return;
-
-    try {
-      const key = `tabRuntime:${tabId}`;
-      const stored = await chrome.storage.local.get(key);
-      const runtime = stored[key];
-      if (!runtime?.enabled) return;
-
-      await chrome.storage.local.set({
-        [key]: {
-          ...runtime,
-          sameSequenceRetryCount: 0,
-          pendingSequence: null,
-          pendingRunId: null,
-          pendingIsRetry: false,
-          lastError: null
-        }
-      });
-    } catch {
-      // The next content tick can still recover from a fresh GitHub authorization.
-    }
-  }
-
-  async function resetSameSequenceRetryCount() {
-    const tabId = currentTabId ?? await registerCurrentTab();
-    if (!Number.isSafeInteger(tabId)) return;
-
-    try {
-      const key = `tabRuntime:${tabId}`;
-      const stored = await chrome.storage.local.get(key);
-      const runtime = stored[key];
-      if (!runtime?.enabled || Number(runtime.sameSequenceRetryCount || 0) === 0) return;
-
-      await chrome.storage.local.set({
-        [key]: {
-          ...runtime,
-          sameSequenceRetryCount: 0
-        }
-      });
-    } catch {
-      // The next normal-continuation ACK also resets this counter.
-    }
-  }
-
-  function resetGenerationWatchdog() {
-    generationStartedAtMs = null;
-    generationPausedAtMs = null;
-    generationPausedTotalMs = 0;
-    generationWatchdogFired = false;
-    generationInterruptedByUser = false;
+  function armGenerationTracking(startedAtMs) {
+    generationStartedAtMs = startedAtMs;
     generationObservedActive = false;
+    approvalPausedAtMs = null;
+    approvalPausedTotalMs = 0;
+    watchdogFired = false;
+    manualStopRequested = false;
   }
 
-  async function isRerunWatcherEnabled() {
-    const tabId = currentTabId ?? await registerCurrentTab();
-    if (!Number.isSafeInteger(tabId)) return false;
-
-    try {
-      const key = `tabRuntime:${tabId}`;
-      const stored = await chrome.storage.local.get(key);
-      return Boolean(stored[key]?.enabled);
-    } catch {
-      return false;
-    }
+  function resetGenerationTracking() {
+    generationStartedAtMs = null;
+    generationObservedActive = false;
+    approvalPausedAtMs = null;
+    approvalPausedTotalMs = 0;
+    watchdogFired = false;
+    manualStopRequested = false;
   }
 
-  async function isApprovalAwareResumeEnabled() {
-    const tabId = currentTabId ?? await registerCurrentTab();
-    if (!Number.isSafeInteger(tabId)) return false;
+  function parseRerunResult(text) {
+    const source = String(text || "");
+    const marker = source.lastIndexOf("RERUN_RESULT");
+    if (marker < 0) return null;
+    const tail = source.slice(marker);
+    const runIdMatch = tail.match(/^run_id:\s*(\S+)\s*$/im);
+    const executionMatch = tail.match(/^execution:\s*(\d+)\s*$/im);
+    const statusMatch = tail.match(/^status:\s*(CONTINUE|COMPLETE|NEEDS_USER|CONFLICT)\s*$/im);
+    const checkpointMatch = tail.match(/^checkpoint:\s*(.+)\s*$/im);
+    if (!runIdMatch || !executionMatch || !statusMatch || !checkpointMatch) return null;
+    return {
+      runId: runIdMatch[1],
+      execution: Number(executionMatch[1]),
+      status: statusMatch[1].toUpperCase(),
+      checkpoint: checkpointMatch[1].trim().replace(/\s+/g, " ")
+    };
+  }
 
-    try {
-      const key = `tabConfig:${tabId}`;
-      const stored = await chrome.storage.local.get(key);
-      return Boolean(stored[key]?.approvalAwareResume);
-    } catch {
-      return false;
+  async function waitForLatestAssistantResult(timeoutMs, runId, execution) {
+    const startedAt = Date.now();
+    let last = "";
+    while (Date.now() - startedAt < timeoutMs) {
+      last = readLatestAssistantText();
+      const parsed = parseRerunResult(last);
+      if (parsed && parsed.runId === runId && parsed.execution === Number(execution)) return last;
+      await sleep(150);
     }
+    return last;
+  }
+
+  function readLatestAssistantText() {
+    const nodes = Array.from(document.querySelectorAll(
+      '[data-message-author-role="assistant"], article[data-turn="assistant"]'
+    ));
+    const node = nodes.at(-1);
+    return node?.innerText || node?.textContent || "";
   }
 
   function findGitHubApprovalCard() {
-    const buttons = Array.from(document.querySelectorAll("button"));
-    for (const button of buttons) {
-      const buttonText = normalizeUiText([
-        button.textContent,
-        button.getAttribute("aria-label")
-      ].filter(Boolean).join(" "));
+    for (const button of document.querySelectorAll("button")) {
+      const buttonText = normalizeText([button.textContent, button.getAttribute("aria-label")].filter(Boolean).join(" "));
       if (!/^(허용(?:하기)?|Allow)(?:\s|$)/i.test(buttonText)) continue;
-
       let node = button;
       for (let depth = 0; node && depth < 10; depth += 1, node = node.parentElement) {
-        const text = normalizeUiText(node.textContent);
+        const text = normalizeText(node.textContent);
         if (!text || text.length > 1600 || !text.includes("GitHub")) continue;
-        if (
-          /ChatGPT가\s*GitHub.*사용하도록\s*허용할까요/i.test(text) ||
-          /allow\s+ChatGPT\s+to\s+use\s+GitHub/i.test(text)
-        ) {
-          // Deliberately do not click the approval button. Manual confirmation remains required.
+        if (/ChatGPT가\s*GitHub.*사용하도록\s*허용할까요/i.test(text) || /allow\s+ChatGPT\s+to\s+use\s+GitHub/i.test(text)) {
           return node;
         }
       }
@@ -342,65 +230,11 @@
     return null;
   }
 
-  function normalizeUiText(value) {
-    return String(value || "").replace(/\s+/g, " ").trim();
-  }
-
-  function isSameRerunPrompt(existing, expected) {
-    const existingText = normalizeComposerText(existing);
-    const expectedText = normalizeComposerText(expected);
-    return Boolean(existingText && expectedText && existingText === expectedText);
-  }
-
-  function normalizeComposerText(value) {
-    return String(value || "").replace(/\s+/g, " ").trim();
-  }
-
-  function isConfirmedDispatchFailure(detail) {
-    const message = String(detail || "");
-    return message.startsWith("prompt inserted but ") ||
-      message === "prompt text did not synchronize with the ChatGPT composer";
-  }
-
-  async function handoffAfterDispatchFailure() {
-    const tabId = currentTabId ?? await registerCurrentTab();
-    if (!Number.isSafeInteger(tabId)) {
-      return { ok: false, error: "current ChatGPT tab ID is unavailable for automatic handoff" };
-    }
-
-    try {
-      return await chrome.runtime.sendMessage({
-        type: "HANDOFF_NEW_CHAT",
-        tabId
-      });
-    } catch (error) {
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error)
-      };
-    }
-  }
-
-  async function sendDirectPrompt(prompt) {
-    if (!prompt.trim()) throw new Error("direct prompt is empty");
-    if (!isChatIdle()) throw new Error("ChatGPT 탭이 아직 응답 생성 중입니다.");
-
-    const composer = await waitForComposer(10_000);
-    if (!composer) throw new Error("ChatGPT 탭에서 입력창을 찾지 못했습니다.");
-    if (readComposerText(composer).trim()) {
-      throw new Error("ChatGPT 탭 입력창이 비어 있지 않습니다.");
-    }
-
-    await sendPrompt(composer, prompt);
-  }
-
   function findComposer() {
-    return (
-      document.querySelector("#prompt-textarea") ||
+    return document.querySelector("#prompt-textarea") ||
       document.querySelector('textarea[data-id="root"]') ||
       document.querySelector("main textarea") ||
-      document.querySelector('main [contenteditable="true"]')
-    );
+      document.querySelector('main [contenteditable="true"]');
   }
 
   async function waitForComposer(timeoutMs) {
@@ -414,18 +248,16 @@
   }
 
   function readComposerText(composer) {
-    if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
-      return composer.value || "";
-    }
+    if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) return composer.value || "";
     return composer.textContent || "";
   }
 
   function isStopButtonElement(button) {
-    return STOP_BUTTON_SELECTORS.some((selector) => button.matches(selector));
+    return STOP_SELECTORS.some((selector) => button.matches(selector));
   }
 
   function findStopButton() {
-    for (const selector of STOP_BUTTON_SELECTORS) {
+    for (const selector of STOP_SELECTORS) {
       for (const button of document.querySelectorAll(selector)) {
         if (button.disabled || button.getAttribute("aria-disabled") === "true") continue;
         if (typeof button.getClientRects === "function" && button.getClientRects().length === 0) continue;
@@ -441,87 +273,49 @@
 
   async function sendPrompt(composer, prompt) {
     writeComposerText(composer, prompt);
-
-    if (!await waitForComposerText(composer, prompt, 1500)) {
-      throw new Error("prompt text did not synchronize with the ChatGPT composer");
-    }
-
-    const sendButton = await waitForSendButton(4000);
-    const dispatchStartedAtMs = Date.now();
-    if (sendButton) {
-      sendButton.click();
-    } else {
-      dispatchEnter(composer);
-    }
-
-    if (!await waitForDispatchEvidence(4000)) {
-      throw new Error(sendButton
-        ? "prompt inserted but send button click did not start sending"
-        : "prompt inserted but Enter fallback did not start sending");
-    }
-
-    armGenerationWatchdog(dispatchStartedAtMs);
+    if (!await waitForComposerText(prompt, 1500)) throw new Error("composer_sync_failed");
+    const button = await waitForSendButton(4000);
+    if (button) button.click();
+    else dispatchEnter(composer);
+    if (!await waitForDispatchEvidence(4000)) throw new Error("dispatch_not_observed");
   }
 
   function writeComposerText(composer, text) {
     composer.focus();
-
     if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
-      const prototype = composer instanceof HTMLTextAreaElement
-        ? HTMLTextAreaElement.prototype
-        : HTMLInputElement.prototype;
+      const prototype = composer instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
       const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-      if (!setter) throw new Error("composer value setter unavailable");
+      if (!setter) throw new Error("composer_setter_unavailable");
       setter.call(composer, text);
-      dispatchComposerInput(composer, text);
+      dispatchInput(composer, text);
       return;
     }
-
     if (composer.getAttribute("contenteditable") === "true") {
-      const selection = window.getSelection();
-      const range = document.createRange();
-      range.selectNodeContents(composer);
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-
-      if (typeof document.execCommand === "function" && document.execCommand("insertText", false, text)) {
-        dispatchComposerInput(composer, text);
-        return;
-      }
-
       composer.replaceChildren();
       const paragraph = document.createElement("p");
       paragraph.textContent = text;
       composer.appendChild(paragraph);
-      dispatchComposerInput(composer, text);
+      dispatchInput(composer, text);
       return;
     }
-
-    throw new Error("unsupported ChatGPT composer element");
+    throw new Error("unsupported_composer");
   }
 
-  function dispatchComposerInput(composer, text) {
+  function dispatchInput(composer, text) {
     if (typeof InputEvent === "function") {
-      composer.dispatchEvent(
-        new InputEvent("input", {
-          bubbles: true,
-          inputType: "insertText",
-          data: text
-        })
-      );
+      composer.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
     } else {
       composer.dispatchEvent(new Event("input", { bubbles: true }));
     }
     composer.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  async function waitForComposerText(composer, expected, timeoutMs) {
+  async function waitForComposerText(expected, timeoutMs) {
     const expectedText = String(expected || "").trim();
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
-      const current = findComposer() || composer;
-      const currentText = readComposerText(current).trim();
-      if (currentText === expectedText || currentText.includes(expectedText)) return true;
+      const composer = findComposer();
+      if (composer && readComposerText(composer).trim().includes(expectedText)) return true;
       await sleep(100);
     }
     return false;
@@ -531,9 +325,7 @@
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       const button = findSendButton();
-      if (button && !button.disabled && button.getAttribute("aria-disabled") !== "true") {
-        return button;
-      }
+      if (button && !button.disabled && button.getAttribute("aria-disabled") !== "true") return button;
       await sleep(100);
     }
     return null;
@@ -542,17 +334,15 @@
   function findSendButton() {
     const composer = findComposer();
     const form = composer?.closest("form");
-    const selectors = [
+    for (const selector of [
       'button[data-testid="send-button"]',
       'button[aria-label*="Send"]',
       'button[aria-label*="send"]',
       'button[aria-label*="전송"]',
       'button[type="submit"]'
-    ];
-
-    for (const selector of selectors) {
-      const insideForm = form?.querySelector(selector);
-      if (insideForm) return insideForm;
+    ]) {
+      const inside = form?.querySelector(selector);
+      if (inside) return inside;
       const anywhere = document.querySelector(selector);
       if (anywhere) return anywhere;
     }
@@ -560,15 +350,7 @@
   }
 
   function dispatchEnter(composer) {
-    composer.focus();
-    const options = {
-      key: "Enter",
-      code: "Enter",
-      keyCode: 13,
-      which: 13,
-      bubbles: true,
-      cancelable: true
-    };
+    const options = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true };
     composer.dispatchEvent(new KeyboardEvent("keydown", options));
     composer.dispatchEvent(new KeyboardEvent("keyup", options));
   }
@@ -576,13 +358,15 @@
   async function waitForDispatchEvidence(timeoutMs) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
-      const current = findComposer();
-      if (!current) return true;
-      if (!readComposerText(current).trim()) return true;
-      if (!isChatIdle()) return true;
+      const composer = findComposer();
+      if (!composer || !readComposerText(composer).trim() || !isChatIdle()) return true;
       await sleep(100);
     }
     return false;
+  }
+
+  function normalizeText(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
   }
 
   function sleep(ms) {

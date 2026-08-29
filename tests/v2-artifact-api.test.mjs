@@ -39,6 +39,14 @@ test("resolved JSON is exposed as a blob for the existing content protocol", () 
   assert.doesNotMatch(isolated, /REPORT_RESULT_FILE/);
 });
 
+test("side panel restores all readers on already-open ChatGPT tabs", () => {
+  assert.match(popup, /ensureRerunScripts\(tabId\)/);
+  assert.match(popup, /files: \["page-artifact-reader\.js"\]/);
+  assert.match(popup, /world: "MAIN"/);
+  assert.match(popup, /files: \["content\.js", "artifact-reader\.js"\]/);
+  assert.match(popup, /\["awaiting_goal_file", "ready", "dispatching", "generating"\]/);
+});
+
 test("artifact failures are visible in the side panel without mutating runtime", () => {
   assert.match(isolated, /v2:artifact:/);
   assert.match(popup, /getArtifactDiagnostic/);

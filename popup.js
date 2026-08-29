@@ -1,39 +1,30 @@
-const fields = ["repository", "branch", "goal", "acceptance", "authorityPaths"];
-const elements = Object.fromEntries(fields.map((id) => [id, document.getElementById(id)]));
 const errorBox = document.getElementById("errorBox");
-const startButton = document.getElementById("start");
+const setupButton = document.getElementById("setupGoal");
+const resumeButton = document.getElementById("resume");
 const pauseButton = document.getElementById("pause");
 const stopButton = document.getElementById("stop");
 let tabId = null;
 
 const tab = await getActiveChatTab();
 tabId = tab.id;
-await refresh(true);
-setInterval(() => void refresh(false), 1000);
+await refresh();
+setInterval(() => void refresh(), 1000);
 
-for (const element of Object.values(elements)) {
-  element.addEventListener("input", hideError);
-}
-
-document.getElementById("save").addEventListener("click", async () => {
+setupButton.addEventListener("click", async () => {
   try {
-    await save();
-    await refresh(false);
+    const response = await chrome.runtime.sendMessage({ type: "BEGIN_GOAL_SETUP", tabId });
+    if (!response?.ok) throw new Error(response?.error || "Goal setup failed");
+    await refresh();
   } catch (error) {
     showError(error);
   }
 });
 
-startButton.addEventListener("click", async () => {
+resumeButton.addEventListener("click", async () => {
   try {
-    await save();
-    const state = await getState();
-    const type = state.runtime.runId && ["paused", "needs_user", "conflict"].includes(state.runtime.status)
-      ? "RESUME_GOAL"
-      : "START_GOAL";
-    const response = await chrome.runtime.sendMessage({ type, tabId });
-    if (!response?.ok) throw new Error(response?.error || `${type} failed`);
-    await refresh(false);
+    const response = await chrome.runtime.sendMessage({ type: "RESUME_GOAL", tabId });
+    if (!response?.ok) throw new Error(response?.error || "Resume failed");
+    await refresh();
   } catch (error) {
     showError(error);
   }
@@ -43,7 +34,7 @@ pauseButton.addEventListener("click", async () => {
   try {
     const response = await chrome.runtime.sendMessage({ type: "PAUSE_GOAL", tabId });
     if (!response?.ok) throw new Error(response?.error || "Pause failed");
-    await refresh(false);
+    await refresh();
   } catch (error) {
     showError(error);
   }
@@ -53,37 +44,36 @@ stopButton.addEventListener("click", async () => {
   try {
     const response = await chrome.runtime.sendMessage({ type: "STOP_GOAL", tabId });
     if (!response?.ok) throw new Error(response?.error || "Stop failed");
-    await refresh(false);
+    await refresh();
   } catch (error) {
     showError(error);
   }
 });
 
-async function save() {
-  const config = Object.fromEntries(fields.map((id) => [id, elements[id].value]));
-  const response = await chrome.runtime.sendMessage({ type: "SAVE_CONFIG", tabId, config });
-  if (!response?.ok) throw new Error(response?.error || "Save failed");
-}
-
-async function refresh(loadForm) {
+async function refresh() {
   const state = await getState();
   const { config, runtime } = state;
-  if (loadForm) {
-    for (const id of fields) elements[id].value = config[id] || "";
-  }
 
-  document.getElementById("runtimeStatus").textContent = runtime.status || "idle";
-  document.getElementById("statusBadge").textContent = displayStatus(runtime);
-  document.getElementById("iteration").textContent = String(runtime.iteration || 0);
-  document.getElementById("runId").textContent = runtime.runId || "-";
-  document.getElementById("approval").textContent = runtime.waitingApproval ? "Waiting for manual approval" : "-";
-  document.getElementById("checkpoint").textContent = runtime.lastCheckpoint || "-";
+  setText("repository", config.repository || "-");
+  setText("branch", config.branch || "-");
+  setText("goal", config.goal || "아직 목표가 없습니다.");
+  setText("acceptance", config.acceptance || "-");
+  setText("authorityPaths", config.authorityPaths || "-");
+  setText("runtimeStatus", runtime.status || "idle");
+  setText("statusBadge", displayStatus(runtime));
+  setText("iteration", String(runtime.iteration || 0));
+  setText("runId", runtime.runId || "-");
+  setText("goalId", runtime.goalId || "-");
+  setText("approval", runtime.waitingApproval ? "Waiting for manual approval" : "-");
+  setText("lastResult", runtime.lastResult || "-");
+  setText("checkpoint", runtime.lastCheckpoint || "-");
 
-  startButton.textContent = runtime.runId && ["paused", "needs_user", "conflict"].includes(runtime.status)
-    ? "Resume"
-    : "Start";
+  const busy = ["dispatching", "generating"].includes(runtime.phase);
+  setupButton.disabled = busy;
+  resumeButton.disabled = !runtime.runId || !["paused", "needs_user", "conflict", "stopped"].includes(runtime.status);
   pauseButton.disabled = !runtime.enabled;
   stopButton.disabled = !runtime.runId || runtime.status === "stopped";
+
   if (runtime.lastError) showError(runtime.lastError);
   else hideError();
 }
@@ -95,9 +85,14 @@ async function getState() {
 }
 
 function displayStatus(runtime) {
+  if (runtime.phase === "awaiting_goal_file") return "Waiting goal JSON";
   if (runtime.waitingApproval) return "Waiting approval";
   if (runtime.phase === "generating") return "Running";
   return String(runtime.status || "idle").replaceAll("_", " ");
+}
+
+function setText(id, value) {
+  document.getElementById(id).textContent = value;
 }
 
 async function getActiveChatTab() {

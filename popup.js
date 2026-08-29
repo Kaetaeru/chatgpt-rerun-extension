@@ -56,6 +56,7 @@ async function refresh() {
     const tabId = await getActiveChatTabId();
     const state = await getState(tabId);
     const { config, runtime } = state;
+    const artifactDiagnostic = await getArtifactDiagnostic(tabId, runtime);
 
     setText("repository", config.repository || "-");
     setText("branch", config.branch || "-");
@@ -78,6 +79,7 @@ async function refresh() {
     stopButton.disabled = !runtime.runId || runtime.status === "stopped";
 
     if (runtime.lastError) showError(runtime.lastError);
+    else if (artifactDiagnostic?.status === "error") showError(`Artifact reader: ${artifactDiagnostic.detail}`);
     else hideError();
   } catch (error) {
     showError(error);
@@ -88,6 +90,16 @@ async function getState(tabId) {
   const response = await chrome.runtime.sendMessage({ type: "GET_TAB_STATE", tabId });
   if (!response?.ok) throw new Error(response?.error || "Could not load Rerun V2 state.");
   return response;
+}
+
+async function getArtifactDiagnostic(tabId, runtime) {
+  const key = `v2:artifact:${tabId}`;
+  const stored = await chrome.storage.local.get(key);
+  const diagnostic = stored[key] || null;
+  if (!diagnostic) return null;
+  const expectedId = runtime.phase === "awaiting_goal_file" ? runtime.setupNonce : runtime.goalId;
+  if (!expectedId || String(diagnostic.expectedId || "") !== String(expectedId)) return null;
+  return diagnostic;
 }
 
 function displayStatus(runtime) {

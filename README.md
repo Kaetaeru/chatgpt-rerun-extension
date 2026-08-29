@@ -8,7 +8,7 @@ Current development branch:
 agent/v2-goal-runner
 ```
 
-Current extension version: **2.1.0**.
+Current extension version: **2.1.1**.
 
 The previous V1 implementation remains preserved on `agent/mvp-autoresume`.
 
@@ -105,6 +105,14 @@ Important runtime data includes:
 
 Normal cadence does not require repository-side Rerun `control.json`.
 
+## Tab isolation
+
+Each ChatGPT tab owns an independent V2 config/runtime record keyed by its Chrome tab ID.
+
+The Side Panel does not keep a long-lived cached tab ID. On every refresh and every Goal/Resume/Pause/Stop action it resolves the **currently active ChatGPT tab** again, then reads or mutates only that tab's state.
+
+This prevents a Side Panel opened while tab A was active from later sending a new goal nonce or control action to tab A after the user has switched to tab B.
+
 ## GitHub approvals
 
 The V2 MVP currently lets ChatGPT use its connected GitHub app for repository work.
@@ -159,6 +167,7 @@ The V2.1 source tests cover:
 - no assistant-prose control parsing;
 - new-attachment baseline/seen filtering;
 - immediate `CONTINUE -> ready` transition;
+- active-tab Side Panel isolation;
 - manual Stop -> pause;
 - GitHub approval wait without auto-click;
 - missing-composer fresh-chat handoff.
@@ -171,9 +180,9 @@ The implementation snapshot used for V2.1 passed syntax checks and the V2 JSON p
 2. Open `chrome://extensions` and Reload the unpacked extension.
 3. Refresh the ChatGPT tab so older V1/V2 content scripts are removed.
 4. Open the Rerun V2 Side Panel.
-5. Click **목표 세우기**.
+5. Open two ChatGPT tabs A and B. In A click **목표 세우기**, then switch to B and click **목표 세우기** again. Confirm each tab receives a different nonce and the Side Panel follows the active tab's independent state.
 6. When ChatGPT asks for the next goal, describe the desired repository outcome normally.
-7. Confirm ChatGPT creates `rerun-goal-<nonce>.json` and the Side Panel changes from `Waiting goal JSON` to `Running` automatically.
+7. Confirm ChatGPT creates `rerun-goal-<nonce>.json` and the Side Panel changes from `Waiting goal JSON` to `Running` automatically in the correct tab only.
 8. Confirm the first executor turn creates `rerun-result-<goal_id>.json`.
 9. For `CONTINUE`, confirm the exact frozen executor prompt is submitted again without GitHub polling delay.
 10. Verify COMPLETE / NEEDS_USER / CONFLICT pause or stop correctly.

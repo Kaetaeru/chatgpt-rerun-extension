@@ -101,7 +101,7 @@ async function ensureRerunScripts(tabId) {
   });
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["content.js", "artifact-reader.js"]
+    files: ["content.js", "conversation-limit.js", "artifact-reader.js"]
   });
   ensuredScriptTabs.add(tabId);
 }

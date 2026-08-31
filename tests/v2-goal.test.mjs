@@ -4,8 +4,11 @@ import {
   buildExecutorPrompt,
   buildFreshChatResumePrompt,
   buildGoalSetupPrompt,
+  buildWorkerPreflightPrompt,
   normalizeGoalFile,
-  normalizeResultFile
+  normalizeResultFile,
+  normalizeWorkerReadyFile,
+  workerReadyFileName
 } from "../goal.js";
 
 test("goal setup prompt binds the next goal file to a nonce", () => {
@@ -62,6 +65,67 @@ test("fresh-chat resume capsule is one-time material layered over the frozen pro
   assert.match(resumed, /FRESH-CHAT RESUME CAPSULE/);
   assert.match(resumed, /finished A next B/);
   assert.equal(buildFreshChatResumePrompt(frozen, ""), frozen);
+});
+
+test("worker preflight requires real GitHub reads before a bound ready JSON", () => {
+  const config = {
+    repository: "Kaetaeru/chatgpt-rerun-extension",
+    branch: "agent/v2-goal-runner",
+    goal: "Finish worker pool",
+    acceptance: "Tests pass",
+    authorityPaths: "README.md"
+  };
+  const runtime = {
+    runId: "run-abc",
+    goalId: "goal-abc",
+    workerIndex: 1,
+    workerCount: 3,
+    workerNonce: "worker-nonce"
+  };
+  const prompt = buildWorkerPreflightPrompt(config, runtime);
+  assert.match(prompt, /Do NOT start the Goal Runner goal yet/);
+  assert.match(prompt, /read repository metadata/i);
+  assert.match(prompt, /second read-only GitHub action/i);
+  assert.match(prompt, /Always allow|Allow all actions/);
+  assert.match(prompt, new RegExp(workerReadyFileName("goal-abc", 1, "worker-nonce").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+  const parsed = normalizeWorkerReadyFile({
+    version: 2,
+    kind: "chatgpt-rerun-worker-ready",
+    run_id: "run-abc",
+    goal_id: "goal-abc",
+    worker_index: 2,
+    worker_nonce: "worker-nonce",
+    repository: "Kaetaeru/chatgpt-rerun-extension",
+    branch: "agent/v2-goal-runner",
+    status: "READY"
+  }, {
+    runId: "run-abc",
+    goalId: "goal-abc",
+    workerIndex: 1,
+    workerNonce: "worker-nonce",
+    repository: "Kaetaeru/chatgpt-rerun-extension",
+    branch: "agent/v2-goal-runner"
+  });
+  assert.equal(parsed.workerIndex, 1);
+  assert.throws(() => normalizeWorkerReadyFile({
+    version: 2,
+    kind: "chatgpt-rerun-worker-ready",
+    run_id: "run-abc",
+    goal_id: "goal-abc",
+    worker_index: 1,
+    worker_nonce: "wrong",
+    repository: "Kaetaeru/chatgpt-rerun-extension",
+    branch: "agent/v2-goal-runner",
+    status: "READY"
+  }, {
+    runId: "run-abc",
+    goalId: "goal-abc",
+    workerIndex: 1,
+    workerNonce: "worker-nonce",
+    repository: "Kaetaeru/chatgpt-rerun-extension",
+    branch: "agent/v2-goal-runner"
+  }), /does not match/);
 });
 
 test("result file is validated by goal id and structured status", () => {

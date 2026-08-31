@@ -40,6 +40,14 @@
         <div class="wide"><span>Last checkpoint</span><strong id="checkpoint">-</strong></div>
       </section>
 
+      <section class="card setup">
+        <strong>대화길이 진단</strong>
+        <p class="hint">현재 활성 ChatGPT 탭을 읽기 전용으로 검사합니다. 이 테스트는 handoff나 Rerun 실행 상태를 변경하지 않습니다.</p>
+        <button id="testConversationEnd" class="secondary">대화길이 끝 테스트</button>
+        <div><span class="hint">진단결과</span><strong id="conversationEndResult">-</strong></div>
+        <p id="conversationEndDetail" class="hint">아직 테스트하지 않았습니다.</p>
+      </section>
+
       <p id="errorBox" class="error" hidden></p>
 
       <footer>

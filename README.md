@@ -8,7 +8,7 @@ Current development branch:
 agent/v2-goal-runner
 ```
 
-Current extension version: **2.2.2**.
+Current extension version: **2.2.3**.
 
 The previous V1 implementation remains preserved on `agent/mvp-autoresume`.
 
@@ -139,7 +139,7 @@ Legacy non-pool runtimes created by older V2 versions retain the previous single
 
 The Side Panel includes **대화길이 끝 테스트** for browser dogfooding before the automatic exhaustion policy is changed again.
 
-V2.2.2 no longer asks the already-loaded `conversation-limit.js` content script for this manual test. Each click executes a fresh, read-only DOM sampler directly in the currently active ChatGPT tab. This avoids stale content-script listeners after an extension Reload and makes the manual test independent from Rerun runtime state.
+V2.2.3 runs a fresh, read-only DOM sampler directly in the currently active ChatGPT tab on every click. The diagnostic now recognizes ChatGPT's observed Korean maximum-length banner even when the composer remains usable and the UI still exposes `생각 중` / Stop state. A strong non-authored maximum-length banner takes precedence over stale composer/generation signals; quoted limit text inside normal conversation turns remains excluded.
 
 The diagnostic reports one of three states:
 
@@ -153,7 +153,7 @@ The automatic `conversation-limit.js` handoff policy has **not** been changed to
 
 ## Generated artifact resolution
 
-V2.2.2 uses the authenticated ChatGPT artifact resolver for all three structured control artifacts:
+V2.2.3 uses the authenticated ChatGPT artifact resolver for all three structured control artifacts:
 
 - goal JSON;
 - worker-ready JSON;
@@ -214,6 +214,7 @@ V2.2 tests cover, among other existing V2 behavior:
 - maximum-length result handling before handoff;
 - fresh direct conversation-end DOM sampling and Side Panel wiring;
 - explicit end UI, continue-in-new-chat UI, usable composer, active generation and ambiguous blank-UI diagnostic cases;
+- observed Korean maximum-length banner overriding stale thinking/Stop/composer state;
 - handoff to an already-created next worker with no new tab creation;
 - checkpoint and processed-result history transfer;
 - one-time Resume Capsule;
@@ -228,8 +229,8 @@ Browser E2E is still required because ChatGPT's page/composer UI, approval cards
 1. Reload the unpacked extension from `agent/v2-goal-runner`.
 2. Open the Side Panel on a normal ChatGPT conversation and press **대화길이 끝 테스트**. Confirm it displays **끝이 아님** when the composer is usable.
 3. Open a conversation that has actually reached ChatGPT's current maximum length and press **대화길이 끝 테스트**.
-4. Copy the complete diagnostic detail, especially `limit=`, `new-chat=` and `UI candidates:`. If the new UI is not yet recognized, **판단 불가** is expected and is safer than a false `대화길이 끝`.
-5. Use that real exhausted-chat evidence to update the automatic handoff detector.
+4. On the currently observed Korean UI, the maximum-length banner must make the result **대화길이 끝** even if `composer=true` and `generating=true` still appear in the evidence.
+5. If that browser check passes, use the same strong banner signal to update the automatic handoff detector.
 6. Then continue the normal Worker Pool browser validation described in `docs/V2_GOAL_RUNNER_SPEC.md`.
 
 See `docs/V2_GOAL_RUNNER_SPEC.md` for the normative protocol.

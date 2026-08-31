@@ -49,6 +49,25 @@ export async function diagnoseConversationEndInPage() {
   );
   const matchesAny = (value, patterns) => patterns.some((pattern) => pattern.test(value));
 
+  function findExplicitLimitTextSignal() {
+    const selector = [
+      "main div",
+      "main p",
+      "main span",
+      "main section",
+      '[role="alert"]',
+      '[role="status"]',
+      "[aria-live]"
+    ].join(",");
+    for (const node of document.querySelectorAll(selector)) {
+      if (!isVisible(node) || isAuthoredTurn(node)) continue;
+      const text = normalize(node.textContent);
+      if (!text || text.length > 500) continue;
+      if (matchesAny(text, LIMIT_PATTERNS)) return text;
+    }
+    return "";
+  }
+
   function findEndBannerSignal() {
     for (const node of document.querySelectorAll('button, a[href], [role="button"]')) {
       if (!isVisible(node) || isAuthoredTurn(node)) continue;
@@ -88,6 +107,7 @@ export async function diagnoseConversationEndInPage() {
       if (generationActive) break;
     }
 
+    const directLimitSignal = findExplicitLimitTextSignal();
     const endBannerSignal = findEndBannerSignal();
     const controls = [];
     const seen = new Set();
@@ -113,7 +133,7 @@ export async function diagnoseConversationEndInPage() {
     }
     if (endBannerSignal && !seen.has(endBannerSignal)) controls.unshift(endBannerSignal);
 
-    const explicitLimitSignal = controls.find((value) => matchesAny(value, LIMIT_PATTERNS)) || "";
+    const explicitLimitSignal = directLimitSignal || controls.find((value) => matchesAny(value, LIMIT_PATTERNS)) || "";
     const continueNewChatSignal = controls.find((value) => matchesAny(value, CONTINUE_NEW_CHAT_PATTERNS)) || "";
     return {
       usableComposer,

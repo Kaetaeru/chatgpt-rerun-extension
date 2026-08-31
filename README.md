@@ -8,7 +8,7 @@ Current development branch:
 agent/v2-goal-runner
 ```
 
-Current extension version: **2.1.7**.
+Current extension version: **2.1.8**.
 
 The previous V1 implementation remains preserved on `agent/mvp-autoresume`.
 
@@ -77,7 +77,7 @@ The content script does **not** read assistant-message prose to determine Rerun 
 
 ## Generated JSON artifact resolution
 
-V2.1.7 resolves ChatGPT-generated files through ChatGPT's authenticated file path instead of relying on a readable `sandbox:` URL, DOM-only download attributes, or automatic preview clicks.
+V2.1.8 resolves ChatGPT-generated files through ChatGPT's authenticated file path instead of relying on a readable `sandbox:` URL, DOM-only download attributes, or automatic preview clicks.
 
 The resolver has two cooperating parts:
 
@@ -97,7 +97,7 @@ The isolated reader then exposes the parsed object as a temporary `blob:` URL at
 
 If artifact resolution fails, a separate `v2:artifact:<tabId>` diagnostic is stored. The Side Panel surfaces the exact failure as `Artifact reader: ...` instead of silently remaining at `Waiting goal JSON`.
 
-The Side Panel also ensures the MAIN-world resolver, the normal content script and the isolated artifact reader are injected into an already-open ChatGPT tab. Reloading the extension therefore does not require a page refresh just to restore the artifact reader for a pending goal.
+The Side Panel also ensures the MAIN-world resolver, the normal content script, the conversation-limit detector and the isolated artifact reader are injected into an already-open ChatGPT tab. Reloading the extension therefore does not require a page refresh just to restore recovery and artifact handling for a pending goal.
 
 ## Authority rule
 
@@ -147,9 +147,11 @@ This prevents a Side Panel opened while tab A was active from later sending a ne
 
 The V2 MVP currently lets ChatGPT use its connected GitHub app for repository work.
 
-Rerun may detect a visible GitHub action-confirmation card so it can pause its own loop and show `Waiting approval`, but it **does not click or synthetically approve** the card. After manual approval, the same execution can continue.
+The preferred approval path is ChatGPT's own app-permission model, not DOM automation. Where the connected account/workspace offers it, a GitHub-specific permission such as **Allow all actions / Always allow** can remove routine approval prompts. Rerun does not attempt to bypass provider, workspace, or safety-required approvals.
 
-HTML/DOM manipulation cannot grant the underlying permission. A future Direct GitHub transport can use credentials explicitly granted to Rerun, but that is a separate authentication path, not an approval bypass.
+If ChatGPT still presents a GitHub action-confirmation card, Rerun pauses its own loop and shows `Waiting approval`. The user resolves that explicit consent boundary in ChatGPT; Rerun **does not click, synthesize, hide, or impersonate** approval controls. After the approval card disappears, the same execution can continue.
+
+A future Direct GitHub transport could use credentials explicitly granted to Rerun, but that would be a separate authentication path rather than an approval bypass and is not required while the connected-app permission model can provide persistent approval.
 
 ## 20 / 23 minute behavior
 
@@ -159,11 +161,13 @@ If a Rerun-owned generation remains active for 23 active minutes, the watchdog c
 
 ## New conversation handoff
 
-If the current conversation loses its composer, Rerun may open **one** fresh ChatGPT tab and transfer Goal Runner ownership.
+If ChatGPT displays its conversation maximum-length notice, or if the current conversation remains in `READY` without a visible and usable composer for five seconds, Rerun may open **one** fresh ChatGPT tab and transfer Goal Runner ownership.
+
+The maximum-length detector recognizes the current English warning (`You've reached the maximum length for this conversation...`) and Korean equivalents. It ignores the same words when they appear inside normal authored conversation turns, so discussing the warning itself does not trigger a handoff. Missing/hidden composer detection is only used while `READY`; a composer disappearing during normal generation is not treated as exhaustion.
 
 The transfer carries the Goal Contract, untouched frozen executor prompt, processed-result history, and `lastCheckpoint`. When a checkpoint exists, the first execution in the new chat receives a one-time Resume Capsule so it can continue from the verified checkpoint without repeating completed work. The capsule is cleared only after dispatch acknowledgement; later iterations use the normal frozen prompt again.
 
-Automatic handoff is run-scoped and single-use. The runtime marks `handoffUsed` before creating the new tab. If handoff itself fails, Rerun pauses instead of repeatedly opening tabs. The transferred chat also has `handoffUsed=true`; if it later loses its composer, Rerun pauses as `NEEDS_USER` rather than recursively opening another chat.
+Automatic handoff is run-scoped and single-use. The runtime marks `handoffUsed` before creating the new tab. If handoff itself fails, Rerun pauses instead of repeatedly opening tabs. The transferred chat also has `handoffUsed=true`; if it later reaches its own conversation limit or loses its composer, Rerun pauses as `NEEDS_USER` rather than recursively opening another chat.
 
 ## Side Panel
 
@@ -205,13 +209,15 @@ The V2 source tests cover:
 - conversation/sandbox resolution plus file-ID fallback routes;
 - processed-result filtering in the artifact reader;
 - blob handoff into the existing content protocol;
-- artifact-reader reinjection for already-open ChatGPT tabs;
+- artifact-reader/recovery-script reinjection for already-open ChatGPT tabs;
 - visible artifact diagnostics;
 - immediate `CONTINUE -> ready` transition;
 - active-tab Side Panel isolation;
 - manual Stop -> pause;
 - GitHub approval wait without auto-click;
 - single-use missing-composer fresh-chat handoff;
+- maximum-length notice handoff even when a composer node still exists;
+- hidden/unusable composer exhaustion without false handoff during generation;
 - one-time checkpoint Resume Capsule on the first handoff dispatch.
 
 Browser E2E is still required because ChatGPT's internal authenticated file endpoints and page/composer behavior are service implementation details and may evolve.
@@ -220,7 +226,7 @@ Browser E2E is still required because ChatGPT's internal authenticated file endp
 
 1. Check out `agent/v2-goal-runner` locally.
 2. Open `chrome://extensions` and Reload the unpacked extension.
-3. Open the Rerun V2 Side Panel on the target ChatGPT tab. An already-open pending tab should have the artifact readers restored automatically.
+3. Open the Rerun V2 Side Panel on the target ChatGPT tab. An already-open pending tab should have the artifact readers and conversation-limit detector restored automatically.
 4. Open two ChatGPT tabs A and B. In A click **목표 세우기**, then switch to B and click **목표 세우기** again. Confirm each tab receives a different nonce and the Side Panel follows the active tab's independent state.
 5. When ChatGPT asks for the next goal, describe the desired repository outcome normally.
 6. Confirm ChatGPT creates `rerun-goal-<nonce>.json` and the Side Panel changes from `Waiting goal JSON` to `Running` automatically in the correct tab only.
@@ -229,5 +235,6 @@ Browser E2E is still required because ChatGPT's internal authenticated file endp
 9. For `CONTINUE`, confirm the exact frozen executor prompt is submitted again without GitHub polling delay.
 10. Verify COMPLETE / NEEDS_USER / CONFLICT pause or stop correctly.
 11. Exercise a fresh-chat handoff and confirm the first new-chat dispatch includes the previous checkpoint once, later dispatches do not, and a second automatic handoff is not opened.
+12. On a conversation that has reached ChatGPT's maximum length, confirm the warning triggers the same one-shot handoff even if an old/hidden composer element remains in the DOM.
 
 See `docs/V2_GOAL_RUNNER_SPEC.md` for the full protocol.

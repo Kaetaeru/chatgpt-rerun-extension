@@ -9,9 +9,10 @@ const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 test("artifact reader uses a MAIN-world authenticated resolver", () => {
-  assert.deepEqual(manifest.content_scripts[0].js, ["content.js", "artifact-reader.js"]);
+  assert.deepEqual(manifest.content_scripts[0].js, ["content.js", "conversation-limit.js", "artifact-reader.js"]);
   assert.deepEqual(manifest.content_scripts[1].js, ["page-artifact-reader.js"]);
   assert.equal(manifest.content_scripts[1].world, "MAIN");
+  assert.match(packageJson.scripts.check, /conversation-limit\.js/);
   assert.match(packageJson.scripts.check, /artifact-reader\.js/);
   assert.match(packageJson.scripts.check, /page-artifact-reader\.js/);
 });
@@ -49,7 +50,7 @@ test("side panel restores all readers on already-open ChatGPT tabs", () => {
   assert.match(popup, /ensureRerunScripts\(tabId\)/);
   assert.match(popup, /files: \["page-artifact-reader\.js"\]/);
   assert.match(popup, /world: "MAIN"/);
-  assert.match(popup, /files: \["content\.js", "artifact-reader\.js"\]/);
+  assert.match(popup, /files: \["content\.js", "conversation-limit\.js", "artifact-reader\.js"\]/);
   assert.match(popup, /\["awaiting_goal_file", "ready", "dispatching", "generating"\]/);
 });
 

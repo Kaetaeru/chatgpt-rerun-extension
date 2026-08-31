@@ -172,6 +172,7 @@ function displayStatus(runtime) {
 function formatConversationEndDetail(response) {
   const evidence = response?.evidence || {};
   const reasonLabels = {
+    conversation_end_banner: "최대 길이 안내 + 새 채팅 시작 버튼을 한 배너에서 발견함",
     explicit_limit_ui: "대화 종료를 나타내는 명시적 UI를 발견함",
     continue_in_new_chat_ui: "현재 대화 안에서 새 채팅으로 계속하라는 UI를 발견함",
     generation_in_progress: "현재 응답 생성 중",
@@ -182,6 +183,7 @@ function formatConversationEndDetail(response) {
   const lines = [
     reasonLabels[response?.reason] || String(response?.reason || "unknown"),
     `composer=${Boolean(evidence.usableComposer)} count=${Number(evidence.composerCount || 0)} generating=${Boolean(evidence.generationActive)} route=${Boolean(evidence.inConversation)}`,
+    `banner=${evidence.endBannerSignal || "-"}`,
     `limit=${evidence.explicitLimitSignal || "-"}`,
     `new-chat=${evidence.continueNewChatSignal || "-"}`
   ];

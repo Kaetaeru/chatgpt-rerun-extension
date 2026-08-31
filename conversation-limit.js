@@ -10,12 +10,6 @@
     "main textarea",
     'main [contenteditable="true"]'
   ];
-  const STOP_SELECTORS = [
-    'button[data-testid="stop-button"]',
-    'button[aria-label*="Stop"]',
-    'button[aria-label*="stop"]',
-    'button[aria-label*="중지"]'
-  ];
   const LIMIT_PATTERNS = [
     /you(?:'|’)ve reached the maximum length for this conversation/i,
     /this conversation (?:has )?reached (?:its|the) maximum length/i,
@@ -27,18 +21,6 @@
   let checking = false;
   let handoffRequested = false;
   let missingComposerSince = null;
-
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type !== "RERUN_V2_DIAGNOSE_CONVERSATION_END") return;
-    try {
-      sendResponse({ ok: true, ...diagnoseConversationEnd() });
-    } catch (error) {
-      sendResponse({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  });
 
   const observer = new MutationObserver(() => { void check(); });
   observer.observe(document.documentElement, { childList: true, subtree: true });
@@ -90,41 +72,6 @@
     }
   }
 
-  function diagnoseConversationEnd() {
-    const bodyTextMatchesLimit = matchesConversationLimitText(document.body?.textContent);
-    const visibleLimitNotice = findConversationLimitNotice();
-    const usableComposer = findUsableComposer();
-    const generationActive = Boolean(findStopButton());
-
-    let ended = false;
-    let reason = "usable_composer";
-    if (visibleLimitNotice) {
-      ended = true;
-      reason = "visible_maximum_length_notice";
-    } else if (generationActive) {
-      reason = "generation_in_progress";
-    } else if (usableComposer) {
-      reason = "usable_composer";
-    } else if (bodyTextMatchesLimit) {
-      ended = true;
-      reason = "maximum_length_text_without_usable_composer";
-    } else {
-      ended = true;
-      reason = "no_usable_composer_while_idle";
-    }
-
-    return {
-      ended,
-      reason,
-      evidence: {
-        visibleLimitNotice: Boolean(visibleLimitNotice),
-        bodyTextMatchesLimit,
-        usableComposer: Boolean(usableComposer),
-        generationActive
-      }
-    };
-  }
-
   async function requestHandoff(reason) {
     handoffRequested = true;
     try {
@@ -172,17 +119,6 @@
         if (composer.getAttribute?.("aria-disabled") === "true") continue;
         if (composer.hasAttribute?.("contenteditable") && composer.getAttribute("contenteditable") === "false") continue;
         return composer;
-      }
-    }
-    return null;
-  }
-
-  function findStopButton() {
-    for (const selector of STOP_SELECTORS) {
-      for (const button of document.querySelectorAll(selector)) {
-        if (!isVisible(button)) continue;
-        if (button.disabled || button.getAttribute?.("aria-disabled") === "true") continue;
-        return button;
       }
     }
     return null;

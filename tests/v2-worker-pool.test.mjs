@@ -139,6 +139,13 @@ test("goal import opens allocation UI, preflights every worker, and advances onl
   assert.equal(data.get(tabRuntimeKey(worker1.tabId)).phase, "worker_preflight");
   assert.equal(data.get(tabRuntimeKey(worker2.tabId)).phase, "worker_preflight");
 
+  data.set(poolStateKey(runId), { ...poolBeforeReady, status: "provisioning" });
+  const prematureReady = await dispatch("REPORT_WORKER_READY", { value: readyValue(poolBeforeReady, worker1) }, worker1.tabId);
+  assert.equal(prematureReady.ok, false);
+  assert.match(prematureReady.error, /not ready to accept preflight reports/i);
+  assert.equal(data.get(tabRuntimeKey(worker1.tabId)).phase, "worker_preflight");
+  data.set(poolStateKey(runId), poolBeforeReady);
+
   const firstReady = await dispatch("REPORT_WORKER_READY", { value: readyValue(poolBeforeReady, worker1) }, worker1.tabId);
   assert.equal(firstReady.ok, true);
   assert.equal(data.get(tabRuntimeKey(worker1.tabId)).phase, "standby");

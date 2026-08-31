@@ -3,6 +3,9 @@ const setupButton = document.getElementById("setupGoal");
 const resumeButton = document.getElementById("resume");
 const pauseButton = document.getElementById("pause");
 const stopButton = document.getElementById("stop");
+const conversationEndButton = document.getElementById("testConversationEnd");
+const conversationEndResult = document.getElementById("conversationEndResult");
+const conversationEndDetail = document.getElementById("conversationEndDetail");
 const ensuredScriptTabs = new Set();
 
 await refresh();
@@ -17,6 +20,27 @@ setupButton.addEventListener("click", async () => {
     await refresh();
   } catch (error) {
     showError(error);
+  }
+});
+
+conversationEndButton.addEventListener("click", async () => {
+  conversationEndButton.disabled = true;
+  conversationEndResult.textContent = "검사 중...";
+  conversationEndDetail.textContent = "현재 활성 ChatGPT 탭의 UI 상태를 확인하고 있습니다.";
+  try {
+    const tabId = await getActiveChatTabId();
+    await ensureRerunScripts(tabId);
+    const response = await chrome.tabs.sendMessage(tabId, { type: "RERUN_V2_DIAGNOSE_CONVERSATION_END" });
+    if (!response?.ok) throw new Error(response?.error || "Conversation-end diagnostic failed.");
+    conversationEndResult.textContent = response.ended ? "대화길이 끝" : "끝이 아님";
+    conversationEndDetail.textContent = formatConversationEndDetail(response);
+    hideError();
+  } catch (error) {
+    conversationEndResult.textContent = "진단 실패";
+    conversationEndDetail.textContent = "활성 ChatGPT 탭에서 진단 응답을 받지 못했습니다.";
+    showError(error);
+  } finally {
+    conversationEndButton.disabled = false;
   }
 });
 
@@ -134,6 +158,19 @@ function displayStatus(runtime) {
   if (runtime.waitingApproval) return "Waiting approval";
   if (runtime.phase === "generating") return "Running";
   return String(runtime.status || "idle").replaceAll("_", " ");
+}
+
+function formatConversationEndDetail(response) {
+  const evidence = response?.evidence || {};
+  const reasonLabels = {
+    visible_maximum_length_notice: "최대 길이 안내 UI를 직접 발견함",
+    generation_in_progress: "현재 응답 생성 중",
+    usable_composer: "사용 가능한 입력창이 존재함",
+    maximum_length_text_without_usable_composer: "최대 길이 문구가 있고 사용 가능한 입력창이 없음",
+    no_usable_composer_while_idle: "생성 중이 아닌데 사용 가능한 입력창이 없음"
+  };
+  const reason = reasonLabels[response?.reason] || String(response?.reason || "unknown");
+  return `${reason} · notice=${Boolean(evidence.visibleLimitNotice)} · text=${Boolean(evidence.bodyTextMatchesLimit)} · composer=${Boolean(evidence.usableComposer)} · generating=${Boolean(evidence.generationActive)}`;
 }
 
 function setText(id, value) {

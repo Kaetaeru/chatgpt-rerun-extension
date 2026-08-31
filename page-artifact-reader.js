@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_REVISION = "artifact-direct-v227-20260901";
+  const SCRIPT_REVISION = "artifact-dom-first-v228-20260901";
   if (globalThis.__CHATGPT_RERUN_V2_PAGE_ARTIFACT_READER_REVISION__ === SCRIPT_REVISION) return;
   globalThis.__CHATGPT_RERUN_V2_PAGE_ARTIFACT_READER__ = true;
   globalThis.__CHATGPT_RERUN_V2_PAGE_ARTIFACT_READER_REVISION__ = SCRIPT_REVISION;
@@ -9,11 +9,14 @@
   const CONTROL_BEGIN = "RERUN_V2_CONTROL_BEGIN";
   const CONTROL_END = "RERUN_V2_CONTROL_END";
   const MAX_JSON_BYTES = 1024 * 1024;
+  const CONVERSATION_429_COOLDOWN_MS = 60_000;
   const CONTROL_KINDS = new Set([
     "chatgpt-rerun-goal",
     "chatgpt-rerun-result",
     "chatgpt-rerun-worker-ready"
   ]);
+
+  let conversationFallbackBlockedUntil = 0;
 
   window.addEventListener("message", (event) => {
     if (event.source !== window) return;
@@ -41,8 +44,36 @@
     if (inlineValue) return { value: inlineValue };
 
     const conversationId = location.pathname.match(/\/c\/([^/?#]+)/)?.[1] || "";
-    if (!conversationId) throw new Error("conversation_id_missing");
+    const rendered = findRenderedArtifactIdentity(expectedFilename);
+    if (rendered) {
+      const session = await getSessionContext();
+      const renderedResult = await resolveRenderedArtifact(rendered, conversationId, session.headers);
+      if (renderedResult) return renderedResult;
+    }
 
+    if (!conversationId) throw new Error("conversation_id_missing");
+    if (Date.now() < conversationFallbackBlockedUntil) {
+      const waitSeconds = Math.max(1, Math.ceil((conversationFallbackBlockedUntil - Date.now()) / 1000));
+      throw new Error(`conversation_fetch_rate_limited_wait_${waitSeconds}s`);
+    }
+
+    const session = await getSessionContext();
+    const conversation = await fetchConversation(conversationId, session.headers);
+    const matched = findMatchingMessage(conversation, expectedFilename);
+    if (!matched) throw new Error("artifact_message_not_found");
+
+    const identity = {
+      messageIds: uniqueStrings([String(matched.message?.id || matched.nodeId || "")]),
+      sandboxPaths: uniqueStrings([findSandboxPath(matched.message, expectedFilename)]),
+      fileIds: uniqueStrings([findFileId(matched.message)]),
+      targets: []
+    };
+    const result = await resolveRenderedArtifact(identity, conversationId, session.headers);
+    if (result) return result;
+    throw new Error("artifact_identity_missing");
+  }
+
+  async function getSessionContext() {
     const sessionResponse = await fetch("/api/auth/session", {
       method: "GET",
       credentials: "include",
@@ -53,45 +84,81 @@
     const accessToken = String(session?.accessToken || "");
     const accountId = String(session?.account?.id || "");
     if (!accessToken) throw new Error("auth_access_token_missing");
+    const headers = { Authorization: `Bearer ${accessToken}`, Accept: "application/json" };
+    if (accountId) headers["chatgpt-account-id"] = accountId;
+    return { headers };
+  }
 
-    const authHeaders = { Authorization: `Bearer ${accessToken}`, Accept: "application/json" };
-    if (accountId) authHeaders["chatgpt-account-id"] = accountId;
-
-    const conversation = await apiJson(
-      `/backend-api/conversation/${encodeURIComponent(conversationId)}`,
-      authHeaders,
-      "conversation_fetch"
-    );
-
-    const matched = findMatchingMessage(conversation, expectedFilename);
-    if (!matched) throw new Error("artifact_message_not_found");
-
-    const messageId = String(matched.message?.id || matched.nodeId || "");
-    const sandboxPath = findSandboxPath(matched.message, expectedFilename);
-    const fileId = findFileId(matched.message);
-
-    const attempts = [];
-    if (messageId && sandboxPath) {
-      const params = new URLSearchParams({ message_id: messageId, sandbox_path: sandboxPath });
-      attempts.push(`/backend-api/conversation/${encodeURIComponent(conversationId)}/interpreter/download?${params}`);
-      attempts.push(`/backend-api/conversation/${encodeURIComponent(conversationId)}/download_from_sandbox/v2?${params}`);
+  async function fetchConversation(conversationId, headers) {
+    const response = await fetch(`/backend-api/conversation/${encodeURIComponent(conversationId)}`, {
+      method: "GET",
+      headers,
+      credentials: "include",
+      cache: "no-store"
+    });
+    if (response.status === 429) {
+      conversationFallbackBlockedUntil = Date.now() + CONVERSATION_429_COOLDOWN_MS;
+      throw new Error("conversation_fetch_429_rate_limited");
     }
-    if (fileId) {
-      const query = `conversation_id=${encodeURIComponent(conversationId)}&inline=false`;
-      attempts.push(`/backend-api/files/download/${encodeURIComponent(fileId)}?${query}`);
-      attempts.push(`/backend-api/files/${encodeURIComponent(fileId)}/download?${query}`);
-    }
-    if (!attempts.length) throw new Error("artifact_identity_missing");
+    if (!response.ok) throw new Error(`conversation_fetch_${response.status}`);
+    return response.json();
+  }
 
-    const errors = [];
-    for (const path of attempts) {
+  async function resolveRenderedArtifact(identity, conversationId, headers) {
+    for (const target of identity.targets || []) {
       try {
-        return await resolveDownloadAttempt(path, authHeaders);
-      } catch (error) {
-        errors.push(error instanceof Error ? error.message : String(error));
+        const result = await resolveRenderedTarget(target, headers);
+        if (result) return result;
+      } catch {
+        // Keep trying stronger identifiers from the same rendered card.
       }
     }
-    throw new Error(`artifact_resolve_failed:${errors.join(",")}`);
+
+    if (conversationId) {
+      for (const fileId of identity.fileIds || []) {
+        const query = `conversation_id=${encodeURIComponent(conversationId)}&inline=false`;
+        for (const path of [
+          `/backend-api/files/download/${encodeURIComponent(fileId)}?${query}`,
+          `/backend-api/files/${encodeURIComponent(fileId)}/download?${query}`
+        ]) {
+          try { return await resolveDownloadAttempt(path, headers); } catch {}
+        }
+      }
+
+      const messageIds = identity.messageIds?.length ? identity.messageIds : [""];
+      for (const sandboxPath of identity.sandboxPaths || []) {
+        for (const messageId of messageIds) {
+          const params = new URLSearchParams({ sandbox_path: sandboxPath });
+          if (messageId) params.set("message_id", messageId);
+          for (const path of [
+            `/backend-api/conversation/${encodeURIComponent(conversationId)}/interpreter/download?${params}`,
+            `/backend-api/conversation/${encodeURIComponent(conversationId)}/download_from_sandbox/v2?${params}`
+          ]) {
+            try { return await resolveDownloadAttempt(path, headers); } catch {}
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  async function resolveRenderedTarget(target, headers) {
+    const raw = String(target || "").trim();
+    if (!raw || raw.startsWith("sandbox:")) return null;
+    if (raw.startsWith("blob:")) {
+      const response = await fetch(raw, { method: "GET", cache: "no-store" });
+      if (!response.ok) throw new Error(`artifact_blob_${response.status}`);
+      return { value: parseControlText(await response.text()) };
+    }
+
+    const resolved = new URL(raw, location.origin);
+    if (resolved.hostname === "files.oaiusercontent.com" || resolved.hostname.endsWith(".oaiusercontent.com")) {
+      return { downloadUrl: validateDownloadUrl(resolved.href) };
+    }
+    if (resolved.hostname === "chatgpt.com" || resolved.hostname === "chat.openai.com") {
+      return resolveDownloadAttempt(resolved.href, headers);
+    }
+    return null;
   }
 
   async function resolveDownloadAttempt(path, headers) {
@@ -108,12 +175,7 @@
     if (new TextEncoder().encode(text).byteLength > MAX_JSON_BYTES) throw new Error("artifact_content_too_large");
 
     let parsed = null;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      parsed = null;
-    }
-
+    try { parsed = JSON.parse(text); } catch { parsed = null; }
     if (isControlObject(parsed)) return { value: parsed };
 
     const metadataUrl = parsed && typeof parsed === "object" && !Array.isArray(parsed)
@@ -161,6 +223,77 @@
     return null;
   }
 
+  function findRenderedArtifactIdentity(expectedFilename) {
+    const turns = Array.from(document.querySelectorAll?.('[data-message-author-role="assistant"]') || []);
+    for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
+      const turn = turns[turnIndex];
+      if (!nodeMentionsFilename(turn, expectedFilename)) continue;
+      const nodes = [turn, ...Array.from(turn.querySelectorAll?.("*") || [])].slice(0, 2500);
+      const matching = nodes.filter((node) => nodeMentionsFilename(node, expectedFilename));
+      if (!matching.length) continue;
+
+      matching.sort((a, b) => String(a.textContent || "").length - String(b.textContent || "").length);
+      const roots = matching.slice(0, 8);
+      const inspected = new Set();
+      for (const root of roots) {
+        let current = root;
+        for (let depth = 0; current && depth < 7; depth += 1, current = current.parentElement) {
+          inspected.add(current);
+          for (const child of Array.from(current.querySelectorAll?.("*") || []).slice(0, 500)) inspected.add(child);
+          if (current === turn) break;
+        }
+      }
+
+      const values = [];
+      const messageIds = [];
+      for (const node of inspected) {
+        const attrs = Array.from(node?.attributes || []);
+        for (const attr of attrs) {
+          const name = String(attr.name || "");
+          const value = String(attr.value || "").trim();
+          if (!value) continue;
+          values.push(value);
+          if (/message/i.test(name) && /[A-Za-z0-9_-]{8,}/.test(value)) messageIds.push(value);
+        }
+        if (node?.href) values.push(String(node.href));
+      }
+
+      const targets = [];
+      const fileIds = [];
+      const sandboxPaths = [];
+      for (const value of values) {
+        const fileMatch = value.match(/\b(file_[A-Za-z0-9_-]+)\b/);
+        if (fileMatch) fileIds.push(fileMatch[1]);
+
+        for (const match of value.matchAll(/sandbox:\/[^\s"'<>)}\]]+/g)) {
+          if (match[0].includes(expectedFilename)) sandboxPaths.push(match[0].replace(/^sandbox:/, ""));
+        }
+
+        if (/^(?:https?:|blob:|\/backend-api\/)/i.test(value) && value.includes(expectedFilename)) targets.push(value);
+        else if (/^(?:https?:|blob:|\/backend-api\/)/i.test(value) && /(?:download|file|sandbox)/i.test(value)) targets.push(value);
+      }
+
+      const identity = {
+        targets: uniqueStrings(targets),
+        fileIds: uniqueStrings(fileIds),
+        sandboxPaths: uniqueStrings(sandboxPaths),
+        messageIds: uniqueStrings(messageIds)
+      };
+      if (identity.targets.length || identity.fileIds.length || identity.sandboxPaths.length) return identity;
+    }
+    return null;
+  }
+
+  function nodeMentionsFilename(node, expectedFilename) {
+    if (!node) return false;
+    const text = String(node.textContent || "");
+    if (text.includes(expectedFilename)) return true;
+    for (const attr of Array.from(node.attributes || [])) {
+      if (String(attr.value || "").includes(expectedFilename)) return true;
+    }
+    return false;
+  }
+
   function stripOptionalCodeFence(value) {
     return String(value || "")
       .replace(/^```(?:json)?\s*/i, "")
@@ -178,15 +311,14 @@
     );
   }
 
-  async function apiJson(path, headers, stage) {
-    const response = await fetch(path, {
-      method: "GET",
-      headers,
-      credentials: "include",
-      cache: "no-store"
-    });
-    if (!response.ok) throw new Error(`${stage}_${response.status}`);
-    return response.json();
+  function parseControlText(text) {
+    const source = String(text || "");
+    if (!source.trim()) throw new Error("artifact_content_empty");
+    if (new TextEncoder().encode(source).byteLength > MAX_JSON_BYTES) throw new Error("artifact_content_too_large");
+    let value;
+    try { value = JSON.parse(source); } catch { throw new Error("artifact_content_invalid_json"); }
+    if (!isControlObject(value)) throw new Error("artifact_content_not_rerun_control");
+    return value;
   }
 
   function findMatchingMessage(conversation, expectedFilename) {
@@ -229,16 +361,10 @@
       const current = stack.pop();
       visited += 1;
       if (typeof current === "string") {
-        const marker = "sandbox:";
-        let index = current.indexOf(marker);
-        while (index >= 0) {
-          const tail = current.slice(index + marker.length);
-          const end = tail.search(/[)\]\s"']/);
-          const raw = (end >= 0 ? tail.slice(0, end) : tail).trim();
-          if (raw.includes(expectedFilename)) {
-            try { return decodeURIComponent(raw); } catch { return raw; }
-          }
-          index = current.indexOf(marker, index + marker.length);
+        for (const match of current.matchAll(/sandbox:\/[^\s"'<>)}\]]+/g)) {
+          if (!match[0].includes(expectedFilename)) continue;
+          const raw = match[0].replace(/^sandbox:/, "");
+          try { return decodeURIComponent(raw); } catch { return raw; }
         }
         continue;
       }
@@ -258,8 +384,6 @@
       if (typeof current === "string") {
         const direct = current.match(/\b(file_[A-Za-z0-9_-]+)\b/);
         if (direct) return direct[1];
-        const pointer = current.match(/(?:file-service|sediment):\/\/(file_[A-Za-z0-9_-]+)/);
-        if (pointer) return pointer[1];
         continue;
       }
       if (!current || typeof current !== "object") continue;
@@ -267,5 +391,9 @@
       else stack.push(...Object.values(current));
     }
     return "";
+  }
+
+  function uniqueStrings(values) {
+    return [...new Set((values || []).map((value) => String(value || "").trim()).filter(Boolean))];
   }
 })();

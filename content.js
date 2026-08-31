@@ -65,6 +65,11 @@
         return;
       }
 
+      if (runtime.phase === "worker_preflight") {
+        await importWorkerReadyIfAvailable(runtime);
+        return;
+      }
+
       if (runtime.phase === "dispatching") {
         const claimedAt = Date.parse(String(runtime.dispatchClaimedAt || ""));
         if (Number.isFinite(claimedAt) && Date.now() - claimedAt > 15_000) {
@@ -93,7 +98,7 @@
 
       const composer = findComposer() || await waitForComposer(5_000);
       if (!composer) {
-        await chrome.runtime.sendMessage({ type: "HANDOFF_NEW_CHAT" });
+        await chrome.runtime.sendMessage({ type: "HANDOFF_NEW_CHAT", reason: "composer_unavailable" });
         return;
       }
       if (readComposerText(composer).trim()) {
@@ -136,6 +141,35 @@
       seenJsonAttachmentKeys.add(candidate.key);
     } catch {
       // File cards can appear before their real download URL is exposed. Retry next tick.
+    }
+  }
+
+  async function importWorkerReadyIfAvailable(runtime) {
+    const approvalCard = findGitHubApprovalCard();
+    if (approvalCard) {
+      if (!runtime.waitingApproval) {
+        await chrome.runtime.sendMessage({ type: "SET_APPROVAL_WAIT", waiting: true });
+      }
+      return;
+    }
+    if (runtime.waitingApproval) {
+      await chrome.runtime.sendMessage({ type: "SET_APPROVAL_WAIT", waiting: false });
+    }
+
+    const workerIndex = Number(runtime.workerIndex);
+    const goalId = String(runtime.goalId || "");
+    const workerNonce = String(runtime.workerNonce || "");
+    if (!goalId || !workerNonce || !Number.isInteger(workerIndex) || workerIndex < 0) return;
+    const expectedName = `rerun-worker-ready-${goalId}-${workerIndex + 1}-${workerNonce}.json`;
+    const candidate = findNewJsonAttachment(expectedName);
+    if (!candidate) return;
+    try {
+      const value = await readJsonAttachment(candidate);
+      const response = await chrome.runtime.sendMessage({ type: "REPORT_WORKER_READY", value });
+      if (!response?.ok) throw new Error(response?.error || "worker_ready_import_failed");
+      seenJsonAttachmentKeys.add(candidate.key);
+    } catch {
+      // The authenticated artifact reader may still be resolving the generated file.
     }
   }
 

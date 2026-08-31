@@ -17,7 +17,7 @@ test("existing content protocol still accepts generated JSON through blob or HTT
 });
 
 test("authenticated artifact reader replaces direct sandbox and preview heuristics", () => {
-  assert.deepEqual(manifest.content_scripts[0].js, ["content.js", "artifact-reader.js"]);
+  assert.deepEqual(manifest.content_scripts[0].js, ["content.js", "conversation-limit.js", "artifact-reader.js"]);
   assert.deepEqual(manifest.content_scripts[1].js, ["page-artifact-reader.js"]);
   assert.equal(manifest.content_scripts[1].world, "MAIN");
   assert.match(pageArtifact, /interpreter\/download/);

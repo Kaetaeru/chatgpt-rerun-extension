@@ -1,3 +1,5 @@
+import { diagnoseConversationEndInPage } from "./conversation-diagnostic.js";
+
 const errorBox = document.getElementById("errorBox");
 const setupButton = document.getElementById("setupGoal");
 const resumeButton = document.getElementById("resume");
@@ -26,18 +28,25 @@ setupButton.addEventListener("click", async () => {
 conversationEndButton.addEventListener("click", async () => {
   conversationEndButton.disabled = true;
   conversationEndResult.textContent = "검사 중...";
-  conversationEndDetail.textContent = "현재 활성 ChatGPT 탭의 UI 상태를 확인하고 있습니다.";
+  conversationEndDetail.textContent = "현재 활성 ChatGPT 탭의 UI를 직접 샘플링하고 있습니다.";
   try {
     const tabId = await getActiveChatTabId();
-    await ensureRerunScripts(tabId);
-    const response = await chrome.tabs.sendMessage(tabId, { type: "RERUN_V2_DIAGNOSE_CONVERSATION_END" });
-    if (!response?.ok) throw new Error(response?.error || "Conversation-end diagnostic failed.");
-    conversationEndResult.textContent = response.ended ? "대화길이 끝" : "끝이 아님";
+    const [execution] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: diagnoseConversationEndInPage
+    });
+    const response = execution?.result;
+    if (!response || typeof response !== "object") throw new Error("Conversation-end diagnostic returned no result.");
+    conversationEndResult.textContent = response.ended === true
+      ? "대화길이 끝"
+      : response.ended === false
+        ? "끝이 아님"
+        : "판단 불가";
     conversationEndDetail.textContent = formatConversationEndDetail(response);
     hideError();
   } catch (error) {
     conversationEndResult.textContent = "진단 실패";
-    conversationEndDetail.textContent = "활성 ChatGPT 탭에서 진단 응답을 받지 못했습니다.";
+    conversationEndDetail.textContent = "활성 ChatGPT 탭의 DOM을 직접 검사하지 못했습니다.";
     showError(error);
   } finally {
     conversationEndButton.disabled = false;
@@ -163,14 +172,23 @@ function displayStatus(runtime) {
 function formatConversationEndDetail(response) {
   const evidence = response?.evidence || {};
   const reasonLabels = {
-    visible_maximum_length_notice: "최대 길이 안내 UI를 직접 발견함",
+    explicit_limit_ui: "대화 종료를 나타내는 명시적 UI를 발견함",
+    continue_in_new_chat_ui: "현재 대화 안에서 새 채팅으로 계속하라는 UI를 발견함",
     generation_in_progress: "현재 응답 생성 중",
     usable_composer: "사용 가능한 입력창이 존재함",
-    maximum_length_text_without_usable_composer: "최대 길이 문구가 있고 사용 가능한 입력창이 없음",
-    no_usable_composer_while_idle: "생성 중이 아닌데 사용 가능한 입력창이 없음"
+    no_usable_composer_without_known_end_signal: "입력창은 없지만 알려진 종료 UI도 찾지 못함",
+    ambiguous_ui: "현재 UI만으로 종료 여부를 확정하지 못함"
   };
-  const reason = reasonLabels[response?.reason] || String(response?.reason || "unknown");
-  return `${reason} · notice=${Boolean(evidence.visibleLimitNotice)} · text=${Boolean(evidence.bodyTextMatchesLimit)} · composer=${Boolean(evidence.usableComposer)} · generating=${Boolean(evidence.generationActive)}`;
+  const lines = [
+    reasonLabels[response?.reason] || String(response?.reason || "unknown"),
+    `composer=${Boolean(evidence.usableComposer)} count=${Number(evidence.composerCount || 0)} generating=${Boolean(evidence.generationActive)} route=${Boolean(evidence.inConversation)}`,
+    `limit=${evidence.explicitLimitSignal || "-"}`,
+    `new-chat=${evidence.continueNewChatSignal || "-"}`
+  ];
+  const candidates = Array.isArray(response?.uiCandidates) ? response.uiCandidates : [];
+  lines.push("UI candidates:");
+  lines.push(...(candidates.length ? candidates.map((value, index) => `${index + 1}. ${value}`) : ["(none)"]));
+  return lines.join("\n");
 }
 
 function setText(id, value) {

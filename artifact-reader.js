@@ -47,6 +47,10 @@
       mode = "goal";
       expectedId = String(runtime.setupNonce);
       expectedFilename = `rerun-goal-${expectedId}.json`;
+    } else if (runtime.phase === "worker_preflight" && runtime.goalId && runtime.workerNonce && Number.isInteger(runtime.workerIndex)) {
+      mode = "worker_ready";
+      expectedId = `${runtime.goalId}:${runtime.workerIndex + 1}`;
+      expectedFilename = `rerun-worker-ready-${runtime.goalId}-${runtime.workerIndex + 1}-${runtime.workerNonce}.json`;
     } else if (runtime.phase === "generating" && runtime.goalId) {
       mode = "result";
       expectedId = String(runtime.goalId);

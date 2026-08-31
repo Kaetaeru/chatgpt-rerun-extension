@@ -8,7 +8,7 @@ Current development branch:
 agent/v2-goal-runner
 ```
 
-Current extension version: **2.2.3**.
+Current extension version: **2.2.4**.
 
 The previous V1 implementation remains preserved on `agent/mvp-autoresume`.
 
@@ -62,9 +62,13 @@ The Side Panel entry point remains **목표 세우기**. ChatGPT creates:
 rerun-goal-<setup_nonce>.json
 ```
 
+The Side Panel shows the current nonce as **Goal JSON ID** before import, then shows the accepted `goal_id` after import. This makes it possible to compare the UI directly with the generated filename.
+
 The goal JSON contains repository, branch, goal, acceptance criteria and known canonical authority references and is nonce-bound to the active setup request.
 
 When the extension accepts that JSON, it creates and stores the frozen executor prompt, but **does not send it in the goal-authoring conversation**. Instead it disables that source conversation and opens `pool-setup.html`, where the user chooses how many worker conversations to allocate.
+
+V2.2.4 treats an older same-repository/same-branch pool in `awaiting_worker_count` with zero workers as an abandoned pre-execution setup. A newer Goal JSON automatically marks that unallocated pool `stopped` before import. Pools that have begun provisioning, GitHub preflight, or goal execution remain protected as real conflicts and are never auto-replaced.
 
 ## Worker Pool setup
 
@@ -139,7 +143,7 @@ Legacy non-pool runtimes created by older V2 versions retain the previous single
 
 The Side Panel includes **대화길이 끝 테스트** for browser dogfooding before the automatic exhaustion policy is changed again.
 
-V2.2.3 runs a fresh, read-only DOM sampler directly in the currently active ChatGPT tab on every click. The diagnostic now recognizes ChatGPT's observed Korean maximum-length banner even when the composer remains usable and the UI still exposes `생각 중` / Stop state. A strong non-authored maximum-length banner takes precedence over stale composer/generation signals; quoted limit text inside normal conversation turns remains excluded.
+V2.2.4 runs a fresh, read-only DOM sampler directly in the currently active ChatGPT tab on every click. The diagnostic recognizes ChatGPT's observed Korean maximum-length banner even when the composer remains usable and the UI still exposes `생각 중` / Stop state. A strong non-authored maximum-length banner takes precedence over stale composer/generation signals; quoted limit text inside normal conversation turns remains excluded.
 
 The diagnostic reports one of three states:
 
@@ -153,7 +157,7 @@ The automatic `conversation-limit.js` handoff policy has **not** been changed to
 
 ## Generated artifact resolution
 
-V2.2.3 uses the authenticated ChatGPT artifact resolver for all three structured control artifacts:
+V2.2.4 uses the authenticated ChatGPT artifact resolver for all three structured control artifacts:
 
 - goal JSON;
 - worker-ready JSON;
@@ -161,7 +165,9 @@ V2.2.3 uses the authenticated ChatGPT artifact resolver for all three structured
 
 `page-artifact-reader.js` runs in the page `MAIN` world, obtains the logged-in ChatGPT session context, resolves the exact generated artifact from the current conversation, and hands the parsed object to the isolated artifact reader without exposing the access token to the Goal Runner state machine.
 
-Artifact failures remain diagnostics only and cannot authorize state changes.
+Goal JSON is imported directly by the authenticated artifact reader after validation handoff to the background state machine. The reader uses a revision guard so extension Reloads can replace an older injected reader instead of being blocked by a stale boolean global.
+
+Artifact failures remain diagnostics only and cannot authorize normal goal/result state changes.
 
 ## Runtime state
 
@@ -204,6 +210,8 @@ npm test
 V2.2 tests cover, among other existing V2 behavior:
 
 - goal JSON nonce binding;
+- authenticated Goal JSON import after extension Reload;
+- stale unallocated same-repository pool retirement without touching a running pool;
 - goal-authoring chat stopping before execution;
 - worker-count setup;
 - all worker tabs preallocated before preflight;
@@ -227,10 +235,12 @@ Browser E2E is still required because ChatGPT's page/composer UI, approval cards
 ## Browser test
 
 1. Reload the unpacked extension from `agent/v2-goal-runner`.
-2. Open the Side Panel on a normal ChatGPT conversation and press **대화길이 끝 테스트**. Confirm it displays **끝이 아님** when the composer is usable.
-3. Open a conversation that has actually reached ChatGPT's current maximum length and press **대화길이 끝 테스트**.
-4. On the currently observed Korean UI, the maximum-length banner must make the result **대화길이 끝** even if `composer=true` and `generating=true` still appear in the evidence.
-5. If that browser check passes, use the same strong banner signal to update the automatic handoff detector.
-6. Then continue the normal Worker Pool browser validation described in `docs/V2_GOAL_RUNNER_SPEC.md`.
+2. Press **목표 세우기** and verify that **Goal JSON ID** immediately shows the setup nonce used in `rerun-goal-<nonce>.json`.
+3. After ChatGPT creates that exact Goal JSON, confirm the worker-count setup page opens automatically. An older `awaiting_worker_count` pool with zero workers for the same repository/branch should be marked stopped and must not block the new goal.
+4. Open the Side Panel on a normal ChatGPT conversation and press **대화길이 끝 테스트**. Confirm it displays **끝이 아님** when the composer is usable.
+5. Open a conversation that has actually reached ChatGPT's current maximum length and press **대화길이 끝 테스트**.
+6. On the currently observed Korean UI, the maximum-length banner must make the result **대화길이 끝** even if `composer=true` and `generating=true` still appear in the evidence.
+7. If that browser check passes, use the same strong banner signal to update the automatic handoff detector.
+8. Then continue the normal Worker Pool browser validation described in `docs/V2_GOAL_RUNNER_SPEC.md`.
 
 See `docs/V2_GOAL_RUNNER_SPEC.md` for the normative protocol.

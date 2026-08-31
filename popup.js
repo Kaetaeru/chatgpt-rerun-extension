@@ -59,7 +59,7 @@ async function refresh() {
     const tabId = await getActiveChatTabId();
     const state = await getState(tabId);
     const { config, runtime } = state;
-    if (["awaiting_goal_file", "ready", "dispatching", "generating"].includes(runtime.phase)) {
+    if (["awaiting_goal_file", "worker_preflight", "ready", "dispatching", "generating"].includes(runtime.phase)) {
       await ensureRerunScripts(tabId);
     }
     const artifactDiagnostic = await getArtifactDiagnostic(tabId, runtime);
@@ -79,7 +79,7 @@ async function refresh() {
     setText("checkpoint", runtime.lastCheckpoint || "-");
 
     const busy = ["dispatching", "generating"].includes(runtime.phase);
-    setupButton.disabled = busy;
+    setupButton.disabled = busy || ["worker_preflight", "standby", "awaiting_worker_count"].includes(runtime.phase);
     resumeButton.disabled = !runtime.runId || !["paused", "needs_user", "conflict", "stopped"].includes(runtime.status);
     pauseButton.disabled = !runtime.enabled;
     stopButton.disabled = !runtime.runId || runtime.status === "stopped";
@@ -117,13 +117,20 @@ async function getArtifactDiagnostic(tabId, runtime) {
   const stored = await chrome.storage.local.get(key);
   const diagnostic = stored[key] || null;
   if (!diagnostic) return null;
-  const expectedId = runtime.phase === "awaiting_goal_file" ? runtime.setupNonce : runtime.goalId;
+  let expectedId = runtime.goalId;
+  if (runtime.phase === "awaiting_goal_file") expectedId = runtime.setupNonce;
+  if (runtime.phase === "worker_preflight" && Number.isInteger(runtime.workerIndex)) {
+    expectedId = `${runtime.goalId}:${runtime.workerIndex + 1}`;
+  }
   if (!expectedId || String(diagnostic.expectedId || "") !== String(expectedId)) return null;
   return diagnostic;
 }
 
 function displayStatus(runtime) {
   if (runtime.phase === "awaiting_goal_file") return "Waiting goal JSON";
+  if (runtime.phase === "awaiting_worker_count") return "Waiting worker count";
+  if (runtime.phase === "worker_preflight") return runtime.waitingApproval ? "Waiting GitHub approval" : "GitHub preflight";
+  if (runtime.phase === "standby") return "Worker ready";
   if (runtime.waitingApproval) return "Waiting approval";
   if (runtime.phase === "generating") return "Running";
   return String(runtime.status || "idle").replaceAll("_", " ");

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChatGPT Rerun Worker Pool</title>
+  <style>
+    :root { color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    body { margin: 0; background: Canvas; color: CanvasText; }
+    main { max-width: 760px; margin: 48px auto; padding: 0 24px 48px; }
+    h1 { margin-bottom: 8px; }
+    .muted { opacity: .72; }
+    .card { border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 14px; padding: 18px; margin-top: 18px; }
+    dl { display: grid; grid-template-columns: 120px 1fr; gap: 8px 16px; margin: 0; }
+    dt { opacity: .65; }
+    dd { margin: 0; overflow-wrap: anywhere; }
+    form { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+    label { display: grid; gap: 6px; font-weight: 600; }
+    input { width: 110px; padding: 9px 10px; border-radius: 9px; border: 1px solid color-mix(in srgb, CanvasText 25%, transparent); font: inherit; }
+    button { padding: 10px 14px; border: 0; border-radius: 9px; font: inherit; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: default; }
+    .notice { line-height: 1.55; }
+    .workers { display: grid; gap: 9px; }
+    .worker { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 9px; background: color-mix(in srgb, CanvasText 7%, transparent); }
+    .status { font-weight: 700; text-transform: uppercase; }
+    #error { color: #d33; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Rerun Worker Pool</h1>
+    <p class="muted">목표 작성 채팅은 여기서 끝납니다. 실제 작업은 미리 준비된 새 ChatGPT 채팅들에서 순서대로 진행됩니다.</p>
+
+    <section class="card">
+      <dl>
+        <dt>Repository</dt><dd id="repository">-</dd>
+        <dt>Branch</dt><dd id="branch">-</dd>
+        <dt>Goal</dt><dd id="goal">-</dd>
+        <dt>Run</dt><dd id="runId">-</dd>
+        <dt>Pool status</dt><dd id="poolStatus">-</dd>
+      </dl>
+    </section>
+
+    <section class="card" id="countCard">
+      <form id="workerForm">
+        <label>사용할 ChatGPT 채팅 수
+          <input id="workerCount" type="number" min="1" max="20" step="1" value="3" required>
+        </label>
+        <button id="createWorkers" type="submit">Worker 채팅 열기</button>
+      </form>
+    </section>
+
+    <section class="card notice">
+      <strong>GitHub 승인</strong>
+      <p>각 Worker 채팅은 실제 목표를 시작하기 전에 GitHub 읽기 preflight를 수행합니다. 승인 카드가 나타나면 그 채팅에서 <strong>모든 작업 허용 / Always allow</strong> 같은 지속 허용 옵션을 직접 선택하세요. Rerun은 승인 버튼을 자동으로 누르지 않습니다.</p>
+      <p>GitHub 읽기가 실제로 성공하고 해당 채팅이 <code>worker-ready</code> JSON을 생성한 경우에만 Worker가 READY가 됩니다. 모든 Worker가 READY가 된 뒤 1번 Worker가 자동으로 목표를 시작합니다.</p>
+    </section>
+
+    <section class="card">
+      <h2>Workers</h2>
+      <div id="workers" class="workers"><span class="muted">아직 Worker가 없습니다.</span></div>
+    </section>
+
+    <p id="error" hidden></p>
+  </main>
+  <script src="pool-setup.js"></script>
+</body>
+</html>

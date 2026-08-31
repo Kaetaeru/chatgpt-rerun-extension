@@ -153,7 +153,7 @@ The extension validates the file structure and active `goal_id`. It keeps the fu
 
 A ChatGPT-generated file may be represented in assistant output by a `sandbox:/mnt/data/...` link that is not itself fetchable by an extension content script. Rerun therefore does not treat the visible sandbox URL or a preview DOM as the source of truth for file bytes.
 
-V2.1.7 uses an authenticated artifact resolver:
+V2.1.8 uses an authenticated artifact resolver:
 
 1. `page-artifact-reader.js` runs in the page `MAIN` world.
 2. It reads the logged-in ChatGPT session and obtains the current access token plus the account ID when the session exposes one.
@@ -169,7 +169,7 @@ For execution results, the extension snapshots matching attachment identities be
 
 Artifact resolution failures are diagnostic only and are stored separately at `v2:artifact:<tabId>`. They do not authorize state transitions. The Side Panel shows an exact `Artifact reader: ...` error instead of silently displaying `Waiting goal JSON` forever.
 
-The Side Panel ensures the normal content script plus both artifact-reader worlds are present on an already-open ChatGPT tab, so reloading the extension does not require a page refresh to restore a pending artifact read.
+The Side Panel ensures the normal content script, `conversation-limit.js`, and both artifact-reader worlds are present on an already-open ChatGPT tab, so reloading the extension does not require a page refresh to restore pending artifact reads or conversation-limit recovery.
 
 This is intentionally separate from assistant-message prose parsing.
 
@@ -234,15 +234,24 @@ A trusted manual ChatGPT Stop pauses the goal rather than silently rerunning.
 
 ChatGPT GitHub action confirmation remains a consent boundary.
 
-Rerun may detect a visible GitHub approval card, pause its own loop, and automatically continue after the user manually approves. Rerun must not auto-click, synthesize, hide, or impersonate provider/ChatGPT approval controls.
+The preferred path for routine approvals is ChatGPT's connected-app permission model. Where the account/workspace exposes an app-specific persistent permission such as **Allow all actions / Always allow**, that setting should be used instead of teaching Rerun to click approval UI.
 
-A future Direct GitHub transport can use credentials explicitly granted to Rerun, but that is a separate authentication path rather than an approval bypass.
+If ChatGPT still presents a GitHub approval card because of provider, workspace, or safety requirements, Rerun may detect it, pause its own loop, and automatically continue after the user resolves the card. Rerun must not auto-click, synthesize, hide, or impersonate provider/ChatGPT approval controls.
+
+A future Direct GitHub transport can use credentials explicitly granted to Rerun, but that is a separate authentication path rather than an approval bypass and is not required solely to remove routine prompts already covered by connected-app permissions.
 
 ## New conversation handoff
 
-If the current conversation loses its composer, Rerun may transfer Goal Runner ownership to **one** fresh ChatGPT tab for that run. The same Goal Contract, frozen prompt, processed-result history, and checkpoint move with the run.
+Rerun may transfer Goal Runner ownership to **one** fresh ChatGPT tab for a run when either of these exhaustion signals is present:
 
-The automatic handoff is run-scoped and single-use. `handoffUsed` is persisted before creating the new tab, so a failed transfer cannot enter a retry loop that opens unlimited tabs. A transferred chat also carries `handoffUsed=true`; if that chat later loses its composer as well, Rerun pauses as `NEEDS_USER` instead of opening another automatic chat.
+- ChatGPT displays a visible conversation maximum-length notice, including the current English `You've reached the maximum length for this conversation...` form or supported Korean equivalents; or
+- the run remains in `READY` for five seconds without a visible and usable composer, including a composer node that remains in the DOM but is hidden, disabled, read-only, aria-disabled, or no longer content-editable.
+
+Maximum-length text is accepted only from visible non-authored UI. The same words inside normal user/assistant conversation turns must not trigger recovery. Missing-composer detection is scoped to `READY`, so a composer disappearing during normal `GENERATING` is not itself an exhaustion signal.
+
+The same Goal Contract, frozen prompt, processed-result history, and checkpoint move with the run.
+
+The automatic handoff is run-scoped and single-use. `handoffUsed` is persisted before creating the new tab, so a failed transfer cannot enter a retry loop that opens unlimited tabs. A transferred chat also carries `handoffUsed=true`; if that chat later reaches the maximum length or loses its composer, Rerun pauses as `NEEDS_USER` instead of opening another automatic chat.
 
 When a checkpoint exists, the transferred runtime sets `resumeCapsulePending=true`. The first execution claim in the new chat receives the frozen executor prompt plus a one-time Resume Capsule containing `lastCheckpoint`. The capsule is cleared only after the dispatch is acknowledged, so a failed dispatch can retry without losing the checkpoint. Normal iterations after that use the untouched frozen executor prompt again.
 
@@ -269,7 +278,7 @@ V2.1 JSON protocol is ready for browser validation when:
 5. a newly created result JSON controls CONTINUE / COMPLETE / NEEDS_USER / CONFLICT;
 6. old/stale goal and result artifacts, including non-consecutive result-ID replays, are rejected or ignored;
 7. assistant prose is not read for control state;
-8. GitHub approvals remain manual and do not break the loop;
-9. composer exhaustion performs at most one automatic fresh-chat handoff per run and a transferred chat cannot recursively hand off again;
+8. GitHub approvals remain inside ChatGPT's permission/consent model and do not break the loop;
+9. a maximum-length notice or persistent unusable composer performs at most one automatic fresh-chat handoff per run, while normal generated content mentioning the warning and normal generation-time composer absence do not trigger it;
 10. the 23-minute watchdog remains recovery-only;
 11. an artifact-resolution failure produces a visible diagnostic instead of an unexplained permanent wait.

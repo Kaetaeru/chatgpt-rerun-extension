@@ -1,6 +1,7 @@
 (() => {
-  if (globalThis.__CHATGPT_RERUN_V2_ARTIFACT_READER__) return;
-  globalThis.__CHATGPT_RERUN_V2_ARTIFACT_READER__ = true;
+  const SCRIPT_REVISION = "goal-import-20260901";
+  if (globalThis.__CHATGPT_RERUN_V2_ARTIFACT_READER__ === SCRIPT_REVISION) return;
+  globalThis.__CHATGPT_RERUN_V2_ARTIFACT_READER__ = SCRIPT_REVISION;
 
   const SCAN_MS = 750;
   const RETRY_MS = 2500;
@@ -82,6 +83,20 @@
           nextAttemptAt = Date.now() + RETRY_MS;
           return;
         }
+      }
+
+      if (mode === "goal") {
+        const imported = await chrome.runtime.sendMessage({ type: "IMPORT_GOAL_FILE", value: value.value });
+        if (!imported?.ok) {
+          const latest = await chrome.runtime.sendMessage({ type: "GET_CURRENT_STATE" });
+          const alreadyImported = latest?.ok &&
+            String(latest.runtime?.goalId || "") === expectedId &&
+            latest.runtime?.phase !== "awaiting_goal_file";
+          if (!alreadyImported) throw new Error(imported?.error || "goal_file_import_failed");
+        }
+        await writeDiagnostic(mode, expectedId, "ready", "Goal JSON resolved and imported.");
+        nextAttemptAt = Date.now() + RETRY_MS;
+        return;
       }
 
       exposeBlob(expectedFilename, value.value);

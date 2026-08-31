@@ -11,7 +11,7 @@
     const data = event.data;
     if (!data || data.source !== REQUEST_SOURCE || !data.requestId) return;
     const expectedFilename = String(data.expectedFilename || "");
-    if (!/^rerun-(?:goal|result)-[A-Za-z0-9._-]+\.json$/.test(expectedFilename)) return;
+    if (!/^rerun-(?:goal|result|worker-ready)-[A-Za-z0-9._-]+\.json$/.test(expectedFilename)) return;
 
     void resolveArtifact(expectedFilename)
       .then((result) => {

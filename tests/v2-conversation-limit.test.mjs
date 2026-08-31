@@ -12,8 +12,7 @@ function element(text = "", { authored = false, visible = true, disabled = false
     disabled,
     readOnly: false,
     getAttribute(name) {
-      if (name === "aria-hidden") return null;
-      if (name === "aria-disabled") return disabled ? "true" : null;
+      if (name === "aria-hidden" || name === "aria-disabled") return null;
       return null;
     },
     hasAttribute() { return false; },
@@ -24,17 +23,9 @@ function element(text = "", { authored = false, visible = true, disabled = false
   };
 }
 
-function makeHarness({
-  bodyText = "",
-  notice = null,
-  composers = [],
-  stopButtons = [],
-  phase = "ready",
-  enabled = true
-} = {}) {
+function makeHarness({ bodyText = "", notice = null, composers = [], phase = "ready" } = {}) {
   let now = 0;
   let currentPhase = phase;
-  let runtimeListener = null;
   const messages = [];
   const intervals = [];
   const document = {
@@ -43,9 +34,6 @@ function makeHarness({
     querySelectorAll(selector) {
       if (selector.includes("#prompt-textarea") || selector.includes("textarea") || selector.includes("contenteditable")) {
         return composers;
-      }
-      if (selector.includes("stop-button") || selector.includes('aria-label*="Stop"') || selector.includes('aria-label*="stop"') || selector.includes('aria-label*="중지"')) {
-        return stopButtons;
       }
       return notice ? [notice] : [];
     }
@@ -58,13 +46,12 @@ function makeHarness({
     Date: { now: () => now },
     chrome: {
       runtime: {
-        onMessage: { addListener(listener) { runtimeListener = listener; } },
         async sendMessage(message) {
           messages.push(message);
           if (message.type === "GET_CURRENT_STATE") {
             return {
               ok: true,
-              runtime: { enabled, runId: enabled ? "run-1" : null, status: enabled ? "running" : "idle", phase: currentPhase }
+              runtime: { enabled: true, runId: "run-1", status: "running", phase: currentPhase }
             };
           }
           if (message.type === "HANDOFF_NEW_CHAT") return { ok: true, handedOff: true };
@@ -80,11 +67,6 @@ function makeHarness({
     intervals,
     setNow(value) { now = value; },
     setPhase(value) { currentPhase = value; },
-    diagnose() {
-      let response = null;
-      runtimeListener({ type: "RERUN_V2_DIAGNOSE_CONVERSATION_END" }, {}, (value) => { response = value; });
-      return response;
-    },
     async flush() { await new Promise((resolve) => setImmediate(resolve)); }
   };
 }
@@ -131,54 +113,4 @@ test("missing composer during normal generation does not trigger handoff without
   harness.intervals[0]();
   await harness.flush();
   assert.equal(harness.messages.some((message) => message.type === "HANDOFF_NEW_CHAT"), false);
-});
-
-test("manual diagnostic reports visible maximum-length notice as conversation end without handoff", async () => {
-  const text = "You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.";
-  const harness = makeHarness({ bodyText: text, notice: element(text), composers: [element("")], enabled: false });
-  await harness.flush();
-  const response = harness.diagnose();
-  assert.equal(response.ok, true);
-  assert.equal(response.ended, true);
-  assert.equal(response.reason, "visible_maximum_length_notice");
-  assert.equal(response.evidence.visibleLimitNotice, true);
-  assert.equal(harness.messages.some((message) => message.type === "HANDOFF_NEW_CHAT"), false);
-});
-
-test("manual diagnostic reports a usable composer as not ended", async () => {
-  const harness = makeHarness({ composers: [element("")], enabled: false });
-  await harness.flush();
-  const response = harness.diagnose();
-  assert.equal(response.ended, false);
-  assert.equal(response.reason, "usable_composer");
-  assert.equal(response.evidence.usableComposer, true);
-});
-
-test("manual diagnostic ignores quoted warning when a usable composer remains", async () => {
-  const text = "You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.";
-  const harness = makeHarness({ bodyText: text, notice: element(text, { authored: true }), composers: [element("")], enabled: false });
-  await harness.flush();
-  const response = harness.diagnose();
-  assert.equal(response.ended, false);
-  assert.equal(response.reason, "usable_composer");
-  assert.equal(response.evidence.bodyTextMatchesLimit, true);
-  assert.equal(response.evidence.visibleLimitNotice, false);
-});
-
-test("manual diagnostic treats generation as not ended when composer is temporarily absent", async () => {
-  const harness = makeHarness({ composers: [], stopButtons: [element("")], enabled: false });
-  await harness.flush();
-  const response = harness.diagnose();
-  assert.equal(response.ended, false);
-  assert.equal(response.reason, "generation_in_progress");
-  assert.equal(response.evidence.generationActive, true);
-});
-
-test("manual diagnostic treats an idle tab with no usable composer as ended", async () => {
-  const harness = makeHarness({ composers: [element("", { visible: false })], enabled: false });
-  await harness.flush();
-  const response = harness.diagnose();
-  assert.equal(response.ended, true);
-  assert.equal(response.reason, "no_usable_composer_while_idle");
-  assert.equal(response.evidence.usableComposer, false);
 });

@@ -8,7 +8,7 @@ Current development branch:
 agent/v2-goal-runner
 ```
 
-Current extension version: **2.2.0**.
+Current extension version: **2.2.1**.
 
 The previous V1 implementation remains preserved on `agent/mvp-autoresume`.
 
@@ -135,9 +135,17 @@ If the final allocated worker is exhausted, the pool changes to `NEEDS_USER`/pau
 
 Legacy non-pool runtimes created by older V2 versions retain the previous single fresh-chat fallback for recovery, but that is not the normal V2.2 path.
 
+## Conversation-end diagnostic
+
+The Side Panel includes **대화길이 끝 테스트** for validating the exhaustion detector against the currently active ChatGPT tab before changing automatic recovery policy.
+
+The diagnostic is read-only: it does not hand off the run or mutate Rerun runtime state. It reports either **대화길이 끝** or **끝이 아님**, plus compact evidence showing whether it found a visible maximum-length notice, matching maximum-length text, a usable composer, or an active generation Stop control.
+
+The diagnostic classifies an explicit visible maximum-length notice as ended, an active generation or usable composer as not ended, and an idle tab with no usable composer as ended. This makes the detector's current evidence visible during browser dogfooding instead of hiding the decision inside automatic handoff logic.
+
 ## Generated artifact resolution
 
-V2.2.0 uses the authenticated ChatGPT artifact resolver for all three structured control artifacts:
+V2.2.1 uses the authenticated ChatGPT artifact resolver for all three structured control artifacts:
 
 - goal JSON;
 - worker-ready JSON;
@@ -194,6 +202,7 @@ V2.2 tests cover, among other existing V2 behavior:
 - premature worker-ready reports rejected during provisioning;
 - Worker 1 activation only after full preflight;
 - maximum-length result handling before handoff;
+- manual conversation-end diagnostic and Side Panel wiring;
 - handoff to an already-created next worker with no new tab creation;
 - checkpoint and processed-result history transfer;
 - one-time Resume Capsule;
@@ -206,16 +215,18 @@ Browser E2E is still required because ChatGPT's page/composer UI, approval cards
 ## Browser test
 
 1. Reload the unpacked extension from `agent/v2-goal-runner`.
-2. Click **목표 세우기** in a ChatGPT conversation and provide a repository goal.
-3. Confirm `rerun-goal-<nonce>.json` is imported and the source conversation does **not** receive the executor prompt.
-4. Confirm the Worker Pool setup page opens; choose a small count such as 3.
-5. Confirm exactly 3 new ChatGPT worker tabs open.
-6. In each worker, resolve the GitHub approval card with the persistent all-actions option when offered.
-7. Confirm every worker reaches READY only after its two GitHub reads and worker-ready JSON succeed.
-8. Confirm Worker 1 begins only after all 3 are READY.
-9. Confirm normal CONTINUE stays in Worker 1.
-10. At conversation maximum length, confirm the current result is consumed first and then Worker 2 becomes active without opening another tab.
-11. Confirm Worker 2 receives the previous checkpoint once through the Resume Capsule.
-12. Repeat through Worker 3 and confirm exhausting Worker 3 pauses as `NEEDS_USER` instead of creating Worker 4.
+2. Open the Side Panel on a normal ChatGPT conversation and press **대화길이 끝 테스트**. Confirm it displays **끝이 아님** and shows `composer=true` when the composer is usable.
+3. Open a conversation that has actually reached ChatGPT's maximum length and press **대화길이 끝 테스트**. Confirm it displays **대화길이 끝** and record the evidence line shown below the result.
+4. Click **목표 세우기** in a ChatGPT conversation and provide a repository goal.
+5. Confirm `rerun-goal-<nonce>.json` is imported and the source conversation does **not** receive the executor prompt.
+6. Confirm the Worker Pool setup page opens; choose a small count such as 3.
+7. Confirm exactly 3 new ChatGPT worker tabs open.
+8. In each worker, resolve the GitHub approval card with the persistent all-actions option when offered.
+9. Confirm every worker reaches READY only after its two GitHub reads and worker-ready JSON succeed.
+10. Confirm Worker 1 begins only after all 3 are READY.
+11. Confirm normal CONTINUE stays in Worker 1.
+12. At conversation maximum length, confirm the current result is consumed first and then Worker 2 becomes active without opening another tab.
+13. Confirm Worker 2 receives the previous checkpoint once through the Resume Capsule.
+14. Repeat through Worker 3 and confirm exhausting Worker 3 pauses as `NEEDS_USER` instead of creating Worker 4.
 
 See `docs/V2_GOAL_RUNNER_SPEC.md` for the normative protocol.

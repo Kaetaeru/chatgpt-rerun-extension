@@ -11,6 +11,7 @@ const workerCount = document.getElementById("workerCount");
 const createWorkers = document.getElementById("createWorkers");
 const workers = document.getElementById("workers");
 const error = document.getElementById("error");
+const ensuredWorkerReaders = new Set();
 
 runIdNode.textContent = runId || "-";
 
@@ -25,6 +26,7 @@ workerForm.addEventListener("submit", async (event) => {
       workerCount: count
     });
     if (!response?.ok) throw new Error(response?.error || "Worker pool creation failed.");
+    await ensureWorkerArtifactReaders(response.pool);
     render(response.pool);
   } catch (cause) {
     showError(cause);
@@ -42,11 +44,34 @@ async function refresh() {
   try {
     const response = await chrome.runtime.sendMessage({ type: "GET_POOL_STATE", runId });
     if (!response?.ok) throw new Error(response?.error || "Could not load worker pool.");
+    await ensureWorkerArtifactReaders(response.pool);
     render(response.pool);
     if (response.pool?.lastError) showError(response.pool.lastError);
     else hideError();
   } catch (cause) {
     showError(cause);
+  }
+}
+
+async function ensureWorkerArtifactReaders(pool) {
+  if (!Array.isArray(pool?.workers)) return;
+  for (const worker of pool.workers) {
+    const tabId = Number(worker?.tabId);
+    if (!Number.isSafeInteger(tabId) || worker?.status !== "preflight" || ensuredWorkerReaders.has(tabId)) continue;
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ["page-artifact-reader.js"],
+        world: "MAIN"
+      });
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ["artifact-reader.js"]
+      });
+      ensuredWorkerReaders.add(tabId);
+    } catch {
+      // A worker may be navigating or may have been closed; refresh will retry.
+    }
   }
 }
 

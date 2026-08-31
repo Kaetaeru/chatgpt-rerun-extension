@@ -19,7 +19,7 @@ function goalValue() {
   };
 }
 
-test("stale pre-reload guard does not block direct goal JSON import", async () => {
+test("stale pre-reload guard does not block direct goal JSON import and stale unallocated pools are retired", async () => {
   let runtime = {
     phase: "awaiting_goal_file",
     setupPending: true,
@@ -28,6 +28,28 @@ test("stale pre-reload guard does not block direct goal JSON import", async () =
     processedResultIds: []
   };
   const imports = [];
+  const stored = {
+    "v2:pool:stale-run": {
+      runId: "stale-run",
+      goalId: "old-goal",
+      status: "awaiting_worker_count",
+      workers: [],
+      config: {
+        repository: "Kaetaeru/chatgpt-rerun-extension",
+        branch: "agent/v2-goal-runner"
+      }
+    },
+    "v2:pool:active-run": {
+      runId: "active-run",
+      goalId: "active-goal",
+      status: "running",
+      workers: [{ index: 0, tabId: 99, status: "active" }],
+      config: {
+        repository: "Kaetaeru/chatgpt-rerun-extension",
+        branch: "agent/v2-goal-runner"
+      }
+    }
+  };
   const messageListeners = new Set();
   const windowObject = {
     addEventListener(type, listener) {
@@ -86,7 +108,18 @@ test("stale pre-reload guard does not block direct goal JSON import", async () =
           return { ok: true };
         }
       },
-      storage: { local: { async set() {} } }
+      storage: {
+        local: {
+          async get(keys) {
+            if (keys === null) return structuredClone(stored);
+            const list = Array.isArray(keys) ? keys : [keys];
+            return Object.fromEntries(list.filter((key) => key in stored).map((key) => [key, structuredClone(stored[key])]));
+          },
+          async set(values) {
+            for (const [key, value] of Object.entries(values)) stored[key] = structuredClone(value);
+          }
+        }
+      }
     }
   };
   context.globalThis = context;
@@ -94,7 +127,10 @@ test("stale pre-reload guard does not block direct goal JSON import", async () =
   vm.runInNewContext(source, context);
   await new Promise((resolve) => setTimeout(resolve, 25));
 
-  assert.equal(context.__CHATGPT_RERUN_V2_ARTIFACT_READER__, "goal-import-20260901");
+  assert.equal(context.__CHATGPT_RERUN_V2_ARTIFACT_READER__, "goal-import-stale-pool-20260901");
   assert.equal(imports.length, 1);
   assert.equal(imports[0].goal_id, "goal-1");
+  assert.equal(stored["v2:pool:stale-run"].status, "stopped");
+  assert.match(stored["v2:pool:stale-run"].lastError, /Superseded/);
+  assert.equal(stored["v2:pool:active-run"].status, "running");
 });

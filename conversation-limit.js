@@ -39,7 +39,12 @@
         return;
       }
 
-      if (findConversationLimitNotice()) {
+      const limitNotice = findConversationLimitNotice();
+      if (limitNotice) {
+        if (["dispatching", "generating"].includes(runtime.phase)) {
+          missingComposerSince = null;
+          return;
+        }
         await requestHandoff("conversation_max_length");
         return;
       }

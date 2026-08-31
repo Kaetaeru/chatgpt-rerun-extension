@@ -1,10 +1,10 @@
 {
   "name": "chatgpt-rerun-extension",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check background.js && node --check content.js && node --check conversation-limit.js && node --check artifact-reader.js && node --check page-artifact-reader.js && node --check goal.js && node --check popup.js && node --check pool-setup.js",
+    "check": "node --check background.js && node --check content.js && node --check conversation-limit.js && node --check conversation-diagnostic.js && node --check artifact-reader.js && node --check page-artifact-reader.js && node --check goal.js && node --check popup.js && node --check pool-setup.js",
     "test": "node --test tests/v2-*.test.mjs"
   }
 }

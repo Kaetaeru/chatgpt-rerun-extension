@@ -106,7 +106,7 @@ async function refresh() {
     setText("statusBadge", displayStatus(runtime));
     setText("iteration", String(runtime.iteration || 0));
     setText("runId", runtime.runId || "-");
-    setText("goalId", runtime.goalId || "-");
+    setText("goalId", runtime.goalId || runtime.setupNonce || "-");
     setText("approval", runtime.waitingApproval ? "Waiting for manual approval" : "-");
     setText("lastResult", runtime.lastResult || "-");
     setText("checkpoint", runtime.lastCheckpoint || "-");

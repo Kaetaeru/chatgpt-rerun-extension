@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_REVISION = "goal-import-20260901";
+  const SCRIPT_REVISION = "goal-import-stale-pool-20260901";
   if (globalThis.__CHATGPT_RERUN_V2_ARTIFACT_READER__ === SCRIPT_REVISION) return;
   globalThis.__CHATGPT_RERUN_V2_ARTIFACT_READER__ = SCRIPT_REVISION;
 
@@ -86,6 +86,7 @@
       }
 
       if (mode === "goal") {
+        await retireSupersededUnallocatedPools(value.value);
         const imported = await chrome.runtime.sendMessage({ type: "IMPORT_GOAL_FILE", value: value.value });
         if (!imported?.ok) {
           const latest = await chrome.runtime.sendMessage({ type: "GET_CURRENT_STATE" });
@@ -140,6 +141,30 @@
         expectedFilename
       }, "*");
     });
+  }
+
+  async function retireSupersededUnallocatedPools(goalValue) {
+    const repository = String(goalValue?.repository || "").trim();
+    const branch = String(goalValue?.branch || "main").trim() || "main";
+    const goalId = String(goalValue?.goal_id || "").trim();
+    if (!repository || !goalId) return;
+
+    const all = await chrome.storage.local.get(null);
+    const updates = {};
+    for (const [key, pool] of Object.entries(all)) {
+      if (!/^v2:pool:/.test(key) || !pool) continue;
+      if (String(pool.status || "") !== "awaiting_worker_count") continue;
+      if (Array.isArray(pool.workers) && pool.workers.length) continue;
+      if (String(pool.goalId || "") === goalId) continue;
+      if (String(pool.config?.repository || "") !== repository) continue;
+      if ((String(pool.config?.branch || "main").trim() || "main") !== branch) continue;
+      updates[key] = {
+        ...pool,
+        status: "stopped",
+        lastError: "Superseded by a newer goal before worker allocation."
+      };
+    }
+    if (Object.keys(updates).length) await chrome.storage.local.set(updates);
   }
 
   function exposeBlob(expectedFilename, value) {

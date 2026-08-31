@@ -150,7 +150,8 @@ async function importGoalFile(tabId, rawValue) {
     phase: "awaiting_worker_count",
     runId,
     goalId: contract.goalId,
-    frozenPrompt
+    frozenPrompt,
+    poolRunId: runId
   };
   const pool = {
     runId,
@@ -245,18 +246,22 @@ async function createWorkerPool(runId, rawWorkerCount) {
         [tabRuntimeKey(workerTab.id)]: workerRuntime,
         [poolStateKey(runId)]: pool
       });
-
-      const response = await chrome.tabs.sendMessage(workerTab.id, {
-        type: "RERUN_V2_SEND_DIRECT",
-        prompt: buildWorkerPreflightPrompt(pool.config, workerRuntime)
-      });
-      if (!response?.sent) {
-        throw new Error(response?.error || `Could not send GitHub preflight to worker ${workerIndex + 1}.`);
-      }
     }
 
     pool = { ...pool, status: "awaiting_worker_ready" };
     await chrome.storage.local.set({ [poolStateKey(runId)]: pool });
+
+    for (const worker of pool.workers) {
+      const { runtime } = await getTabState(worker.tabId);
+      const response = await chrome.tabs.sendMessage(worker.tabId, {
+        type: "RERUN_V2_SEND_DIRECT",
+        prompt: buildWorkerPreflightPrompt(pool.config, runtime)
+      });
+      if (!response?.sent) {
+        throw new Error(response?.error || `Could not send GitHub preflight to worker ${worker.index + 1}.`);
+      }
+    }
+
     if (pool.workers[0]) await focusTab(pool.workers[0].tabId);
     return { pool };
   } catch (error) {
@@ -286,6 +291,9 @@ async function reportWorkerReady(tabId, rawValue) {
   });
 
   const { pool: storedPool } = await getPoolState(runtime.poolRunId);
+  if (storedPool.status !== "awaiting_worker_ready") {
+    throw new Error("Worker pool is not ready to accept preflight reports yet.");
+  }
   const worker = storedPool.workers.find((item) => item.index === runtime.workerIndex);
   if (!worker || worker.tabId !== tabId) throw new Error("Worker-ready file came from the wrong tab.");
 
@@ -298,15 +306,10 @@ async function reportWorkerReady(tabId, rawValue) {
     waitingApproval: false,
     lastError: null
   };
-  const workers = storedPool.workers.map((item) => item.index === runtime.workerIndex
-    ? { ...item, status: "ready" }
-    : item);
-  let pool = { ...storedPool, workers, lastError: null };
+  await chrome.storage.local.set({ [tabRuntimeKey(tabId)]: readyRuntime });
 
-  await chrome.storage.local.set({
-    [tabRuntimeKey(tabId)]: readyRuntime,
-    [poolStateKey(pool.runId)]: pool
-  });
+  let pool = await rebuildWorkerReadiness(storedPool);
+  await chrome.storage.local.set({ [poolStateKey(pool.runId)]: pool });
 
   const nextUnready = pool.workers.find((item) => item.status === "preflight");
   if (nextUnready) {
@@ -318,6 +321,17 @@ async function reportWorkerReady(tabId, rawValue) {
   await chrome.storage.local.set({ [poolStateKey(pool.runId)]: pool });
   const activated = await activatePoolWorker(pool, 0, false);
   return { runtime: activated.runtime, pool: activated.pool };
+}
+
+async function rebuildWorkerReadiness(pool) {
+  const keys = pool.workers.map((worker) => tabRuntimeKey(worker.tabId));
+  const stored = await chrome.storage.local.get(keys);
+  const workers = pool.workers.map((worker) => {
+    const runtime = stored[tabRuntimeKey(worker.tabId)] || {};
+    if (runtime.workerReady && worker.status === "preflight") return { ...worker, status: "ready" };
+    return worker;
+  });
+  return { ...pool, workers, lastError: null };
 }
 
 async function fetchGeneratedJsonUrl(value) {

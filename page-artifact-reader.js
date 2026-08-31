@@ -1,6 +1,8 @@
 (() => {
-  if (globalThis.__CHATGPT_RERUN_V2_PAGE_ARTIFACT_READER__) return;
+  const SCRIPT_REVISION = "artifact-event-v226-20260901";
+  if (globalThis.__CHATGPT_RERUN_V2_PAGE_ARTIFACT_READER_REVISION__ === SCRIPT_REVISION) return;
   globalThis.__CHATGPT_RERUN_V2_PAGE_ARTIFACT_READER__ = true;
+  globalThis.__CHATGPT_RERUN_V2_PAGE_ARTIFACT_READER_REVISION__ = SCRIPT_REVISION;
 
   const REQUEST_SOURCE = "chatgpt-rerun-v2-artifact-request";
   const RESPONSE_SOURCE = "chatgpt-rerun-v2-artifact-response";

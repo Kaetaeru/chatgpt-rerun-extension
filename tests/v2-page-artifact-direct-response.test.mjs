@@ -71,7 +71,7 @@ function makeHarness({ assistantText = "", downloadBody = goal } = {}) {
     async fetch(path) {
       fetchCount += 1;
       if (path === "/api/auth/session") return response({ json: { accessToken: "token", account: { id: "acct" } } });
-      if (String(path).startsWith("/backend-api/conversation/conversation-1?") || path === "/backend-api/conversation/conversation-1") {
+      if (path === "/backend-api/conversation/conversation-1") {
         return response({
           json: {
             mapping: {
@@ -107,11 +107,15 @@ async function requestControl(harness) {
   return harness.posted.find((item) => item?.source === "chatgpt-rerun-v2-artifact-response");
 }
 
+function assertSameJson(actual, expected) {
+  assert.equal(JSON.stringify(actual), JSON.stringify(expected));
+}
+
 test("interpreter download may return the JSON file body directly", async () => {
   const harness = makeHarness();
   const result = await requestControl(harness);
   assert.equal(result?.ok, true);
-  assert.deepEqual(result?.value, goal);
+  assertSameJson(result?.value, goal);
   assert.ok(harness.getFetchCount() >= 3);
 });
 
@@ -125,6 +129,6 @@ test("assistant inline control mirror bypasses the ChatGPT file API", async () =
   const harness = makeHarness({ assistantText });
   const result = await requestControl(harness);
   assert.equal(result?.ok, true);
-  assert.deepEqual(result?.value, goal);
+  assertSameJson(result?.value, goal);
   assert.equal(harness.getFetchCount(), 0);
 });

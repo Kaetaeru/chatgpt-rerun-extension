@@ -8,7 +8,7 @@ Current development branch:
 agent/v2-goal-runner
 ```
 
-Current extension version: **2.2.1**.
+Current extension version: **2.2.2**.
 
 The previous V1 implementation remains preserved on `agent/mvp-autoresume`.
 
@@ -137,15 +137,23 @@ Legacy non-pool runtimes created by older V2 versions retain the previous single
 
 ## Conversation-end diagnostic
 
-The Side Panel includes **대화길이 끝 테스트** for validating the exhaustion detector against the currently active ChatGPT tab before changing automatic recovery policy.
+The Side Panel includes **대화길이 끝 테스트** for browser dogfooding before the automatic exhaustion policy is changed again.
 
-The diagnostic is read-only: it does not hand off the run or mutate Rerun runtime state. It reports either **대화길이 끝** or **끝이 아님**, plus compact evidence showing whether it found a visible maximum-length notice, matching maximum-length text, a usable composer, or an active generation Stop control.
+V2.2.2 no longer asks the already-loaded `conversation-limit.js` content script for this manual test. Each click executes a fresh, read-only DOM sampler directly in the currently active ChatGPT tab. This avoids stale content-script listeners after an extension Reload and makes the manual test independent from Rerun runtime state.
 
-The diagnostic classifies an explicit visible maximum-length notice as ended, an active generation or usable composer as not ended, and an idle tab with no usable composer as ended. This makes the detector's current evidence visible during browser dogfooding instead of hiding the decision inside automatic handoff logic.
+The diagnostic reports one of three states:
+
+- **대화길이 끝** when it finds a strong non-authored conversation-limit signal or an in-conversation UI telling the user to continue in a new chat;
+- **끝이 아님** when ChatGPT is actively generating or a visible usable composer exists without a strong end signal;
+- **판단 불가** when the composer is unavailable but the current UI does not expose a known end signal.
+
+The detail area also prints the sampled composer/generation state and up to 16 visible non-authored UI candidates from the conversation area. This is intentionally diagnostic evidence: if ChatGPT changes the end-of-conversation UI again, the browser test reveals the new control text/test IDs instead of silently forcing an incorrect binary result.
+
+The automatic `conversation-limit.js` handoff policy has **not** been changed to trust these new heuristics yet. Browser evidence from an actually exhausted conversation should be captured first, then the automatic policy can be updated against the observed UI.
 
 ## Generated artifact resolution
 
-V2.2.1 uses the authenticated ChatGPT artifact resolver for all three structured control artifacts:
+V2.2.2 uses the authenticated ChatGPT artifact resolver for all three structured control artifacts:
 
 - goal JSON;
 - worker-ready JSON;
@@ -182,6 +190,8 @@ The preferred path is ChatGPT's own persistent connected-app permission model. I
 
 The executor contract asks ChatGPT to finish/checkpoint within the normal 20-minute execution budget. A 23-active-minute watchdog remains recovery-only. GitHub approval waiting time is intended to be excluded from that active-generation budget.
 
+The requested policy change that continuously reminds the executor to finish before 20 minutes and automatically retries from the last verified JSON/checkpoint after a watchdog Stop is not implemented yet. Conversation-end detection is being validated first.
+
 ## Validation
 
 Local validation commands:
@@ -202,7 +212,8 @@ V2.2 tests cover, among other existing V2 behavior:
 - premature worker-ready reports rejected during provisioning;
 - Worker 1 activation only after full preflight;
 - maximum-length result handling before handoff;
-- manual conversation-end diagnostic and Side Panel wiring;
+- fresh direct conversation-end DOM sampling and Side Panel wiring;
+- explicit end UI, continue-in-new-chat UI, usable composer, active generation and ambiguous blank-UI diagnostic cases;
 - handoff to an already-created next worker with no new tab creation;
 - checkpoint and processed-result history transfer;
 - one-time Resume Capsule;
@@ -215,18 +226,10 @@ Browser E2E is still required because ChatGPT's page/composer UI, approval cards
 ## Browser test
 
 1. Reload the unpacked extension from `agent/v2-goal-runner`.
-2. Open the Side Panel on a normal ChatGPT conversation and press **대화길이 끝 테스트**. Confirm it displays **끝이 아님** and shows `composer=true` when the composer is usable.
-3. Open a conversation that has actually reached ChatGPT's maximum length and press **대화길이 끝 테스트**. Confirm it displays **대화길이 끝** and record the evidence line shown below the result.
-4. Click **목표 세우기** in a ChatGPT conversation and provide a repository goal.
-5. Confirm `rerun-goal-<nonce>.json` is imported and the source conversation does **not** receive the executor prompt.
-6. Confirm the Worker Pool setup page opens; choose a small count such as 3.
-7. Confirm exactly 3 new ChatGPT worker tabs open.
-8. In each worker, resolve the GitHub approval card with the persistent all-actions option when offered.
-9. Confirm every worker reaches READY only after its two GitHub reads and worker-ready JSON succeed.
-10. Confirm Worker 1 begins only after all 3 are READY.
-11. Confirm normal CONTINUE stays in Worker 1.
-12. At conversation maximum length, confirm the current result is consumed first and then Worker 2 becomes active without opening another tab.
-13. Confirm Worker 2 receives the previous checkpoint once through the Resume Capsule.
-14. Repeat through Worker 3 and confirm exhausting Worker 3 pauses as `NEEDS_USER` instead of creating Worker 4.
+2. Open the Side Panel on a normal ChatGPT conversation and press **대화길이 끝 테스트**. Confirm it displays **끝이 아님** when the composer is usable.
+3. Open a conversation that has actually reached ChatGPT's current maximum length and press **대화길이 끝 테스트**.
+4. Copy the complete diagnostic detail, especially `limit=`, `new-chat=` and `UI candidates:`. If the new UI is not yet recognized, **판단 불가** is expected and is safer than a false `대화길이 끝`.
+5. Use that real exhausted-chat evidence to update the automatic handoff detector.
+6. Then continue the normal Worker Pool browser validation described in `docs/V2_GOAL_RUNNER_SPEC.md`.
 
 See `docs/V2_GOAL_RUNNER_SPEC.md` for the normative protocol.

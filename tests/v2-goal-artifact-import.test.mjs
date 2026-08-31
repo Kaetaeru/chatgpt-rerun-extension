@@ -19,6 +19,20 @@ function goalValue() {
   };
 }
 
+function workerReadyValue() {
+  return {
+    version: 2,
+    kind: "chatgpt-rerun-worker-ready",
+    run_id: "run-1",
+    goal_id: "goal-1",
+    worker_index: 2,
+    worker_nonce: "worker-2",
+    repository: "Kaetaeru/chatgpt-rerun-extension",
+    branch: "agent/v2-goal-runner",
+    status: "READY"
+  };
+}
+
 test("stale pre-reload guard does not block direct goal JSON import and stale unallocated pools are retired", async () => {
   let runtime = {
     phase: "awaiting_goal_file",
@@ -81,6 +95,8 @@ test("stale pre-reload guard does not block direct goal JSON import and stale un
     __CHATGPT_RERUN_V2_ARTIFACT_READER__: true,
     window: windowObject,
     document: {
+      hidden: false,
+      addEventListener() {},
       documentElement: { appendChild() {} },
       querySelector() { return null; },
       createElement() { return { hidden: false, setAttribute() {} }; }
@@ -127,10 +143,114 @@ test("stale pre-reload guard does not block direct goal JSON import and stale un
   vm.runInNewContext(source, context);
   await new Promise((resolve) => setTimeout(resolve, 25));
 
-  assert.equal(context.__CHATGPT_RERUN_V2_ARTIFACT_READER__, "goal-import-stale-pool-20260901");
+  assert.equal(context.__CHATGPT_RERUN_V2_ARTIFACT_READER__, "worker-ready-direct-20260901");
   assert.equal(imports.length, 1);
   assert.equal(imports[0].goal_id, "goal-1");
   assert.equal(stored["v2:pool:stale-run"].status, "stopped");
   assert.match(stored["v2:pool:stale-run"].lastError, /Superseded/);
   assert.equal(stored["v2:pool:active-run"].status, "running");
+});
+
+test("worker-ready JSON imports directly and activation forces an immediate scan", async () => {
+  let runtime = {
+    phase: "worker_preflight",
+    goalId: "goal-1",
+    workerIndex: 1,
+    workerNonce: "worker-2",
+    workerReady: false,
+    processedResultIds: []
+  };
+  const reports = [];
+  const messageListeners = new Set();
+  const windowListeners = new Map();
+  const documentListeners = new Map();
+  let bridgeAttempts = 0;
+
+  const windowObject = {
+    addEventListener(type, listener) {
+      if (type === "message") messageListeners.add(listener);
+      else windowListeners.set(type, listener);
+    },
+    removeEventListener(type, listener) {
+      if (type === "message") messageListeners.delete(listener);
+      else if (windowListeners.get(type) === listener) windowListeners.delete(type);
+    },
+    postMessage(data) {
+      if (data?.source !== "chatgpt-rerun-v2-artifact-request") return;
+      bridgeAttempts += 1;
+      const attempt = bridgeAttempts;
+      queueMicrotask(() => {
+        for (const listener of [...messageListeners]) {
+          listener({
+            source: windowObject,
+            data: attempt === 1
+              ? {
+                  source: "chatgpt-rerun-v2-artifact-response",
+                  requestId: data.requestId,
+                  ok: false,
+                  error: "artifact_message_not_found"
+                }
+              : {
+                  source: "chatgpt-rerun-v2-artifact-response",
+                  requestId: data.requestId,
+                  ok: true,
+                  value: workerReadyValue()
+                }
+          });
+        }
+      });
+    }
+  };
+
+  const context = {
+    globalThis: null,
+    window: windowObject,
+    document: {
+      hidden: true,
+      addEventListener(type, listener) { documentListeners.set(type, listener); },
+      documentElement: { appendChild() {} },
+      querySelector() { return null; },
+      createElement() { return { hidden: false, setAttribute() {} }; }
+    },
+    MutationObserver: class { observe() {} },
+    setInterval() { return 1; },
+    setTimeout,
+    clearTimeout,
+    queueMicrotask,
+    Date,
+    crypto: { randomUUID: () => `request-${bridgeAttempts + 1}` },
+    Blob,
+    URL,
+    console,
+    chrome: {
+      runtime: {
+        async sendMessage(message) {
+          if (message.type === "REGISTER_CHAT_TAB") return { ok: true, tabId: 8 };
+          if (message.type === "GET_CURRENT_STATE") return { ok: true, runtime };
+          if (message.type === "REPORT_WORKER_READY") {
+            reports.push(message.value);
+            runtime = { ...runtime, phase: "standby", workerReady: true };
+            return { ok: true };
+          }
+          return { ok: true };
+        }
+      },
+      storage: { local: { async get() { return {}; }, async set() {} } }
+    }
+  };
+  context.globalThis = context;
+
+  vm.runInNewContext(source, context);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(bridgeAttempts, 1);
+  assert.equal(reports.length, 0);
+
+  context.document.hidden = false;
+  documentListeners.get("visibilitychange")();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  assert.equal(bridgeAttempts, 2);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].worker_index, 2);
+  assert.equal(runtime.workerReady, true);
 });

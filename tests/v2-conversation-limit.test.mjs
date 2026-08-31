@@ -25,6 +25,7 @@ function element(text = "", { authored = false, visible = true, disabled = false
 
 function makeHarness({ bodyText = "", notice = null, composers = [], phase = "ready" } = {}) {
   let now = 0;
+  let currentPhase = phase;
   const messages = [];
   const intervals = [];
   const document = {
@@ -50,7 +51,7 @@ function makeHarness({ bodyText = "", notice = null, composers = [], phase = "re
           if (message.type === "GET_CURRENT_STATE") {
             return {
               ok: true,
-              runtime: { enabled: true, runId: "run-1", status: "running", phase }
+              runtime: { enabled: true, runId: "run-1", status: "running", phase: currentPhase }
             };
           }
           if (message.type === "HANDOFF_NEW_CHAT") return { ok: true, handedOff: true };
@@ -65,6 +66,7 @@ function makeHarness({ bodyText = "", notice = null, composers = [], phase = "re
     messages,
     intervals,
     setNow(value) { now = value; },
+    setPhase(value) { currentPhase = value; },
     async flush() { await new Promise((resolve) => setImmediate(resolve)); }
   };
 }
@@ -75,6 +77,17 @@ test("maximum-length notice triggers fresh-chat handoff even when a composer sti
   await harness.flush();
   const handoff = harness.messages.find((message) => message.type === "HANDOFF_NEW_CHAT");
   assert.equal(handoff?.reason, "conversation_max_length");
+});
+
+test("maximum-length notice waits for generating result handling before handoff", async () => {
+  const text = "You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.";
+  const harness = makeHarness({ bodyText: text, notice: element(text), composers: [element("")], phase: "generating" });
+  await harness.flush();
+  assert.equal(harness.messages.some((message) => message.type === "HANDOFF_NEW_CHAT"), false);
+  harness.setPhase("ready");
+  harness.intervals[0]();
+  await harness.flush();
+  assert.equal(harness.messages.some((message) => message.type === "HANDOFF_NEW_CHAT" && message.reason === "conversation_max_length"), true);
 });
 
 test("quoted maximum-length text inside a normal authored message does not trigger handoff", async () => {

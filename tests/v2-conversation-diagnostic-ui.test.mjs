@@ -19,7 +19,8 @@ test("side panel runs the conversation-end diagnostic directly in the active tab
 
 test("manual diagnostic is independent from the persistent automatic detector", () => {
   assert.match(detector, /export async function diagnoseConversationEndInPage/);
-  assert.match(detector, /main \[data-testid\*="new-chat"\]/);
+  assert.match(detector, /findEndBannerSignal/);
+  assert.match(detector, /button, a\[href\], \[role="button"\]/);
   assert.match(detector, /continueNewChatSignal/);
   assert.doesNotMatch(automaticDetector, /RERUN_V2_DIAGNOSE_CONVERSATION_END/);
 });

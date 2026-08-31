@@ -1,6 +1,7 @@
 export const FILE_VERSION = 2;
 export const GOAL_FILE_KIND = "chatgpt-rerun-goal";
 export const RESULT_FILE_KIND = "chatgpt-rerun-result";
+export const WORKER_READY_FILE_KIND = "chatgpt-rerun-worker-ready";
 export const RESULT_STATUSES = new Set(["CONTINUE", "COMPLETE", "NEEDS_USER", "CONFLICT"]);
 
 export const DEFAULT_CONFIG = Object.freeze({
@@ -33,7 +34,12 @@ export const DEFAULT_RUNTIME = Object.freeze({
   handoffUsed: false,
   handoffFromTabId: null,
   handoffToTabId: null,
-  resumeCapsulePending: false
+  resumeCapsulePending: false,
+  poolRunId: null,
+  workerIndex: null,
+  workerCount: null,
+  workerNonce: null,
+  workerReady: false
 });
 
 export function tabConfigKey(tabId) {
@@ -42,6 +48,12 @@ export function tabConfigKey(tabId) {
 
 export function tabRuntimeKey(tabId) {
   return `v2:runtime:${tabId}`;
+}
+
+export function poolStateKey(runId) {
+  const id = String(runId || "").trim();
+  if (!id) throw new Error("Run ID is required for pool state.");
+  return `v2:pool:${id}`;
 }
 
 export function normalizeConfig(value = {}) {
@@ -114,7 +126,58 @@ export function buildFreshChatResumePrompt(frozenPrompt, checkpoint) {
   const normalizedCheckpoint = String(checkpoint || "").trim().replace(/\s+/g, " ");
   if (!normalizedCheckpoint) return prompt;
 
-  return `${prompt}\n\nFRESH-CHAT RESUME CAPSULE\nThis capsule is injected once after automatic fresh-chat handoff. It does not replace repository authority or change the frozen executor contract.\nLast verified checkpoint from the previous conversation:\n${normalizedCheckpoint}\nContinue from this checkpoint without repeating already verified work. Inspect repository state only as needed to confirm what remains.`;
+  return `${prompt}\n\nFRESH-CHAT RESUME CAPSULE\nThis capsule is injected once after automatic worker handoff. It does not replace repository authority or change the frozen executor contract.\nLast verified checkpoint from the previous conversation:\n${normalizedCheckpoint}\nContinue from this checkpoint without repeating already verified work. Inspect repository state only as needed to confirm what remains.`;
+}
+
+export function workerReadyFileName(goalId, workerIndex, workerNonce) {
+  const id = String(goalId || "").trim();
+  const nonce = String(workerNonce || "").trim();
+  const index = Number(workerIndex);
+  if (!id || !nonce || !Number.isInteger(index) || index < 0) {
+    throw new Error("Goal ID, worker index, and worker nonce are required.");
+  }
+  return `rerun-worker-ready-${id}-${index + 1}-${nonce}.json`;
+}
+
+export function buildWorkerPreflightPrompt(config, runtime) {
+  validateConfig(config);
+  const runId = String(runtime?.runId || "").trim();
+  const goalId = String(runtime?.goalId || "").trim();
+  const workerNonce = String(runtime?.workerNonce || "").trim();
+  const workerIndex = Number(runtime?.workerIndex);
+  const workerCount = Number(runtime?.workerCount);
+  if (!runId || !goalId || !workerNonce || !Number.isInteger(workerIndex) || workerIndex < 0 || !Number.isInteger(workerCount) || workerCount < 1) {
+    throw new Error("Worker preflight runtime is incomplete.");
+  }
+  const fileName = workerReadyFileName(goalId, workerIndex, workerNonce);
+
+  return `You are preparing ChatGPT Rerun Worker ${workerIndex + 1} of ${workerCount}.\n\nDo NOT start the Goal Runner goal yet.\nThis chat must first prove that it can use the connected GitHub app for repository work.\n\nRepository: ${config.repository}\nBranch: ${config.branch}\n\nPREFLIGHT\n1. Use the connected GitHub app to read repository metadata for ${config.repository}.\n2. Then perform a second read-only GitHub action against branch ${config.branch}: read README.md when present, otherwise read the repository root listing.\n3. Do not create, edit, delete, merge, or otherwise modify anything during preflight.\n4. If ChatGPT shows a GitHub approval card, wait for the user. The user should choose the persistent option such as "Always allow" / "Allow all actions" for this chat. Do not click, synthesize, hide, or impersonate approval controls yourself.\n5. Only after the GitHub reads succeed, create one downloadable UTF-8 JSON file named exactly:\n${fileName}\n\nThe JSON must be:\n{\n  "version": 2,\n  "kind": "${WORKER_READY_FILE_KIND}",\n  "run_id": "${runId}",\n  "goal_id": "${goalId}",\n  "worker_index": ${workerIndex + 1},\n  "worker_nonce": "${workerNonce}",\n  "repository": "${config.repository}",\n  "branch": "${config.branch}",\n  "status": "READY"\n}\n\nDo not create the ready JSON if GitHub access failed or approval is still pending. The downloadable JSON, not prose, proves this worker is ready.`;
+}
+
+export function normalizeWorkerReadyFile(value, expected = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Worker-ready file must be a JSON object.");
+  }
+  if (Number(value.version) !== FILE_VERSION || String(value.kind || "") !== WORKER_READY_FILE_KIND) {
+    throw new Error("Unsupported Rerun V2 worker-ready file.");
+  }
+
+  const runId = String(expected.runId || "").trim();
+  const goalId = String(expected.goalId || "").trim();
+  const workerNonce = String(expected.workerNonce || "").trim();
+  const workerIndex = Number(expected.workerIndex);
+  const repository = String(expected.repository || "").trim();
+  const branch = String(expected.branch || "").trim();
+
+  if (!runId || String(value.run_id || "") !== runId) throw new Error("Worker-ready file run_id does not match.");
+  if (!goalId || String(value.goal_id || "") !== goalId) throw new Error("Worker-ready file goal_id does not match.");
+  if (!workerNonce || String(value.worker_nonce || "") !== workerNonce) throw new Error("Worker-ready file nonce does not match.");
+  if (!Number.isInteger(workerIndex) || Number(value.worker_index) !== workerIndex + 1) throw new Error("Worker-ready file index does not match.");
+  if (!repository || String(value.repository || "") !== repository) throw new Error("Worker-ready file repository does not match.");
+  if (!branch || String(value.branch || "") !== branch) throw new Error("Worker-ready file branch does not match.");
+  if (String(value.status || "").toUpperCase() !== "READY") throw new Error("Worker-ready file status must be READY.");
+
+  return { runId, goalId, workerIndex, workerNonce, repository, branch, status: "READY" };
 }
 
 export function normalizeResultFile(value, expectedGoalId) {

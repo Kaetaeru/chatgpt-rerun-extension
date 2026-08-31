@@ -1,6 +1,6 @@
 # ChatGPT Rerun V2
 
-Rerun V2 is a Chrome extension that keeps ChatGPT working toward one repository goal until that goal is complete, needs the user, or conflicts with repository authority.
+Rerun V2 is a Chrome extension that keeps ChatGPT working toward one repository goal until that goal is complete, needs the user, conflicts with repository authority, or exhausts the worker chats the user allocated.
 
 Current development branch:
 
@@ -8,181 +8,171 @@ Current development branch:
 agent/v2-goal-runner
 ```
 
-Current extension version: **2.1.8**.
+Current extension version: **2.2.0**.
 
 The previous V1 implementation remains preserved on `agent/mvp-autoresume`.
+
+## V2.2 flow
+
+V2.2 separates **goal authoring** from **goal execution** and preallocates the ChatGPT conversations that may execute the goal.
+
+```text
+목표 세우기
+   ↓
+Goal-authoring chat creates rerun-goal-<nonce>.json
+   ↓
+Extension validates the Goal Contract
+   ↓
+Goal-authoring chat stops; it never executes the goal
+   ↓
+Rerun Worker Pool setup page opens
+   ↓
+User chooses 1..20 ChatGPT worker chats
+   ↓
+Rerun opens exactly that many fresh ChatGPT tabs
+   ↓
+Every worker performs read-only GitHub preflight
+   ↓
+Each successful worker creates a bound worker-ready JSON
+   ↓
+Only after every worker is READY does Worker 1 start
+   ↓
+Worker 1 -> Worker 2 -> ... on conversation exhaustion
+```
+
+Rerun does not create another worker tab after execution begins. The selected worker count is the run's conversation budget.
 
 ## Why V2 is different
 
 V2 deliberately removes the V1 behavior that made GitHub Rerun bookkeeping compete with the actual project:
 
-- GitHub control polling is not the normal execution scheduler.
+- GitHub `control.json` polling is not the execution scheduler.
 - Target repositories do not need a Rerun-authored `PLAN.md`.
 - There is no normal sequence / same-sequence retry cadence.
 - Repository-native plans, specs, issues and acceptance criteria remain authoritative over the Rerun Goal.
-- Rerun does not repeatedly ask ChatGPT to rediscover HEAD/history just to decide whether another turn should start.
 - Assistant prose is not used as the machine control protocol.
+
+GitHub remains the project's source of truth, not Rerun's cadence controller.
 
 ## Goal setup
 
-The Side Panel has one primary entry point: **목표 세우기**.
+The Side Panel entry point remains **목표 세우기**. ChatGPT creates:
 
 ```text
-목표 세우기
-   ↓
-Rerun sends a goal-authoring prompt
-   ↓
-User's next message describes the desired outcome
-   ↓
-ChatGPT creates rerun-goal-<nonce>.json
-   ↓
-Extension resolves, validates and imports it automatically
-   ↓
-Goal Runner starts
+rerun-goal-<setup_nonce>.json
 ```
 
-The goal JSON contains repository, branch, goal, acceptance criteria and known canonical authority references. It is bound to the active setup request by a random nonce, so an older goal artifact cannot silently replace the new goal.
+The goal JSON contains repository, branch, goal, acceptance criteria and known canonical authority references and is nonce-bound to the active setup request.
 
-## Goal loop
+When the extension accepts that JSON, it creates and stores the frozen executor prompt, but **does not send it in the goal-authoring conversation**. Instead it disables that source conversation and opens `pool-setup.html`, where the user chooses how many worker conversations to allocate.
 
-After the goal JSON is accepted, Rerun creates one **frozen executor prompt** and reuses that exact prompt for normal iterations.
+## Worker Pool setup
+
+The setup page accepts an integer worker count from **1 to 20**. Rerun then creates all worker ChatGPT tabs and registers all worker runtimes before sending any preflight prompt. This ordering prevents an early worker from becoming READY before the worker list is complete.
+
+The setup page shows each worker as it moves through states such as:
 
 ```text
-same executor prompt
-  -> ChatGPT works and verifies one useful increment
-  -> rerun-result-<goal_id>.json
-       CONTINUE   -> immediately run the same prompt again
-       COMPLETE   -> stop
-       NEEDS_USER -> pause
-       CONFLICT   -> pause
+GITHUB PREFLIGHT -> READY -> ACTIVE -> SPENT
 ```
 
-Iteration count and checkpoint do not rewrite the stored executor prompt. The only exception is the first execution after an automatic fresh-chat handoff: Rerun may append a one-time Resume Capsule containing the previous `lastCheckpoint`. Once that dispatch is acknowledged, later executions return to the untouched frozen prompt.
+Only one worker is ACTIVE during goal execution. Unused workers remain READY until needed.
 
-## JSON result protocol
+## GitHub preflight and approval
 
-Every Rerun-owned execution is asked to create a downloadable UTF-8 JSON file named:
+Every worker chat must prove GitHub access before it may execute the goal. Its preflight prompt performs two read-only connected-GitHub actions against the selected repository/branch:
+
+1. read repository metadata;
+2. read `README.md`, or the repository root listing when no README is available.
+
+If ChatGPT shows a GitHub approval card in that worker chat, the user should choose the persistent option such as **모든 작업 허용 / Allow all actions / Always allow** for that chat when the UI offers it.
+
+Rerun **does not click, synthesize, hide or impersonate** approval controls. The approval UI remains ChatGPT's consent boundary.
+
+After the GitHub reads actually succeed, the worker creates:
+
+```text
+rerun-worker-ready-<goal_id>-<worker_number>-<worker_nonce>.json
+```
+
+That file is bound to the run ID, goal ID, worker number, worker nonce, repository and branch. The same authenticated artifact resolver used for goal/result JSON imports it. Assistant prose alone cannot mark a worker READY.
+
+The worker-ready artifact proves that the required GitHub reads succeeded in that conversation. It does **not** attempt to inspect which exact approval button the user selected; persistent approval remains a user choice in ChatGPT.
+
+The goal does not start until every allocated worker has produced a valid worker-ready artifact. Then Worker 1 becomes ACTIVE automatically.
+
+## Goal execution
+
+All workers share one stored **frozen executor prompt**. Within the active worker, normal `CONTINUE` iterations reuse that exact prompt.
+
+Every execution must create a fresh:
 
 ```text
 rerun-result-<goal_id>.json
 ```
 
-The file includes a unique `result_id`, one of the four statuses, and a short factual checkpoint.
+with a new unique `result_id`, an actual final status (`CONTINUE`, `COMPLETE`, `NEEDS_USER`, or `CONFLICT`), and a concise checkpoint. The result artifact is reopened/verified before it is returned. Previously processed result IDs are retained for the full run, so replay such as `A -> B -> A` is rejected.
 
-Every execution must create a **fresh result artifact**, even though the filename is reused. The executor prompt explicitly requires ChatGPT to generate a new `result_id`, write the actual final status for that execution, reopen the just-written JSON to verify `goal_id`, `result_id`, `status`, and `checkpoint`, and return that newly verified attachment. If the execution is complete, the file must actually contain `"status": "COMPLETE"`.
+## Worker handoff
 
-The extension snapshots matching artifacts before each dispatch and also persists the full run-scoped history of processed result IDs. This rejects non-consecutive replays such as `A -> B -> A`, not only the immediately previous result. The artifact reader checks that processed-ID history before exposing a generated result blob, while the background runtime remains the final validation boundary.
+A worker is treated as conversation-exhausted when ChatGPT exposes a visible maximum-length notice or the run remains `READY` for five seconds without a visible, usable composer.
 
-The content script does **not** read assistant-message prose to determine Rerun state.
+If maximum-length UI appears while an execution is still `dispatching` or `generating`, Rerun waits for result handling first. It does not switch workers early and lose the just-produced result JSON.
 
-## Generated JSON artifact resolution
+After result handling returns the worker to `READY`, Rerun transfers ownership to the **next already-READY worker tab**. It does not open another ChatGPT tab at handoff time.
 
-V2.1.8 resolves ChatGPT-generated files through ChatGPT's authenticated file path instead of relying on a readable `sandbox:` URL, DOM-only download attributes, or automatic preview clicks.
+The next worker receives:
 
-The resolver has two cooperating parts:
+- the same Goal Contract and untouched frozen executor prompt;
+- current iteration count;
+- `lastCheckpoint`;
+- last result/result ID;
+- full processed-result-ID history.
 
-1. `page-artifact-reader.js` runs in Chrome's `MAIN` world so it can use the logged-in ChatGPT page session.
-2. `artifact-reader.js` runs in the extension's isolated world and bridges the resolved JSON into the existing V2 attachment protocol.
+If a checkpoint exists, the first dispatch in the new worker appends a one-time Resume Capsule. Once that dispatch is acknowledged, later turns use the untouched frozen prompt again.
 
-For an expected `rerun-goal-<nonce>.json` or `rerun-result-<goal_id>.json`, the MAIN-world resolver:
+If the final allocated worker is exhausted, the pool changes to `NEEDS_USER`/paused. Rerun does not silently exceed the worker count the user selected.
 
-- reads `/api/auth/session`;
-- uses the session access token and, when present, the ChatGPT account ID used by Team workspaces;
-- reads the current conversation and finds the message that owns the exact expected filename;
-- resolves the generated artifact from its message/sandbox identity, with file-ID download routes as fallback;
-- accepts the final content only from ChatGPT/OpenAI generated-file hosts;
-- parses at most 1 MiB of JSON.
+Legacy non-pool runtimes created by older V2 versions retain the previous single fresh-chat fallback for recovery, but that is not the normal V2.2 path.
 
-The isolated reader then exposes the parsed object as a temporary `blob:` URL attached to a hidden synthetic file node. Existing `content.js` consumes that node and continues to perform the normal nonce, goal ID, result ID and schema validation. Already processed result IDs are held back instead of being re-exposed as the active execution's result. The artifact reader therefore does not create a second Goal Runner state machine.
+## Generated artifact resolution
 
-If artifact resolution fails, a separate `v2:artifact:<tabId>` diagnostic is stored. The Side Panel surfaces the exact failure as `Artifact reader: ...` instead of silently remaining at `Waiting goal JSON`.
+V2.2.0 uses the authenticated ChatGPT artifact resolver for all three structured control artifacts:
 
-The Side Panel also ensures the MAIN-world resolver, the normal content script, the conversation-limit detector and the isolated artifact reader are injected into an already-open ChatGPT tab. Reloading the extension therefore does not require a page refresh just to restore recovery and artifact handling for a pending goal.
+- goal JSON;
+- worker-ready JSON;
+- result JSON.
 
-## Authority rule
+`page-artifact-reader.js` runs in the page `MAIN` world, obtains the logged-in ChatGPT session context, resolves the exact generated artifact from the current conversation, and hands the parsed object to the isolated artifact reader without exposing the access token to the Goal Runner state machine.
 
-Highest authority first:
-
-1. current explicit user instruction;
-2. repository-native instructions, plans/specifications and acceptance criteria;
-3. the Rerun Goal Contract;
-4. Rerun execution mechanics.
-
-Rerun must not invent a second project plan to resolve a conflict. If the goal and repository authority disagree, the result must be `CONFLICT` and the loop pauses.
+Artifact failures remain diagnostics only and cannot authorize state changes.
 
 ## Runtime state
 
-V2 uses tab-scoped `chrome.storage.local` keys:
+Tab-scoped state remains in:
 
 ```text
 v2:config:<tabId>
 v2:runtime:<tabId>
 ```
 
-Important runtime data includes:
+A V2.2 run additionally stores pool orchestration state at:
 
-- run ID / goal ID;
-- pending goal-setup nonce;
-- frozen executor prompt;
-- iteration count;
-- last checkpoint / last result ID;
-- full-run processed-result ID history;
-- approval wait state;
-- single-use fresh-chat handoff state;
-- one-time Resume Capsule pending state.
+```text
+v2:pool:<runId>
+```
 
-Artifact-reader diagnostics use a separate `v2:artifact:<tabId>` key and do not authorize runtime state transitions.
+Pool state records the source tab, allocation tab, configured worker count, worker tab IDs/statuses, active worker index, frozen prompt, checkpoint, iteration and processed result IDs.
 
-Normal cadence does not require repository-side Rerun `control.json`.
+Normal cadence still does not require repository-side Rerun `control.json`.
 
-## Tab isolation
+## GitHub approvals during execution
 
-Each ChatGPT tab owns an independent V2 config/runtime record keyed by its Chrome tab ID.
-
-The Side Panel does not keep a long-lived cached tab ID. On every refresh and every Goal/Resume/Pause/Stop action it resolves the **currently active ChatGPT tab** again, then reads or mutates only that tab's state.
-
-This prevents a Side Panel opened while tab A was active from later sending a new goal nonce or control action to tab A after the user has switched to tab B.
-
-## GitHub approvals
-
-The V2 MVP currently lets ChatGPT use its connected GitHub app for repository work.
-
-The preferred approval path is ChatGPT's own app-permission model, not DOM automation. Where the connected account/workspace offers it, a GitHub-specific permission such as **Allow all actions / Always allow** can remove routine approval prompts. Rerun does not attempt to bypass provider, workspace, or safety-required approvals.
-
-If ChatGPT still presents a GitHub action-confirmation card, Rerun pauses its own loop and shows `Waiting approval`. The user resolves that explicit consent boundary in ChatGPT; Rerun **does not click, synthesize, hide, or impersonate** approval controls. After the approval card disappears, the same execution can continue.
-
-A future Direct GitHub transport could use credentials explicitly granted to Rerun, but that would be a separate authentication path rather than an approval bypass and is not required while the connected-app permission model can provide persistent approval.
+The preferred path is ChatGPT's own persistent connected-app permission model. If a worker that passed preflight still receives a provider/workspace/safety-required GitHub confirmation card during execution, Rerun pauses its loop and shows `Waiting approval` until the user resolves it. Rerun never bypasses that consent boundary.
 
 ## 20 / 23 minute behavior
 
-The executor contract tells ChatGPT to finish/checkpoint within the normal 20-minute execution budget.
-
-If a Rerun-owned generation remains active for 23 active minutes, the watchdog clicks ChatGPT Stop once and treats the turn as interrupted. GitHub approval waiting time is excluded from the watchdog budget.
-
-## New conversation handoff
-
-If ChatGPT displays its conversation maximum-length notice, or if the current conversation remains in `READY` without a visible and usable composer for five seconds, Rerun may open **one** fresh ChatGPT tab and transfer Goal Runner ownership.
-
-The maximum-length detector recognizes the current English warning (`You've reached the maximum length for this conversation...`) and Korean equivalents. It ignores the same words when they appear inside normal authored conversation turns, so discussing the warning itself does not trigger a handoff. Missing/hidden composer detection is only used while `READY`; a composer disappearing during normal generation is not treated as exhaustion.
-
-The transfer carries the Goal Contract, untouched frozen executor prompt, processed-result history, and `lastCheckpoint`. When a checkpoint exists, the first execution in the new chat receives a one-time Resume Capsule so it can continue from the verified checkpoint without repeating completed work. The capsule is cleared only after dispatch acknowledgement; later iterations use the normal frozen prompt again.
-
-Automatic handoff is run-scoped and single-use. The runtime marks `handoffUsed` before creating the new tab. If handoff itself fails, Rerun pauses instead of repeatedly opening tabs. The transferred chat also has `handoffUsed=true`; if it later reaches its own conversation limit or loses its composer, Rerun pauses as `NEEDS_USER` rather than recursively opening another chat.
-
-## Side Panel
-
-The panel shows:
-
-- **목표 세우기**;
-- repository / branch loaded from goal JSON;
-- goal / acceptance / canonical authority;
-- status / iteration / run ID / goal ID;
-- approval wait;
-- last result / checkpoint;
-- artifact-reader failures when present;
-- Resume / Pause / Stop.
-
-There is no normal manual Goal form in V2.1.
+The executor contract asks ChatGPT to finish/checkpoint within the normal 20-minute execution budget. A 23-active-minute watchdog remains recovery-only. GitHub approval waiting time is intended to be excluded from that active-generation budget.
 
 ## Validation
 
@@ -193,48 +183,39 @@ npm run check
 npm test
 ```
 
-`npm test` runs only `tests/v2-*.test.mjs` on the V2 branch.
+V2.2 tests cover, among other existing V2 behavior:
 
-The V2 source tests cover:
+- goal JSON nonce binding;
+- goal-authoring chat stopping before execution;
+- worker-count setup;
+- all worker tabs preallocated before preflight;
+- worker-ready JSON binding and authenticated artifact transport;
+- no goal execution until all workers are READY;
+- premature worker-ready reports rejected during provisioning;
+- Worker 1 activation only after full preflight;
+- maximum-length result handling before handoff;
+- handoff to an already-created next worker with no new tab creation;
+- checkpoint and processed-result history transfer;
+- one-time Resume Capsule;
+- stale result replay rejection;
+- manual GitHub approval boundary;
+- legacy non-pool recovery compatibility.
 
-- goal-setup nonce binding;
-- goal JSON schema validation;
-- frozen executor prompt identity across normal iterations;
-- fresh result artifact instructions and explicit COMPLETE status matching;
-- result JSON validation;
-- non-consecutive processed-result replay rejection;
-- no assistant-prose control parsing;
-- new-result baseline/seen filtering;
-- authenticated MAIN-world artifact resolution and Team account context;
-- conversation/sandbox resolution plus file-ID fallback routes;
-- processed-result filtering in the artifact reader;
-- blob handoff into the existing content protocol;
-- artifact-reader/recovery-script reinjection for already-open ChatGPT tabs;
-- visible artifact diagnostics;
-- immediate `CONTINUE -> ready` transition;
-- active-tab Side Panel isolation;
-- manual Stop -> pause;
-- GitHub approval wait without auto-click;
-- single-use missing-composer fresh-chat handoff;
-- maximum-length notice handoff even when a composer node still exists;
-- hidden/unusable composer exhaustion without false handoff during generation;
-- one-time checkpoint Resume Capsule on the first handoff dispatch.
-
-Browser E2E is still required because ChatGPT's internal authenticated file endpoints and page/composer behavior are service implementation details and may evolve.
+Browser E2E is still required because ChatGPT's page/composer UI, approval cards and authenticated generated-file endpoints are service implementation details.
 
 ## Browser test
 
-1. Check out `agent/v2-goal-runner` locally.
-2. Open `chrome://extensions` and Reload the unpacked extension.
-3. Open the Rerun V2 Side Panel on the target ChatGPT tab. An already-open pending tab should have the artifact readers and conversation-limit detector restored automatically.
-4. Open two ChatGPT tabs A and B. In A click **목표 세우기**, then switch to B and click **목표 세우기** again. Confirm each tab receives a different nonce and the Side Panel follows the active tab's independent state.
-5. When ChatGPT asks for the next goal, describe the desired repository outcome normally.
-6. Confirm ChatGPT creates `rerun-goal-<nonce>.json` and the Side Panel changes from `Waiting goal JSON` to `Running` automatically in the correct tab only.
-7. If it does not, record the exact `Artifact reader: ...` diagnostic shown in the Side Panel.
-8. Confirm each executor turn creates a fresh `rerun-result-<goal_id>.json` with a new `result_id` and a status matching that turn's actual outcome.
-9. For `CONTINUE`, confirm the exact frozen executor prompt is submitted again without GitHub polling delay.
-10. Verify COMPLETE / NEEDS_USER / CONFLICT pause or stop correctly.
-11. Exercise a fresh-chat handoff and confirm the first new-chat dispatch includes the previous checkpoint once, later dispatches do not, and a second automatic handoff is not opened.
-12. On a conversation that has reached ChatGPT's maximum length, confirm the warning triggers the same one-shot handoff even if an old/hidden composer element remains in the DOM.
+1. Reload the unpacked extension from `agent/v2-goal-runner`.
+2. Click **목표 세우기** in a ChatGPT conversation and provide a repository goal.
+3. Confirm `rerun-goal-<nonce>.json` is imported and the source conversation does **not** receive the executor prompt.
+4. Confirm the Worker Pool setup page opens; choose a small count such as 3.
+5. Confirm exactly 3 new ChatGPT worker tabs open.
+6. In each worker, resolve the GitHub approval card with the persistent all-actions option when offered.
+7. Confirm every worker reaches READY only after its two GitHub reads and worker-ready JSON succeed.
+8. Confirm Worker 1 begins only after all 3 are READY.
+9. Confirm normal CONTINUE stays in Worker 1.
+10. At conversation maximum length, confirm the current result is consumed first and then Worker 2 becomes active without opening another tab.
+11. Confirm Worker 2 receives the previous checkpoint once through the Resume Capsule.
+12. Repeat through Worker 3 and confirm exhausting Worker 3 pauses as `NEEDS_USER` instead of creating Worker 4.
 
-See `docs/V2_GOAL_RUNNER_SPEC.md` for the full protocol.
+See `docs/V2_GOAL_RUNNER_SPEC.md` for the normative protocol.

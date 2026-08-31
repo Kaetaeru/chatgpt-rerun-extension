@@ -15,6 +15,7 @@ test("artifact reader uses a MAIN-world authenticated resolver", () => {
   assert.match(packageJson.scripts.check, /conversation-limit\.js/);
   assert.match(packageJson.scripts.check, /artifact-reader\.js/);
   assert.match(packageJson.scripts.check, /page-artifact-reader\.js/);
+  assert.match(packageJson.scripts.check, /pool-setup\.js/);
 });
 
 test("page resolver uses ChatGPT session and Team account context", () => {
@@ -30,6 +31,12 @@ test("sandbox artifacts resolve through conversation identity and supported down
   assert.match(page, /download_from_sandbox\/v2/);
   assert.match(page, /backend-api\/files\/download/);
   assert.match(page, /artifact_message_not_found/);
+});
+
+test("worker-ready JSON uses the same authenticated artifact bridge", () => {
+  assert.match(page, /goal\|result\|worker-ready/);
+  assert.match(isolated, /runtime\.phase === "worker_preflight"/);
+  assert.match(isolated, /rerun-worker-ready-/);
 });
 
 test("resolved JSON is exposed as a blob for the existing content protocol", () => {
@@ -51,7 +58,7 @@ test("side panel restores all readers on already-open ChatGPT tabs", () => {
   assert.match(popup, /files: \["page-artifact-reader\.js"\]/);
   assert.match(popup, /world: "MAIN"/);
   assert.match(popup, /files: \["content\.js", "conversation-limit\.js", "artifact-reader\.js"\]/);
-  assert.match(popup, /\["awaiting_goal_file", "ready", "dispatching", "generating"\]/);
+  assert.match(popup, /\["awaiting_goal_file", "worker_preflight", "ready", "dispatching", "generating"\]/);
 });
 
 test("artifact failures are visible in the side panel without mutating runtime", () => {

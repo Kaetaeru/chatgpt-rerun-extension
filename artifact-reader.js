@@ -1,7 +1,12 @@
 (() => {
   const SCRIPT_REVISION = "worker-ready-direct-20260901";
-  if (globalThis.__CHATGPT_RERUN_V2_ARTIFACT_READER__ === SCRIPT_REVISION) return;
+  const EVENT_REVISION = "worker-ready-event-v226-20260901";
+  if (
+    globalThis.__CHATGPT_RERUN_V2_ARTIFACT_READER__ === SCRIPT_REVISION &&
+    globalThis.__CHATGPT_RERUN_V2_ARTIFACT_EVENT_REVISION__ === EVENT_REVISION
+  ) return;
   globalThis.__CHATGPT_RERUN_V2_ARTIFACT_READER__ = SCRIPT_REVISION;
+  globalThis.__CHATGPT_RERUN_V2_ARTIFACT_EVENT_REVISION__ = EVENT_REVISION;
 
   const SCAN_MS = 750;
   const RETRY_MS = 2500;
@@ -10,12 +15,16 @@
   const RESPONSE_SOURCE = "chatgpt-rerun-v2-artifact-response";
 
   let inFlight = false;
+  let immediateScanPending = false;
   let nextAttemptAt = 0;
   let tabId = null;
   let lastDiagnosticKey = "";
+  let expectedFilenameHint = "";
   const bridgeUrls = new Map();
 
-  const observer = new MutationObserver(() => { void scan(); });
+  const observer = new MutationObserver((records) => {
+    if (mutationsMentionExpectedArtifact(records, expectedFilenameHint)) forceScan();
+  });
   observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) forceScan();
@@ -26,6 +35,10 @@
 
   function forceScan() {
     nextAttemptAt = 0;
+    if (inFlight) {
+      immediateScanPending = true;
+      return;
+    }
     void scan();
   }
 
@@ -66,9 +79,11 @@
       expectedId = String(runtime.goalId);
       expectedFilename = `rerun-result-${expectedId}.json`;
     } else {
+      expectedFilenameHint = "";
       return;
     }
 
+    expectedFilenameHint = expectedFilename;
     inFlight = true;
     try {
       await writeDiagnostic(mode, expectedId, "resolving", "Resolving generated JSON through the ChatGPT file API.");
@@ -133,6 +148,11 @@
       nextAttemptAt = Date.now() + RETRY_MS;
     } finally {
       inFlight = false;
+      if (immediateScanPending) {
+        immediateScanPending = false;
+        nextAttemptAt = 0;
+        queueMicrotask(() => { void scan(); });
+      }
     }
   }
 
@@ -188,6 +208,31 @@
       };
     }
     if (Object.keys(updates).length) await chrome.storage.local.set(updates);
+  }
+
+  function mutationsMentionExpectedArtifact(records, expectedFilename) {
+    if (!expectedFilename) return false;
+    const mentions = (node) => {
+      if (!node) return false;
+      const text = typeof node.textContent === "string" ? node.textContent : "";
+      if (text.includes(expectedFilename)) return true;
+      if (typeof node.getAttribute !== "function") return false;
+      for (const attr of [
+        "href", "download", "title", "aria-label", "data-filename", "data-file-name",
+        "data-testid", "data-file-url", "data-download-url"
+      ]) {
+        if (String(node.getAttribute(attr) || "").includes(expectedFilename)) return true;
+      }
+      return false;
+    };
+
+    for (const record of records || []) {
+      if (mentions(record?.target)) return true;
+      for (const node of Array.from(record?.addedNodes || [])) {
+        if (mentions(node)) return true;
+      }
+    }
+    return false;
   }
 
   function exposeBlob(expectedFilename, value) {

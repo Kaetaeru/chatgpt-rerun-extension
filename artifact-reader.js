@@ -1,5 +1,5 @@
 (() => {
-  const SCRIPT_REVISION = "goal-import-stale-pool-20260901";
+  const SCRIPT_REVISION = "worker-ready-direct-20260901";
   if (globalThis.__CHATGPT_RERUN_V2_ARTIFACT_READER__ === SCRIPT_REVISION) return;
   globalThis.__CHATGPT_RERUN_V2_ARTIFACT_READER__ = SCRIPT_REVISION;
 
@@ -17,8 +17,17 @@
 
   const observer = new MutationObserver(() => { void scan(); });
   observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) forceScan();
+  });
+  window.addEventListener("focus", forceScan);
   setInterval(() => { void scan(); }, SCAN_MS);
   void initialize();
+
+  function forceScan() {
+    nextAttemptAt = 0;
+    void scan();
+  }
 
   async function initialize() {
     try {
@@ -96,6 +105,20 @@
           if (!alreadyImported) throw new Error(imported?.error || "goal_file_import_failed");
         }
         await writeDiagnostic(mode, expectedId, "ready", "Goal JSON resolved and imported.");
+        nextAttemptAt = Date.now() + RETRY_MS;
+        return;
+      }
+
+      if (mode === "worker_ready") {
+        const reported = await chrome.runtime.sendMessage({ type: "REPORT_WORKER_READY", value: value.value });
+        if (!reported?.ok) {
+          const latest = await chrome.runtime.sendMessage({ type: "GET_CURRENT_STATE" });
+          const alreadyReady = latest?.ok &&
+            latest.runtime?.workerReady === true &&
+            latest.runtime?.phase !== "worker_preflight";
+          if (!alreadyReady) throw new Error(reported?.error || "worker_ready_import_failed");
+        }
+        await writeDiagnostic(mode, expectedId, "ready", "Worker-ready JSON resolved and imported.");
         nextAttemptAt = Date.now() + RETRY_MS;
         return;
       }

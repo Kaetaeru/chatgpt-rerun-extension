@@ -9,6 +9,7 @@ header p { margin: 2px 0 0; color: #666; font-size: 12px; }
 .card { background: #fff; border: 1px solid #dedede; border-radius: 12px; padding: 12px; display: grid; gap: 10px; }
 .setup strong { font-size: 13px; }
 .hint { margin: 0; color: #666; font-size: 11px; line-height: 1.5; }
+.diagnostic-output { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; max-height: 220px; overflow: auto; }
 .goalCard, .runtime { grid-template-columns: 1fr 1fr; }
 .goalCard div, .runtime div { display: grid; gap: 3px; min-width: 0; }
 .goalCard span, .runtime span { color: #777; font-size: 11px; }

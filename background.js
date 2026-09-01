@@ -17,6 +17,8 @@ import {
 const MAX_GENERATED_JSON_BYTES = 1024 * 1024;
 const MAX_WORKER_COUNT = 20;
 const POOL_TERMINAL_STATUSES = new Set(["complete", "stopped"]);
+const STANDBY_PARK_DELAY_MS = 500;
+const CHATGPT_WORKER_HOSTS = new Set(["chatgpt.com", "chat.openai.com"]);
 
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
@@ -238,7 +240,8 @@ async function createWorkerPool(runId, rawWorkerCount) {
         index: workerIndex,
         tabId: workerTab.id,
         nonce: workerNonce,
-        status: "preflight"
+        status: "preflight",
+        conversationUrl: null
       };
       pool = { ...pool, workers: [...pool.workers, worker] };
       await chrome.storage.local.set({
@@ -297,6 +300,14 @@ async function reportWorkerReady(tabId, rawValue) {
   const worker = storedPool.workers.find((item) => item.index === runtime.workerIndex);
   if (!worker || worker.tabId !== tabId) throw new Error("Worker-ready file came from the wrong tab.");
 
+  const conversationUrl = await captureWorkerConversationUrl(tabId);
+  const poolWithConversation = {
+    ...storedPool,
+    workers: storedPool.workers.map((item) => item.index === runtime.workerIndex
+      ? { ...item, conversationUrl: conversationUrl || item.conversationUrl || null }
+      : item)
+  };
+
   const readyRuntime = {
     ...runtime,
     enabled: false,
@@ -308,7 +319,7 @@ async function reportWorkerReady(tabId, rawValue) {
   };
   await chrome.storage.local.set({ [tabRuntimeKey(tabId)]: readyRuntime });
 
-  let pool = await rebuildWorkerReadiness(storedPool);
+  let pool = await rebuildWorkerReadiness(poolWithConversation);
   await chrome.storage.local.set({ [poolStateKey(pool.runId)]: pool });
 
   const nextUnready = pool.workers.find((item) => item.status === "preflight");
@@ -320,18 +331,153 @@ async function reportWorkerReady(tabId, rawValue) {
   pool = { ...pool, status: "running", activeWorkerIndex: 0 };
   await chrome.storage.local.set({ [poolStateKey(pool.runId)]: pool });
   const activated = await activatePoolWorker(pool, 0, false);
+  setTimeout(() => { void parkStandbyWorkerTabs(activated.pool.runId, 0); }, STANDBY_PARK_DELAY_MS);
   return { runtime: activated.runtime, pool: activated.pool };
 }
 
 async function rebuildWorkerReadiness(pool) {
-  const keys = pool.workers.map((worker) => tabRuntimeKey(worker.tabId));
-  const stored = await chrome.storage.local.get(keys);
+  const liveWorkers = pool.workers.filter((worker) => Number.isSafeInteger(worker.tabId));
+  const keys = liveWorkers.map((worker) => tabRuntimeKey(worker.tabId));
+  const stored = keys.length ? await chrome.storage.local.get(keys) : {};
   const workers = pool.workers.map((worker) => {
+    if (!Number.isSafeInteger(worker.tabId)) return worker;
     const runtime = stored[tabRuntimeKey(worker.tabId)] || {};
     if (runtime.workerReady && worker.status === "preflight") return { ...worker, status: "ready" };
     return worker;
   });
   return { ...pool, workers, lastError: null };
+}
+
+async function parkStandbyWorkerTabs(runId, activeWorkerIndex) {
+  const { pool } = await getPoolState(runId);
+  if (pool.status !== "running") return { pool, closedTabIds: [] };
+
+  const closedTabIds = [];
+  const replacements = new Map();
+  for (const worker of pool.workers) {
+    if (worker.index === activeWorkerIndex || worker.status !== "ready" || !Number.isSafeInteger(worker.tabId)) continue;
+    const conversationUrl = normalizeWorkerConversationUrl(worker.conversationUrl) || await captureWorkerConversationUrl(worker.tabId);
+    if (!conversationUrl) continue;
+    replacements.set(worker.index, {
+      ...worker,
+      tabId: null,
+      conversationUrl,
+      parkedAt: new Date().toISOString()
+    });
+    closedTabIds.push(worker.tabId);
+  }
+
+  if (!replacements.size) return { pool, closedTabIds: [] };
+  const nextPool = {
+    ...pool,
+    workers: pool.workers.map((worker) => replacements.get(worker.index) || worker)
+  };
+  await chrome.storage.local.set({ [poolStateKey(runId)]: nextPool });
+
+  for (const tabId of closedTabIds) {
+    try { await chrome.tabs.remove(tabId); } catch {}
+  }
+  return { pool: nextPool, closedTabIds };
+}
+
+async function prepareReadyWorkerTab(pool, worker) {
+  const conversationUrl = normalizeWorkerConversationUrl(worker.conversationUrl);
+  if (conversationUrl) {
+    const previousTabId = Number.isSafeInteger(worker.tabId) ? worker.tabId : null;
+    const newTab = await chrome.tabs.create({ url: conversationUrl, active: false });
+    if (!Number.isSafeInteger(newTab.id)) throw new Error(`Failed to reopen Worker ${worker.index + 1} conversation.`);
+    await waitForTabComplete(newTab.id, 20_000);
+    await ensureContentScript(newTab.id);
+
+    const standbyRuntime = buildStandbyWorkerRuntime(pool, worker);
+    const nextPool = {
+      ...pool,
+      workers: pool.workers.map((item) => item.index === worker.index
+        ? { ...item, tabId: newTab.id, conversationUrl, reopenedAt: new Date().toISOString() }
+        : item)
+    };
+    await chrome.storage.local.set({
+      [tabConfigKey(newTab.id)]: pool.config,
+      [tabRuntimeKey(newTab.id)]: standbyRuntime,
+      [poolStateKey(pool.runId)]: nextPool
+    });
+
+    if (previousTabId !== null && previousTabId !== newTab.id) {
+      try { await chrome.tabs.remove(previousTabId); } catch {}
+    }
+    return { tabId: newTab.id, runtime: standbyRuntime, pool: nextPool };
+  }
+
+  if (Number.isSafeInteger(worker.tabId)) {
+    try {
+      await focusTab(worker.tabId);
+      await waitForTabComplete(worker.tabId, 20_000);
+      await ensureContentScript(worker.tabId);
+      const { runtime } = await getTabState(worker.tabId);
+      if (runtime.workerReady) return { tabId: worker.tabId, runtime, pool };
+    } catch {}
+  }
+
+  throw new Error(`Worker ${worker.index + 1} approved conversation URL is unavailable. Re-run worker preflight.`);
+}
+
+function buildStandbyWorkerRuntime(pool, worker) {
+  return {
+    ...DEFAULT_RUNTIME,
+    enabled: false,
+    status: "standby",
+    phase: "standby",
+    runId: pool.runId,
+    goalId: pool.goalId,
+    frozenPrompt: pool.frozenPrompt,
+    poolRunId: pool.runId,
+    workerIndex: worker.index,
+    workerCount: pool.workerCount,
+    workerNonce: worker.nonce,
+    workerReady: true
+  };
+}
+
+async function captureWorkerConversationUrl(tabId) {
+  if (!Number.isSafeInteger(tabId)) return "";
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    return normalizeWorkerConversationUrl(tab?.url || tab?.pendingUrl || "");
+  } catch {
+    return "";
+  }
+}
+
+function normalizeWorkerConversationUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol !== "https:" || !CHATGPT_WORKER_HOSTS.has(url.hostname)) return "";
+    if (!/\/c\/[^/?#]+/.test(url.pathname)) return "";
+    url.hash = "";
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
+function scheduleInactiveWorkerClose(runId, workerIndex, tabId) {
+  if (!Number.isSafeInteger(tabId)) return;
+  setTimeout(() => { void closeInactiveWorkerTab(runId, workerIndex, tabId); }, STANDBY_PARK_DELAY_MS);
+}
+
+async function closeInactiveWorkerTab(runId, workerIndex, tabId) {
+  const { pool } = await getPoolState(runId);
+  if (Number(pool.activeWorkerIndex) === Number(workerIndex)) return;
+  const worker = pool.workers.find((item) => item.index === workerIndex);
+  if (!worker || worker.tabId !== tabId) return;
+  const nextPool = {
+    ...pool,
+    workers: pool.workers.map((item) => item.index === workerIndex
+      ? { ...item, tabId: null, closedAt: new Date().toISOString() }
+      : item)
+  };
+  await chrome.storage.local.set({ [poolStateKey(runId)]: nextPool });
+  try { await chrome.tabs.remove(tabId); } catch {}
 }
 
 async function fetchGeneratedJsonUrl(value) {
@@ -580,13 +726,39 @@ async function advanceWorkerPool(oldTabId, reason) {
     return { handedOff: false, reason: "worker_pool_exhausted", runtime: exhaustedRuntime, pool };
   }
 
-  const { runtime: standbyRuntime } = await getTabState(nextWorker.tabId);
+  let prepared;
+  try {
+    prepared = await prepareReadyWorkerTab(storedPool, nextWorker);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const blockedRuntime = {
+      ...runtime,
+      enabled: false,
+      status: "needs_user",
+      phase: "paused",
+      lastError: detail
+    };
+    const blockedPool = {
+      ...storedPool,
+      status: "needs_user",
+      lastError: detail
+    };
+    await chrome.storage.local.set({
+      [tabRuntimeKey(oldTabId)]: blockedRuntime,
+      [poolStateKey(storedPool.runId)]: blockedPool
+    });
+    return { handedOff: false, reason: "worker_reopen_failed", runtime: blockedRuntime, pool: blockedPool };
+  }
+
+  const nextTabId = prepared.tabId;
+  const standbyRuntime = prepared.runtime;
+  const preparedPool = prepared.pool;
   const oldRuntime = {
     ...runtime,
     enabled: false,
     status: "handed_off",
     phase: "idle",
-    handoffToTabId: nextWorker.tabId,
+    handoffToTabId: nextTabId,
     lastError: null
   };
   const nextRuntime = {
@@ -606,7 +778,7 @@ async function advanceWorkerPool(oldTabId, reason) {
     lastError: null
   };
   const pool = {
-    ...storedPool,
+    ...preparedPool,
     status: "running",
     activeWorkerIndex: nextWorker.index,
     iteration: nextRuntime.iteration,
@@ -615,21 +787,22 @@ async function advanceWorkerPool(oldTabId, reason) {
     lastResultId: nextRuntime.lastResultId,
     processedResultIds: nextRuntime.processedResultIds,
     lastError: null,
-    workers: storedPool.workers.map((item) => {
+    workers: preparedPool.workers.map((item) => {
       if (item.index === currentIndex) return { ...item, status: "spent", handoffReason: String(reason || "conversation_exhausted") };
-      if (item.index === nextWorker.index) return { ...item, status: "active" };
+      if (item.index === nextWorker.index) return { ...item, status: "active", tabId: nextTabId };
       return item;
     })
   };
 
   await chrome.storage.local.set({
     [tabRuntimeKey(oldTabId)]: oldRuntime,
-    [tabRuntimeKey(nextWorker.tabId)]: nextRuntime,
+    [tabRuntimeKey(nextTabId)]: nextRuntime,
     [poolStateKey(pool.runId)]: pool
   });
-  await wakeTab(nextWorker.tabId);
-  await focusTab(nextWorker.tabId);
-  return { handedOff: true, newTabId: nextWorker.tabId, workerIndex: nextWorker.index, runtime: nextRuntime, pool };
+  await wakeTab(nextTabId);
+  await focusTab(nextTabId);
+  scheduleInactiveWorkerClose(pool.runId, currentIndex, oldTabId);
+  return { handedOff: true, newTabId: nextTabId, workerIndex: nextWorker.index, runtime: nextRuntime, pool };
 }
 
 async function legacyFreshChatHandoff(oldTabId) {
@@ -710,7 +883,12 @@ async function legacyFreshChatHandoff(oldTabId) {
 
 async function activatePoolWorker(pool, workerIndex, resumeCapsule) {
   const worker = pool.workers.find((item) => item.index === workerIndex);
-  if (!worker || worker.status !== "ready") throw new Error(`Worker ${workerIndex + 1} is not ready.`);
+  if (!worker || worker.status !== "ready" || !Number.isSafeInteger(worker.tabId)) {
+    throw new Error(`Worker ${workerIndex + 1} is not ready.`);
+  }
+  await focusTab(worker.tabId);
+  await waitForTabComplete(worker.tabId, 20_000);
+  await ensureContentScript(worker.tabId);
   const { runtime } = await getTabState(worker.tabId);
   if (!runtime.workerReady) throw new Error(`Worker ${workerIndex + 1} has not completed GitHub preflight.`);
 
@@ -779,6 +957,7 @@ async function stopWorkerPool(runId) {
     }
   };
   for (const worker of pool.workers) {
+    if (!Number.isSafeInteger(worker.tabId)) continue;
     const { runtime } = await getTabState(worker.tabId);
     updates[tabRuntimeKey(worker.tabId)] = {
       ...runtime,

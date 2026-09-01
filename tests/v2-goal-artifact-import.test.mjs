@@ -33,7 +33,7 @@ function workerReadyValue() {
   };
 }
 
-test("stale pre-reload guard does not block direct goal JSON import and stale unallocated pools are retired", async () => {
+test("valid newer goal supersedes older same-target pools and runtimes before direct import", async () => {
   let runtime = {
     phase: "awaiting_goal_file",
     setupPending: true,
@@ -57,11 +57,49 @@ test("stale pre-reload guard does not block direct goal JSON import and stale un
       runId: "active-run",
       goalId: "active-goal",
       status: "running",
+      activeWorkerIndex: 0,
       workers: [{ index: 0, tabId: 99, status: "active" }],
       config: {
         repository: "Kaetaeru/chatgpt-rerun-extension",
         branch: "agent/v2-goal-runner"
       }
+    },
+    "v2:config:99": {
+      repository: "Kaetaeru/chatgpt-rerun-extension",
+      branch: "agent/v2-goal-runner"
+    },
+    "v2:runtime:99": {
+      enabled: true,
+      status: "running",
+      phase: "generating",
+      runId: "active-run",
+      poolRunId: "active-run",
+      workerReady: true,
+      workerIndex: 0
+    },
+    "v2:pool:other-run": {
+      runId: "other-run",
+      goalId: "other-goal",
+      status: "running",
+      activeWorkerIndex: 0,
+      workers: [{ index: 0, tabId: 100, status: "active" }],
+      config: {
+        repository: "Kaetaeru/OtherRepo",
+        branch: "main"
+      }
+    },
+    "v2:config:100": {
+      repository: "Kaetaeru/OtherRepo",
+      branch: "main"
+    },
+    "v2:runtime:100": {
+      enabled: true,
+      status: "running",
+      phase: "generating",
+      runId: "other-run",
+      poolRunId: "other-run",
+      workerReady: true,
+      workerIndex: 0
     }
   };
   const messageListeners = new Set();
@@ -143,12 +181,24 @@ test("stale pre-reload guard does not block direct goal JSON import and stale un
   vm.runInNewContext(source, context);
   await new Promise((resolve) => setTimeout(resolve, 25));
 
-  assert.equal(context.__CHATGPT_RERUN_V2_ARTIFACT_READER__, "worker-ready-direct-20260901");
+  assert.equal(context.__CHATGPT_RERUN_V2_ARTIFACT_READER__, "goal-supersede-v229-20260901");
   assert.equal(imports.length, 1);
   assert.equal(imports[0].goal_id, "goal-1");
+
   assert.equal(stored["v2:pool:stale-run"].status, "stopped");
-  assert.match(stored["v2:pool:stale-run"].lastError, /Superseded/);
-  assert.equal(stored["v2:pool:active-run"].status, "running");
+  assert.equal(stored["v2:pool:active-run"].status, "stopped");
+  assert.equal(stored["v2:pool:active-run"].workers[0].status, "stopped");
+  assert.equal(stored["v2:pool:active-run"].supersededByGoalId, "goal-1");
+  assert.match(stored["v2:pool:active-run"].lastError, /Superseded by newer Goal goal-1/);
+
+  assert.equal(stored["v2:runtime:99"].enabled, false);
+  assert.equal(stored["v2:runtime:99"].status, "stopped");
+  assert.equal(stored["v2:runtime:99"].phase, "idle");
+  assert.equal(stored["v2:runtime:99"].poolRunId, null);
+  assert.equal(stored["v2:runtime:99"].workerReady, false);
+
+  assert.equal(stored["v2:pool:other-run"].status, "running");
+  assert.equal(stored["v2:runtime:100"].enabled, true);
 });
 
 test("worker-ready JSON imports directly and activation forces an immediate scan", async () => {

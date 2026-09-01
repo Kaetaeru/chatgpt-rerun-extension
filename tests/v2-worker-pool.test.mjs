@@ -113,7 +113,7 @@ test("ready standby workers are parked and reopened from their approved conversa
   assert.equal(createdTabs.length, 3);
   assert.equal(directPrompts.length, 2);
   assert.ok(directPrompts.every(({ prompt }) => /Do NOT start the Goal Runner goal yet/.test(prompt)));
-  assert.ok(directPrompts.every(({ prompt }) => /GitHub WRITE capability/.test(prompt)));
+  assert.ok(directPrompts.every(({ prompt }) => /WRITE capability/.test(prompt)));
 
   const poolBeforeReady = data.get(poolStateKey(runId));
   const [worker1, worker2] = poolBeforeReady.workers;

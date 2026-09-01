@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Rerun V2",
-  "version": "2.2.8",
+  "version": "2.2.9",
   "minimum_chrome_version": "116",
   "description": "Build a goal from a ChatGPT-generated JSON contract, preflight a pool of ChatGPT workers, then keep working until the goal is complete or blocked.",
   "permissions": ["storage", "activeTab", "sidePanel", "scripting"],

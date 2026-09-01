@@ -6,10 +6,10 @@ const guard = readFileSync(new URL("../rerun-chat-guard.js", import.meta.url), "
 const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
-test("Rerun chat guard is loaded after the primary content script", () => {
+test("Rerun chat guard is loaded before the primary content script", () => {
   const scripts = manifest.content_scripts[0].js;
   assert.ok(scripts.includes("rerun-chat-guard.js"));
-  assert.ok(scripts.indexOf("rerun-chat-guard.js") > scripts.indexOf("content.js"));
+  assert.ok(scripts.indexOf("rerun-chat-guard.js") < scripts.indexOf("content.js"));
   assert.match(pkg.scripts.check, /node --check rerun-chat-guard\.js/);
 });
 

@@ -23,7 +23,7 @@
   "content_scripts": [
     {
       "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
-      "js": ["content.js", "rerun-chat-guard.js", "conversation-limit.js", "artifact-reader.js"],
+      "js": ["rerun-chat-guard.js", "content.js", "conversation-limit.js", "artifact-reader.js"],
       "run_at": "document_idle"
     },
     {

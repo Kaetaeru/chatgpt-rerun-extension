@@ -103,23 +103,24 @@ function render(pool) {
     label.textContent = `Worker ${Number(worker.index) + 1}`;
     const status = document.createElement("span");
     status.className = "status";
-    status.textContent = workerStatusLabel(worker.status);
+    status.textContent = workerStatusLabel(worker);
     row.append(label, status);
     workers.appendChild(row);
   }
 }
 
-function workerStatusLabel(value) {
-  const status = String(value || "");
-  if (status === "preflight") return "GITHUB PREFLIGHT";
-  if (status === "ready") return "READY";
-  if (status === "active") return "ACTIVE";
-  if (status === "spent") return "SPENT";
-  if (status === "complete") return "COMPLETE";
-  if (status === "paused") return "PAUSED";
-  if (status === "exhausted") return "EXHAUSTED";
-  if (status === "stopped") return "STOPPED";
-  return status || "-";
+function workerStatusLabel(worker) {
+  const value = String(worker?.status || "");
+  if (value === "preflight") return "GITHUB PREFLIGHT";
+  if (value === "ready" && !Number.isSafeInteger(worker?.tabId)) return "READY · PARKED";
+  if (value === "ready") return "READY";
+  if (value === "active") return "ACTIVE";
+  if (value === "spent") return "SPENT";
+  if (value === "complete") return "COMPLETE";
+  if (value === "paused") return "PAUSED";
+  if (value === "exhausted") return "EXHAUSTED";
+  if (value === "stopped") return "STOPPED";
+  return value || "-";
 }
 
 function showError(cause) {
